@@ -1,0 +1,38 @@
+# ==============================================================================
+# PROMPT ADD-ON: ULTRA-LIGHTWEIGHT & MINIMAL-SIZE ANDROID APPS (< 50 KB APKs)
+# ==============================================================================
+# Append the following block to any Android app creation or refactoring prompt
+# to guarantee extreme size optimization, zero bloat, and instant build times.
+# ==============================================================================
+
+[SIZE & ARCHITECTURE DIRECTIVES: ULTRA-COMPACT APK (<50 KB)]
+
+1. ZERO EXTERNAL DEPENDENCIES & BLOAT:
+   - Use ONLY pure standard Android SDK APIs (android.* packages).
+   - DO NOT include AndroidX, Jetpack Compose, Kotlin Stdlib/Coroutines, Google Play Services, Material Components, or external third-party JARs/AARs unless explicitly requested.
+   - Use vanilla Java (Java 8/11/17) to eliminate language runtime overhead (no Kotlin metadata, reflection, or coroutine dispatchers).
+
+2. ULTRA-COMPACT UI & RESOURCES:
+   - Build UI using core Android framework widgets: standard View, ViewGroup, LinearLayout, RelativeLayout, ScrollView, FrameLayout, TextView, Button, SeekBar, Switch, and Canvas/SurfaceView/GLSurfaceView.
+   - Use standard Material/DeviceDefault themes (`@android:style/Theme.Material.NoActionBar` or `@android:style/Theme.DeviceDefault.NoActionBar`).
+   - Draw all graphics and icons programmatically or using compact XML Vector Drawables (`<vector>`) and Shape Drawables (`<shape>`). NEVER bundle raster PNGs, JPEGs, or WebP assets.
+
+3. DIRECT LOCAL BUILD PIPELINE (NO GRADLE OVERHEAD):
+   - Provide a standalone shell build script (`build.sh`) leveraging local command-line tools:
+     * Resource Compilation: `aapt package` or `aapt2`
+     * Bytecode Compilation: `javac`
+     * Dexing: `d8 --min-api 21`
+     * Packaging & Signing: `aapt add` + `apksigner`
+   - Build time must remain under 2 seconds, producing an installable APK of 20 KB - 50 KB.
+
+4. NATIVE CODE (IF C/C++ IS USED):
+   - Compile native shared libraries using `clang -O3 -shared -fPIC -Wl,-s -nostdlib++` (stripped, no heavy C++ standard library runtime).
+   - Package `.so` files directly into `lib/<arch>/` inside the APK archive.
+
+5. HARDWARE ACCELERATION:
+   - For graphics-intensive tasks, write pure hardware OpenGL ES 2.0 / 3.0 shaders using `android.opengl.GLES20` and `GLSurfaceView` instead of game engines or bulky frameworks.
+
+6. TARGET METRICS:
+   - Final Signed APK Size: < 50 KB (or < 100 KB with native binaries).
+   - Cold Startup Time: < 50 ms.
+   - Memory Overhead (RAM): < 15 MB.

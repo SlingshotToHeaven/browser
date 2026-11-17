@@ -1,0 +1,816 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="20dp">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="14dp">
+
+        <ImageView
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:src="@drawable/ic_settings"
+            android:tint="#BB86FC"
+            android:background="@drawable/bg_pill_thread_selected"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:layout_marginEnd="12dp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Download Settings"
+                android:textColor="?attr/textPrimary"
+                android:textSize="18sp"
+                android:fontFamily="sans-serif-bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Engine concurrency and throughput rules"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/settings_btn_header_close"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_close"
+            android:tint="?attr/iconTintSecondary"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:clickable="true"
+            android:focusable="true" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <ScrollView
+        android:id="@+id/settings_scroll_view"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:scrollbars="vertical"
+        android:fadeScrollbars="false"
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Concurrency Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="MAX CONCURRENT DOWNLOADS"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Maximum files transferring simultaneously (1 to 10)"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:layout_marginTop="2dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginTop="6dp">
+
+                <EditText
+                    android:id="@+id/settings_edit_concurrency"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:inputType="number"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="14sp"
+                    android:singleLine="true"
+                    android:background="@null" />
+            </LinearLayout>
+
+            <!-- Concurrency Presets -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:id="@+id/settings_preset_tasks_1"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="1 Task"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/settings_preset_tasks_2"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="2 Tasks"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/settings_preset_tasks_3"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="3 Tasks"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/settings_preset_tasks_5"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="5 Tasks"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/settings_preset_tasks_8"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="8 Tasks"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected" />
+            </LinearLayout>
+
+            <!-- Speed Limit Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="GLOBAL SPEED LIMIT"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="16dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Enter limit in KB/s (0 = unlimited throughput)"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:layout_marginTop="2dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginTop="6dp">
+
+                <EditText
+                    android:id="@+id/settings_edit_speed"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:inputType="number"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="14sp"
+                    android:singleLine="true"
+                    android:background="@null" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="KB/s"
+                    android:textColor="?attr/accentColor"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-bold" />
+            </LinearLayout>
+
+            <!-- Speed Limit Presets -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:id="@+id/settings_preset_unlimited"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="No Limit"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/settings_preset_1mb"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="1 MB/s"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/settings_preset_5mb"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="5 MB/s"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/settings_preset_20mb"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="20 MB/s"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected" />
+            </LinearLayout>
+
+            <!-- Network Retry Attempts Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="NETWORK RETRY ATTEMPTS"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="20dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Auto-reconnect attempts on connection reset (1 to 20, default 8)"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:layout_marginTop="2dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginTop="6dp">
+
+                <EditText
+                    android:id="@+id/settings_edit_retries"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:inputType="number"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="14sp"
+                    android:singleLine="true"
+                    android:background="@null" />
+            </LinearLayout>
+
+            <!-- Retry Presets -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:id="@+id/settings_preset_retries_3"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="3 Tries"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/settings_preset_retries_5"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="5 Tries"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/settings_preset_retries_8"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="8 Tries"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/settings_preset_retries_12"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:text="12 Tries"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected" />
+            </LinearLayout>
+
+            <!-- Default Save Location Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="DEFAULT DOWNLOAD DIRECTORY"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="20dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Default folder where downloaded files will be placed"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:layout_marginTop="2dp" />
+
+            <LinearLayout
+                android:id="@+id/settings_btn_change_default_dir"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp"
+                android:layout_marginTop="6dp"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:src="@drawable/ic_folder"
+                    android:tint="?attr/accentColor"
+                    android:scaleType="centerInside"
+                    android:layout_marginEnd="10dp" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/settings_text_default_folder_path"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="/storage/emulated/0/Download"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="13sp"
+                        android:singleLine="true"
+                        android:ellipsize="middle" />
+
+                    <TextView
+                        android:id="@+id/settings_text_default_free_space"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Storage: Accessible"
+                        android:textColor="#4CAF50"
+                        android:textSize="11sp"
+                        android:fontFamily="sans-serif-medium"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:text="Browse"
+                    android:textColor="?attr/accentColor"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:layout_marginStart="8dp" />
+            </LinearLayout>
+
+            <!-- Network & Automation Rules -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="AUTOMATION &amp; NETWORK RULES"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="20dp" />
+
+            <!-- Wi-Fi Only Switch Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp"
+                android:layout_marginTop="8dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Wi-Fi Only Mode"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="13sp"
+                        android:fontFamily="sans-serif-bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Pause transfers on cellular and resume on Wi-Fi"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="11sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <CheckBox
+                    android:id="@+id/settings_check_wifi_only"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="#BB86FC" />
+            </LinearLayout>
+
+            <!-- Battery Saver Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp"
+                android:layout_marginTop="8dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Battery Saver Protection"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="13sp"
+                        android:fontFamily="sans-serif-bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Pause active downloads when battery is below 15%"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="11sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <CheckBox
+                    android:id="@+id/settings_check_battery_saver"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="#BB86FC" />
+            </LinearLayout>
+
+            <!-- Category Subfolders Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp"
+                android:layout_marginTop="8dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Category Subfolders"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="13sp"
+                        android:fontFamily="sans-serif-bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Sort files into Videos, Music, Documents, and Archives"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="11sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <CheckBox
+                    android:id="@+id/settings_check_category_folders"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="#BB86FC" />
+            </LinearLayout>
+
+            <!-- Time Window / Night Scheduling Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="TIME WINDOW SCHEDULING (NIGHT DOWNLOADS)"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="16dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp"
+                android:layout_marginTop="8dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Enable Scheduled Time Window"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="13sp"
+                        android:fontFamily="sans-serif-bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Only transfer downloads during configured hours"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="11sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <CheckBox
+                    android:id="@+id/settings_check_schedule"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="#BB86FC" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/settings_layout_schedule_hours"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="8dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginEnd="6dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="START TIME (HH:MM)"
+                        android:textColor="?attr/accentColor"
+                        android:textSize="10sp"
+                        android:fontFamily="sans-serif-bold" />
+
+                    <EditText
+                        android:id="@+id/settings_edit_schedule_start"
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:background="?attr/bgInputBox"
+                        android:text="02:00"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="13sp"
+                        android:gravity="center"
+                        android:singleLine="true"
+                        android:layout_marginTop="4dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginStart="6dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="END TIME (HH:MM)"
+                        android:textColor="?attr/accentColor"
+                        android:textSize="10sp"
+                        android:fontFamily="sans-serif-bold" />
+
+                    <EditText
+                        android:id="@+id/settings_edit_schedule_end"
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:background="?attr/bgInputBox"
+                        android:text="06:00"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="13sp"
+                        android:gravity="center"
+                        android:singleLine="true"
+                        android:layout_marginTop="4dp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Archive Automation Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ARCHIVE MANAGEMENT"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="16dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp"
+                android:layout_marginTop="6dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Auto-extract ZIP archives"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="13sp"
+                        android:fontFamily="sans-serif-medium" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Automatically unpack ZIP files into a subfolder upon completion"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="11sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <CheckBox
+                    android:id="@+id/settings_check_auto_extract"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="#BB86FC" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <!-- Action Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="14dp">
+
+        <Button
+            android:id="@+id/settings_btn_cancel"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1"
+            android:text="Cancel"
+            android:textColor="?attr/textPrimary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/bgBtnSecondary"
+            android:layout_marginEnd="8dp" />
+
+        <Button
+            android:id="@+id/settings_btn_save"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1"
+            android:text="Save Settings"
+            android:textColor="?attr/textPrimary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-bold"
+            android:background="@drawable/bg_btn_primary"
+            android:layout_marginStart="8dp" />
+    </LinearLayout>
+
+</LinearLayout>

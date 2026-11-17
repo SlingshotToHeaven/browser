@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="20dp">
+
+    <!-- Header -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="DEFAULT SEARCH ENGINE"
+        android:textColor="?attr/accentColor"
+        android:textSize="12sp"
+        android:fontFamily="sans-serif-bold"
+        android:letterSpacing="0.08" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Choose your preferred search engine for queries entered in the address bar."
+        android:textColor="?attr/textSecondary"
+        android:textSize="12sp"
+        android:layout_marginTop="4dp" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxHeight="340dp"
+        android:layout_marginTop="14dp"
+        android:overScrollMode="never">
+
+        <RadioGroup
+            android:id="@+id/search_engine_radio_group"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- DuckDuckGo -->
+            <RadioButton
+                android:id="@+id/radio_engine_ddg"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="DuckDuckGo\nPrivacy-first search, does not track or profile"
+                android:textColor="?attr/textPrimary"
+                android:textSize="13sp"
+                android:buttonTint="#BB86FC"
+                android:lineSpacingExtra="2dp"
+                android:paddingStart="8dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp" />
+
+            <!-- Brave Search -->
+            <RadioButton
+                android:id="@+id/radio_engine_brave"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Brave Search\nIndependent, private web index built from scratch"
+                android:textColor="?attr/textPrimary"
+                android:textSize="13sp"
+                android:buttonTint="#BB86FC"
+                android:lineSpacingExtra="2dp"
+                android:paddingStart="8dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp" />
+
+            <!-- Startpage -->
+            <RadioButton
+                android:id="@+id/radio_engine_startpage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Startpage\nGoogle search results with complete privacy protection"
+                android:textColor="?attr/textPrimary"
+                android:textSize="13sp"
+                android:buttonTint="#BB86FC"
+                android:lineSpacingExtra="2dp"
+                android:paddingStart="8dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp" />
+
+            <!-- SearXNG -->
+            <RadioButton
+                android:id="@+id/radio_engine_searxng"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="SearXNG\nDecentralized, open-source privacy metasearch"
+                android:textColor="?attr/textPrimary"
+                android:textSize="13sp"
+                android:buttonTint="#BB86FC"
+                android:lineSpacingExtra="2dp"
+                android:paddingStart="8dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp" />
+
+            <!-- Google -->
+            <RadioButton
+                android:id="@+id/radio_engine_google"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Google\nStandard global search index"
+                android:textColor="?attr/textPrimary"
+                android:textSize="13sp"
+                android:buttonTint="#BB86FC"
+                android:lineSpacingExtra="2dp"
+                android:paddingStart="8dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp" />
+
+            <!-- Bing -->
+            <RadioButton
+                android:id="@+id/radio_engine_bing"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Bing\nMicrosoft web and image search"
+                android:textColor="?attr/textPrimary"
+                android:textSize="13sp"
+                android:buttonTint="#BB86FC"
+                android:lineSpacingExtra="2dp"
+                android:paddingStart="8dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp" />
+
+            <!-- Custom URL -->
+            <RadioButton
+                android:id="@+id/radio_engine_custom"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Custom Search URL\nUser-specified search engine query template"
+                android:textColor="?attr/textPrimary"
+                android:textSize="13sp"
+                android:buttonTint="#BB86FC"
+                android:lineSpacingExtra="2dp"
+                android:paddingStart="8dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp" />
+        </RadioGroup>
+    </ScrollView>
+
+    <!-- Custom URL Input (Conditional) -->
+    <LinearLayout
+        android:id="@+id/layout_custom_search_url"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="CUSTOM QUERY URL (E.G. HTTPS://SEARCH.ME/?Q=)"
+            android:textColor="?attr/accentColor"
+            android:textSize="10sp"
+            android:fontFamily="sans-serif-bold" />
+
+        <EditText
+            android:id="@+id/edit_custom_search_url"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:background="@drawable/bg_input_box"
+            android:hint="https://example.com/search?q="
+            android:textColorHint="#608E8EA8"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:singleLine="true"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:layout_marginTop="4dp" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="14dp" />
+
+    <!-- Action Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/dialog_search_btn_cancel"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1"
+            android:text="Cancel"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="@drawable/bg_btn_secondary"
+            android:layout_marginEnd="6dp" />
+
+        <Button
+            android:id="@+id/dialog_search_btn_save"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1"
+            android:text="Select"
+            android:textColor="#000000"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-bold"
+            android:background="@drawable/bg_btn_primary"
+            android:layout_marginStart="6dp" />
+    </LinearLayout>
+
+</LinearLayout>

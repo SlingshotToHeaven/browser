@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="20dp">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="14dp">
+
+        <ImageView
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:src="@drawable/ic_link"
+            android:tint="#BB86FC"
+            android:background="@drawable/bg_pill_thread_selected"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:layout_marginEnd="12dp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Add Download"
+                android:textColor="?attr/textPrimary"
+                android:textSize="18sp"
+                android:fontFamily="sans-serif-bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Paste direct HTTP / HTTPS link"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="DOWNLOAD URL"
+            android:textColor="?attr/accentColor"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-bold"
+            android:letterSpacing="0.05" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/bgInputBox"
+            android:paddingStart="12dp"
+            android:paddingEnd="8dp"
+            android:layout_marginTop="6dp">
+
+            <EditText
+                android:id="@+id/add_url_edit_text"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:hint="https://example.com/file.zip"
+                android:textColor="?attr/textPrimary"
+                android:textColorHint="?attr/textMuted"
+                android:textSize="13sp"
+                android:singleLine="true"
+                android:background="@null" />
+
+            <TextView
+                android:id="@+id/add_url_btn_paste"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:text="Paste"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:gravity="center"
+                android:background="@drawable/bg_pill_thread_unselected"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginStart="6dp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/add_url_btn_switch_batch"
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:text="Need multiple links? Switch to Batch Import"
+            android:textColor="?attr/accentColor"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif-bold"
+            android:gravity="center"
+            android:background="@drawable/bg_pill_thread_unselected"
+            android:layout_marginTop="12dp" />
+
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <!-- Action Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="14dp">
+
+        <Button
+            android:id="@+id/add_url_btn_cancel"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1"
+            android:text="Cancel"
+            android:textColor="?attr/textPrimary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/bgBtnSecondary"
+            android:layout_marginEnd="8dp" />
+
+        <Button
+            android:id="@+id/add_url_btn_continue"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1"
+            android:text="Continue"
+            android:textColor="?attr/textPrimary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-bold"
+            android:background="@drawable/bg_btn_primary"
+            android:layout_marginStart="8dp" />
+    </LinearLayout>
+
+</LinearLayout>

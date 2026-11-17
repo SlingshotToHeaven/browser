@@ -1,0 +1,379 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?attr/surfaceRoot">
+
+    <!-- Top Toolbars Container (Standard Toolbar & Selection Toolbar) -->
+    <FrameLayout
+        android:id="@+id/downloads_toolbars_container"
+        android:layout_width="match_parent"
+        android:layout_height="54dp">
+
+        <!-- Top Standard Toolbar -->
+        <LinearLayout
+            android:id="@+id/downloads_toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:background="?attr/surfaceToolbar">
+
+            <ImageView
+                android:id="@+id/btn_back"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_arrow_back"
+                android:scaleType="centerInside"
+                android:tint="?attr/iconTintPrimary"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:padding="8dp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:paddingStart="10dp"
+                android:paddingEnd="8dp">
+
+                <TextView
+                    android:id="@+id/downloads_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Downloads"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="17sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-bold" />
+
+                <TextView
+                    android:id="@+id/tv_aggregate_speed"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Speed: 0 B/s"
+                    android:textColor="#4CAF50"
+                    android:textSize="11sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-bold"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <ImageView
+                android:id="@+id/btn_toggle_search"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_search"
+                android:scaleType="centerInside"
+                android:tint="?attr/iconTintPrimary"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:padding="8dp" />
+
+            <ImageView
+                android:id="@+id/btn_add_download"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_add"
+                android:scaleType="centerInside"
+                android:tint="?attr/accentColor"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:padding="8dp" />
+
+            <ImageView
+                android:id="@+id/btn_overflow_menu"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_more_vert"
+                android:scaleType="centerInside"
+                android:tint="?attr/iconTintSecondary"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:padding="8dp" />
+        </LinearLayout>
+
+        <!-- Contextual Selection Toolbar -->
+        <LinearLayout
+            android:id="@+id/downloads_selection_toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/surfaceToolbar"
+            android:paddingStart="8dp"
+            android:paddingEnd="12dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/downloads_btn_close_selection"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_close"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="?attr/iconTintPrimary"
+                android:padding="8dp" />
+
+            <TextView
+                android:id="@+id/downloads_text_selected_count"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="1 selected"
+                android:textColor="?attr/accentColor"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-bold"
+                android:layout_marginStart="8dp" />
+
+            <TextView
+                android:id="@+id/downloads_btn_select_all"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:gravity="center"
+                android:text="Select All"
+                android:textColor="?attr/accentColor"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif-medium"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp" />
+
+            <ImageView
+                android:id="@+id/downloads_btn_share_selected"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_share"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="?attr/iconTintPrimary"
+                android:padding="8dp"
+                android:layout_marginStart="2dp" />
+
+            <ImageView
+                android:id="@+id/downloads_btn_delete_selected"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_trash"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="#FF5252"
+                android:padding="8dp"
+                android:layout_marginStart="2dp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Hairline Separator -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <!-- Expandable Search Bar -->
+    <LinearLayout
+        android:id="@+id/search_bar_container"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="?attr/surfaceToolbar"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/edit_search"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:hint="Search downloads..."
+            android:textColor="?attr/textPrimary"
+            android:textColorHint="?attr/textMuted"
+            android:textSize="13sp"
+            android:singleLine="true"
+            android:background="@null" />
+
+        <ImageView
+            android:id="@+id/btn_clear_search"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_error"
+            android:scaleType="centerInside"
+            android:tint="?attr/iconTintSecondary"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="6dp" />
+    </LinearLayout>
+
+    <!-- Filter Pills Strip (Full Edge-to-Edge bleed) -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:overScrollMode="never"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:clipToPadding="false">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/pill_all"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="All"
+                android:textColor="?attr/textPrimary"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:background="?attr/bgFilterPillSelected"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/pill_active"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="Active"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:background="?attr/bgFilterPillUnselected"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/pill_completed"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="Completed"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:background="?attr/bgFilterPillUnselected"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/pill_videos"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="Videos"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:background="?attr/bgFilterPillUnselected"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/pill_music"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="Music"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:background="?attr/bgFilterPillUnselected"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/pill_docs"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="Documents"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:background="?attr/bgFilterPillUnselected"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/pill_archives"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="Archives"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:background="?attr/bgFilterPillUnselected"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <!-- Main Content Area (List or Empty View) -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ListView
+            android:id="@+id/list_downloads"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:divider="@null"
+            android:dividerHeight="0dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="16dp"
+            android:clipToPadding="false" />
+
+        <LinearLayout
+            android:id="@+id/layout_empty_state"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="32dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:src="@drawable/ic_download"
+                android:scaleType="centerInside"
+                android:tint="?attr/iconTintSecondary"
+                android:alpha="0.35"
+                android:layout_marginBottom="14dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="No downloads yet"
+                android:textColor="?attr/textPrimary"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Files you download in the browser will appear here"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:gravity="center"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+    </FrameLayout>
+
+</LinearLayout>

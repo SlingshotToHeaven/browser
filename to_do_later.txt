@@ -1,0 +1,70 @@
+# TO-DO LATER: DEFERRED EXTENDED FEATURES
+# Note: These features require Heavy External C/C++ NDK Libraries or specialized third-party dependencies.
+
+The core download engine, queue management, AMOLED UI overhaul, Android platform
+integration, multi-segment downloading, time-window scheduling, batch URL import,
+link availability verification, ZIP extraction, and media sniffing are 100% complete.
+
+The items below are catalogued for future roadmap consideration:
+
+--------------------------------------------------------------------------------
+1. BitTorrent & Magnet Link Protocol Engine
+--------------------------------------------------------------------------------
+- Description:
+  Full BitTorrent protocol support, DHT routing, tracker communication, magnet link
+  metadata resolving, and multi-file torrent downloading.
+- Implementation Requirement:
+  Requires Heavy External C/C++ NDK Libraries:
+  * libtorrent-rasterbar compiled for Android ABIs (arm64-v8a, armeabi-v7a, x86_64).
+  * Java JNI bridge (e.g., libtorrent4j).
+- Estimated Size Overhead:
+  Adds approximately 25MB to 40MB of native shared objects (.so files) to the APK.
+
+--------------------------------------------------------------------------------
+2. FFmpeg Media Stream Merging & Transcoding (HLS/DASH Remuxing)
+--------------------------------------------------------------------------------
+- Description:
+  Muxing separate audio and video streams (e.g., adaptive 1080p/4K streams), remuxing
+  HLS .ts transport stream chunks into standard .mp4 containers, and media format conversion.
+- Implementation Requirement:
+  Requires Heavy External C/C++ NDK Libraries:
+  * FFmpeg native binaries and libraries (libavcodec, libavformat, libavutil, libswscale).
+  * Android wrapper library (e.g., FFmpegKit or mobile-ffmpeg).
+- Estimated Size Overhead:
+  Adds approximately 30MB to 50MB of native binary overhead to the APK.
+
+--------------------------------------------------------------------------------
+3. Proprietary Multi-Format Archive Extraction (RAR, 7z, TAR)
+--------------------------------------------------------------------------------
+- Description:
+  Decompressing RAR5 archives, multipart RAR sets (.part1.rar or .r00-.r99), password-protected
+  RAR files, and LZMA/LZMA2 compressed 7z archives.
+  (Note: Standard .zip archive extraction is already implemented in pure Java with Zip-Slip protection).
+- Implementation Requirement:
+  Requires Heavy External C/C++ NDK Libraries:
+  * UnRAR native C++ library (UnRAR JNI / libunrar.so).
+  * 7-Zip native C++ port (p7zip-android / lib7za.so).
+- Estimated Size Overhead:
+  Adds approximately 10MB to 20MB of native shared libraries.
+
+--------------------------------------------------------------------------------
+4. Legacy & Alternative File Transfer Protocols (FTP, FTPS, SFTP, WebDAV)
+--------------------------------------------------------------------------------
+- Description:
+  Transferring files over traditional FTP/FTPS servers, SSH File Transfer Protocol (SFTP),
+  and WebDAV cloud storage repositories with credentials management.
+- Implementation Requirement:
+  Requires specialized external protocol libraries:
+  * Apache Commons Net (for FTP/FTPS).
+  * JSch / Apache Mina SSHD (for SFTP / SSH keys).
+  * Sardine / OkHttp WebDAV extensions.
+
+--------------------------------------------------------------------------------
+5. RSS-Based Automated Link Feed Monitoring
+--------------------------------------------------------------------------------
+- Description:
+  Background polling of RSS and Atom syndication feeds with user-configurable regex
+  keyword filters to automatically queue media enclosures for scheduled downloads.
+- Implementation Requirement:
+  Requires background WorkManager periodic task scheduling and an XML/Atom feed parser
+  (e.g., AndroidX WorkManager, ROME or custom XmlPullParser automation service).

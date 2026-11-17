@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgTabCard"
+    android:padding="18dp">
+
+    <!-- Tab Selector Bar -->
+    <LinearLayout
+        android:id="@+id/ctx_tab_bar"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:orientation="horizontal"
+        android:background="?attr/bgOmniboxPill"
+        android:padding="3dp"
+        android:layout_marginBottom="14dp">
+
+        <TextView
+            android:id="@+id/ctx_tab_link"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="Link"
+            android:gravity="center"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-bold"
+            android:background="?attr/bgTabCardActive"
+            android:clickable="true"
+            android:focusable="true" />
+
+        <TextView
+            android:id="@+id/ctx_tab_image"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="Image"
+            android:gravity="center"
+            android:textColor="?attr/textSecondary"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-bold"
+            android:clickable="true"
+            android:focusable="true" />
+    </LinearLayout>
+
+    <!-- Header / Title -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="10dp">
+
+        <ImageView
+            android:id="@+id/ctx_header_icon"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_share"
+            android:tint="?attr/accentColor"
+            android:background="?attr/bgTabCardActive"
+            android:padding="6dp"
+            android:scaleType="centerInside"
+            android:layout_marginEnd="10dp" />
+
+        <TextView
+            android:id="@+id/ctx_header_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Target URL"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-bold"
+            android:singleLine="true"
+            android:ellipsize="middle" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Action Rows Container -->
+    <LinearLayout
+        android:id="@+id/ctx_actions_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical" />
+
+    <Button
+        android:id="@+id/ctx_btn_dismiss"
+        android:layout_width="match_parent"
+        android:layout_height="42dp"
+        android:text="Cancel"
+        android:textColor="?attr/textSecondary"
+        android:textSize="13sp"
+        android:fontFamily="sans-serif-medium"
+        android:background="?attr/bgTabCard"
+        android:layout_marginTop="10dp" />
+
+</LinearLayout>

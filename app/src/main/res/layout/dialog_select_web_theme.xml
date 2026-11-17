@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="20dp">
+
+    <!-- Header -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="WEBSITE PREFERENCE"
+        android:textColor="?attr/accentColor"
+        android:textSize="12sp"
+        android:fontFamily="sans-serif-bold"
+        android:letterSpacing="0.08" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Control whether websites render their native dark/light style or get force-darkened."
+        android:textColor="?attr/textSecondary"
+        android:textSize="12sp"
+        android:layout_marginTop="4dp" />
+
+    <RadioGroup
+        android:id="@+id/dialog_radio_group_web_theme"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="14dp">
+
+        <!-- Dark (Requests Native Dark Theme) -->
+        <RadioButton
+            android:id="@+id/radio_web_theme_dark"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Dark (Requests Dark Theme)\nTells websites to load their official dark styles"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:buttonTint="#00E5FF"
+            android:lineSpacingExtra="2dp"
+            android:paddingStart="8dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp" />
+
+        <!-- Light (Requests Native Light Theme) -->
+        <RadioButton
+            android:id="@+id/radio_web_theme_light"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Light (Requests Light Theme)\nTells websites to load their official light styles"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:buttonTint="#00E5FF"
+            android:lineSpacingExtra="2dp"
+            android:paddingStart="8dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp" />
+
+        <!-- System Default -->
+        <RadioButton
+            android:id="@+id/radio_web_theme_system"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="System Default (Auto)\nPasses your device day/night setting to websites"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:buttonTint="#00E5FF"
+            android:lineSpacingExtra="2dp"
+            android:paddingStart="8dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp" />
+
+        <!-- Force Dark (Algorithmic Darkening) -->
+        <RadioButton
+            android:id="@+id/radio_web_theme_force_dark"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Force Dark (Inverted)\nAutomatically darkens all web pages even without dark mode"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:buttonTint="#00E5FF"
+            android:lineSpacingExtra="2dp"
+            android:paddingStart="8dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp" />
+    </RadioGroup>
+</LinearLayout>

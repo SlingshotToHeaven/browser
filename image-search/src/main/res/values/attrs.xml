@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr name="surfaceRoot" format="color" />
+    <attr name="surfaceToolbar" format="color" />
+    <attr name="surfaceCard" format="color" />
+    <attr name="surfacePill" format="color" />
+    <attr name="borderHairline" format="color" />
+    <attr name="borderPill" format="color" />
+    <attr name="textPrimary" format="color" />
+    <attr name="textSecondary" format="color" />
+    <attr name="textMuted" format="color" />
+    <attr name="iconTintPrimary" format="color" />
+    <attr name="iconTintSecondary" format="color" />
+    <attr name="accentColor" format="color" />
+    <attr name="bgCardDownload" format="reference" />
+    <attr name="bgDialogSurface" format="reference" />
+    <attr name="bgInputBox" format="reference" />
+    <attr name="bgPillThreadUnselected" format="reference" />
+</resources>

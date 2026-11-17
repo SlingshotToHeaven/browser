@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?attr/surfaceRoot">
+
+    <!-- Top Action Bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="?attr/surfaceToolbar"
+        android:paddingStart="16dp"
+        android:paddingEnd="12dp">
+
+        <TextView
+            android:id="@+id/tabs_grid_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Tabs"
+            android:textColor="?attr/textPrimary"
+            android:textSize="18sp"
+            android:fontFamily="sans-serif-bold" />
+
+        <ImageView
+            android:id="@+id/tabs_btn_new_incognito"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_incognito"
+            android:scaleType="centerInside"
+            android:tint="#BB86FC"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="8dp"
+            android:layout_marginEnd="4dp" />
+
+        <ImageView
+            android:id="@+id/tabs_btn_new_tab"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_add"
+            android:scaleType="centerInside"
+            android:tint="?attr/iconTintPrimary"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="8dp"
+            android:layout_marginEnd="4dp" />
+
+        <ImageView
+            android:id="@+id/tabs_btn_close_all"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_trash"
+            android:scaleType="centerInside"
+            android:tint="#FF5252"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="8dp" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <!-- Tabs RecyclerView (2 columns grid with swipe support) -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler_tabs"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:padding="12dp"
+        android:clipToPadding="false"
+        android:scrollbarStyle="outsideOverlay"
+        android:scrollbars="vertical" />
+
+</LinearLayout>

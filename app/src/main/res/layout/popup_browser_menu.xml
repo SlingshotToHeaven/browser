@@ -1,0 +1,530 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="220dp"
+    android:layout_height="wrap_content"
+    android:background="?attr/bgMenuDropdown"
+    android:overScrollMode="never"
+    android:elevation="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
+
+        <!-- Top Navigation Actions Bar (Back, Forward, Refresh) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp">
+
+            <!-- Back Button -->
+            <ImageButton
+                android:id="@+id/menu_nav_back"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_arrow_back"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="?attr/iconTintPrimary"
+                android:contentDescription="Back"
+                android:scaleType="centerInside" />
+
+            <!-- Forward Button -->
+            <ImageButton
+                android:id="@+id/menu_nav_forward"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_arrow_forward"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="?attr/iconTintPrimary"
+                android:contentDescription="Forward"
+                android:scaleType="centerInside" />
+
+            <!-- Refresh Button -->
+            <ImageButton
+                android:id="@+id/menu_nav_reload"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_reload"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="?attr/iconTintPrimary"
+                android:contentDescription="Reload"
+                android:scaleType="centerInside" />
+        </LinearLayout>
+
+        <!-- Subtle Divider -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="?attr/borderHairline"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="4dp" />
+
+        <!-- Bookmark Toggle -->
+        <LinearLayout
+            android:id="@+id/menu_item_bookmark"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:id="@+id/menu_icon_bookmark"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:tint="?attr/iconTintPrimary"
+                android:src="@drawable/ic_bookmark"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:id="@+id/menu_text_bookmark"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Add to Bookmarks"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+        </LinearLayout>
+
+        <!-- Bookmarks List -->
+        <LinearLayout
+            android:id="@+id/menu_item_bookmarks_list"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:tint="?attr/iconTintPrimary"
+                android:src="@drawable/ic_bookmarks_folder"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Bookmarks"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+        </LinearLayout>
+
+        <!-- History -->
+        <LinearLayout
+            android:id="@+id/menu_item_history"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:tint="?attr/iconTintPrimary"
+                android:src="@drawable/ic_history"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="History"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+        </LinearLayout>
+
+        <!-- Downloads -->
+        <LinearLayout
+            android:id="@+id/menu_item_downloads"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:tint="?attr/iconTintPrimary"
+                android:src="@drawable/ic_download"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Downloads"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+        </LinearLayout>
+
+        <!-- Grab Page Links (LinkGrabber) -->
+        <LinearLayout
+            android:id="@+id/menu_item_grab_links"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:tint="?attr/iconTintPrimary"
+                android:src="@drawable/ic_link"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Grab Page Links"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+        </LinearLayout>
+
+        <!-- Subtle Divider -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="?attr/borderHairline"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="4dp" />
+
+        <!-- Ad Blocker Shield -->
+        <LinearLayout
+            android:id="@+id/menu_item_adblock"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:id="@+id/menu_icon_adblock"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:src="@drawable/ic_shield"
+                android:tint="#4CAF50"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Ad Blocker"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+
+            <TextView
+                android:id="@+id/menu_badge_adblock"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0"
+                android:textSize="11sp"
+                android:textColor="#4CAF50"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Agent Toggle -->
+        <LinearLayout
+            android:id="@+id/menu_item_agent"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:id="@+id/menu_icon_agent"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:src="@drawable/ic_ai_spark"
+                android:tint="#4A88F7"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Agent"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+
+            <Switch
+                android:id="@+id/menu_switch_agent"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:clickable="false"
+                android:focusable="false" />
+        </LinearLayout>
+
+        <!-- Search by Image -->
+        <LinearLayout
+            android:id="@+id/menu_item_image_search"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:src="@drawable/ic_image_search"
+                android:tint="?attr/accentColor"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Search by Image"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Lens"
+                android:textSize="10.5sp"
+                android:textColor="?attr/accentColor"
+                android:fontFamily="sans-serif-bold" />
+        </LinearLayout>
+
+        <!-- Desktop Mode Toggle -->
+        <LinearLayout
+            android:id="@+id/menu_item_desktop"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:tint="?attr/iconTintPrimary"
+                android:src="@drawable/ic_desktop"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Desktop Site"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+
+            <TextView
+                android:id="@+id/menu_badge_desktop"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="OFF"
+                android:textSize="11sp"
+                android:textColor="?attr/textSecondary"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Reader Mode -->
+        <LinearLayout
+            android:id="@+id/menu_item_reader"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:tint="?attr/iconTintPrimary"
+                android:src="@drawable/ic_reader"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Reader Mode"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+        </LinearLayout>
+
+        <!-- Find in Page -->
+        <LinearLayout
+            android:id="@+id/menu_item_find"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:tint="?attr/iconTintPrimary"
+                android:src="@drawable/ic_find"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Find in Page"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+        </LinearLayout>
+
+        <!-- Share Page -->
+        <LinearLayout
+            android:id="@+id/menu_item_share"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:tint="?attr/iconTintPrimary"
+                android:src="@drawable/ic_share"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Share Page"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+        </LinearLayout>
+
+        <!-- Settings -->
+        <LinearLayout
+            android:id="@+id/menu_item_settings"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:tint="?attr/iconTintPrimary"
+                android:src="@drawable/ic_settings"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Settings"
+                android:textSize="14sp"
+                android:textColor="?attr/textPrimary"
+                android:fontFamily="sans-serif-medium" />
+        </LinearLayout>
+
+        <!-- Subtle Divider -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="?attr/borderHairline"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="4dp" />
+
+        <!-- Fire / Nuke Action -->
+        <LinearLayout
+            android:id="@+id/menu_item_nuke"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:tint="?attr/iconTintPrimary"
+                android:src="@drawable/ic_fire"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Fire / Nuke Data"
+                android:textSize="14sp"
+                android:textColor="#FF5555"
+                android:fontFamily="sans-serif-medium" />
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

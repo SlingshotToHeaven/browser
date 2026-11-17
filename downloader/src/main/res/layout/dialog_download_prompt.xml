@@ -1,0 +1,484 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="20dp">
+
+    <!-- Dialog Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="14dp">
+
+        <ImageView
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:src="@drawable/ic_download"
+            android:tint="#BB86FC"
+            android:background="@drawable/bg_pill_thread_selected"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:layout_marginEnd="12dp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="New Download"
+                android:textColor="?attr/textPrimary"
+                android:textSize="18sp"
+                android:fontFamily="sans-serif-bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Configure transfer parameters"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:maxHeight="440dp"
+        android:scrollbars="vertical"
+        android:fadeScrollbars="false"
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- File Name Field -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="FILE NAME"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:paddingStart="12dp"
+                android:paddingEnd="8dp"
+                android:layout_marginTop="6dp">
+
+                <EditText
+                    android:id="@+id/prompt_edit_filename"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:textColor="?attr/textPrimary"
+                    android:textColorHint="?attr/textMuted"
+                    android:textSize="14sp"
+                    android:singleLine="true"
+                    android:background="@null" />
+
+                <ImageView
+                    android:id="@+id/prompt_btn_clear_name"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:src="@drawable/ic_error"
+                    android:tint="?attr/iconTintSecondary"
+                    android:scaleType="centerInside"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:padding="6dp" />
+            </LinearLayout>
+
+            <!-- Destination Folder Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SAVE LOCATION"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="16dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp"
+                android:layout_marginTop="6dp">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_folder"
+                    android:tint="?attr/accentColor"
+                    android:scaleType="centerInside"
+                    android:layout_marginEnd="10dp" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/prompt_text_folder_path"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="/storage/emulated/0/Download"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="13sp"
+                        android:singleLine="true"
+                        android:ellipsize="middle" />
+
+                    <TextView
+                        android:id="@+id/prompt_text_free_space"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Free Space: Calculating..."
+                        android:textColor="#4CAF50"
+                        android:textSize="11sp"
+                        android:fontFamily="sans-serif-medium"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/prompt_btn_switch_folder"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:text="Toggle"
+                    android:textColor="?attr/accentColor"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:layout_marginStart="8dp" />
+            </LinearLayout>
+
+            <!-- Parallel Segments Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="PARALLEL CONNECTIONS (ACCELERATION)"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="16dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:id="@+id/prompt_pill_thread_1"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:text="1"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/prompt_pill_thread_2"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:text="2"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/prompt_pill_thread_4"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:text="4"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_selected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/prompt_pill_thread_8"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:text="8"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/prompt_pill_thread_16"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:text="16"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/prompt_text_thread_description"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="4 Segments: Balanced speed and server compatibility"
+                android:textColor="?attr/textSecondary"
+                android:textSize="11sp"
+                android:layout_marginTop="6dp" />
+
+            <LinearLayout
+                android:id="@+id/prompt_layout_thread_warning"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="@drawable/bg_warning_card"
+                android:padding="10dp"
+                android:layout_marginTop="8dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_error"
+                    android:tint="#FFB74D"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/prompt_text_thread_warning"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Notice: Video CDNs often throttle, reset, or drop connections when multiple threads are selected. 1 thread is strongly recommended."
+                    android:textColor="#FFD54F"
+                    android:textSize="11sp"
+                    android:lineSpacingExtra="2dp" />
+            </LinearLayout>
+
+            <!-- URL Details Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SOURCE URL"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="16dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="10dp"
+                android:layout_marginTop="6dp">
+
+                <TextView
+                    android:id="@+id/prompt_text_url"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="https://example.com/file.zip"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="12sp"
+                    android:maxLines="2"
+                    android:ellipsize="middle" />
+
+                <ImageView
+                    android:id="@+id/prompt_btn_copy_url"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_content_copy"
+                    android:tint="#BB86FC"
+                    android:scaleType="centerInside"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:padding="5dp"
+                    android:layout_marginStart="8dp" />
+            </LinearLayout>
+
+            <!-- Download Options & Network Rules -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="DOWNLOAD RULES"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="16dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="10dp"
+                android:layout_marginTop="6dp">
+
+                <CheckBox
+                    android:id="@+id/prompt_check_wifi_only"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="#BB86FC" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Download only over Wi-Fi network"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif"
+                    android:layout_marginStart="4dp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="10dp"
+                android:layout_marginTop="6dp">
+
+                <CheckBox
+                    android:id="@+id/prompt_check_subfolders"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="#BB86FC" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Organize into category subfolder"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif"
+                    android:layout_marginStart="4dp" />
+            </LinearLayout>
+
+            <!-- Duplicate / Incomplete Warning Card -->
+            <LinearLayout
+                android:id="@+id/prompt_layout_duplicate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_warning_card"
+                android:padding="12dp"
+                android:layout_marginTop="14dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/prompt_text_duplicate_msg"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Notice: An incomplete download for this file already exists. You can update the link and resume existing progress."
+                    android:textColor="#FFB74D"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif" />
+
+                <TextView
+                    android:id="@+id/prompt_btn_resume_existing"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:text="Resume / Update Link"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_btn_primary"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:layout_marginTop="8dp" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <!-- Action Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="14dp">
+
+        <Button
+            android:id="@+id/prompt_btn_cancel"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1"
+            android:text="Cancel"
+            android:textColor="?attr/textPrimary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/bgBtnSecondary"
+            android:layout_marginEnd="8dp" />
+
+        <Button
+            android:id="@+id/prompt_btn_download"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1"
+            android:text="Download"
+            android:textColor="?attr/textPrimary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-bold"
+            android:background="@drawable/bg_btn_primary"
+            android:layout_marginStart="8dp" />
+    </LinearLayout>
+
+</LinearLayout>

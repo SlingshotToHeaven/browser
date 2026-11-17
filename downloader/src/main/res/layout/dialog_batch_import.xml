@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="20dp">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="14dp">
+
+        <ImageView
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:src="@drawable/ic_link"
+            android:tint="?attr/accentColor"
+            android:background="@drawable/bg_pill_thread_selected"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:layout_marginEnd="12dp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Batch Import Downloads"
+                android:textColor="?attr/textPrimary"
+                android:textSize="18sp"
+                android:fontFamily="sans-serif-bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Paste multiple URLs or raw text containing links"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxHeight="360dp"
+        android:layout_marginTop="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="ENTER OR PASTE LINKS"
+                    android:textColor="?attr/accentColor"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:letterSpacing="0.05" />
+
+                <TextView
+                    android:id="@+id/batch_btn_paste"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:text="Paste Clipboard"
+                    android:textColor="?attr/accentColor"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:layout_marginEnd="6dp" />
+
+                <TextView
+                    android:id="@+id/batch_btn_clear"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:text="Clear"
+                    android:textColor="#FF5252"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp" />
+            </LinearLayout>
+
+            <EditText
+                android:id="@+id/batch_edit_urls"
+                android:layout_width="match_parent"
+                android:layout_height="120dp"
+                android:gravity="top|start"
+                android:hint="https://example.com/file1.zip\nhttps://example.com/file2.mp4\n..."
+                android:textColor="?attr/textPrimary"
+                android:textColorHint="?attr/textMuted"
+                android:textSize="12sp"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp"
+                android:scrollbars="vertical"
+                android:layout_marginTop="8dp" />
+
+            <!-- Detected Summary Badge -->
+            <TextView
+                android:id="@+id/batch_text_count_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0 valid links detected"
+                android:textColor="#4CAF50"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:layout_marginTop="6dp" />
+
+            <!-- Parallel Segments -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="PARALLEL CONNECTIONS PER FILE"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="14dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="6dp">
+
+                <TextView
+                    android:id="@+id/batch_pill_thread_1"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1"
+                    android:text="1"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/batch_pill_thread_2"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1"
+                    android:text="2"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/batch_pill_thread_4"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1"
+                    android:text="4"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_selected"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/batch_pill_thread_8"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1"
+                    android:text="8"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_pill_thread_unselected" />
+            </LinearLayout>
+
+            <!-- Rules Checkboxes -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="10dp"
+                android:layout_marginTop="12dp">
+
+                <CheckBox
+                    android:id="@+id/batch_check_wifi_only"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="#BB86FC" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Download only over Wi-Fi"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="12sp"
+                    android:layout_marginStart="4dp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="10dp"
+                android:layout_marginTop="6dp">
+
+                <CheckBox
+                    android:id="@+id/batch_check_subfolders"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="#BB86FC" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Organize into category subfolders"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="12sp"
+                    android:layout_marginStart="4dp" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline"
+        android:layout_marginTop="14dp" />
+
+    <!-- Action Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="14dp">
+
+        <Button
+            android:id="@+id/batch_btn_cancel"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1"
+            android:text="Cancel"
+            android:textColor="?attr/textPrimary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/bgBtnSecondary"
+            android:layout_marginEnd="8dp" />
+
+        <Button
+            android:id="@+id/batch_btn_enqueue"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1"
+            android:text="Queue All"
+            android:textColor="?attr/textPrimary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-bold"
+            android:background="@drawable/bg_btn_primary"
+            android:layout_marginStart="8dp" />
+    </LinearLayout>
+
+</LinearLayout>

@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="20dp">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="16dp">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:src="@drawable/ic_sort"
+            android:tint="#BB86FC"
+            android:scaleType="centerInside" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SORT DOWNLOADS"
+            android:textColor="?attr/textPrimary"
+            android:textSize="16sp"
+            android:fontFamily="sans-serif-bold"
+            android:letterSpacing="0.05"
+            android:layout_marginStart="10dp" />
+    </LinearLayout>
+
+    <!-- Sort Options List -->
+    <TextView
+        android:id="@+id/sort_by_date_desc"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="Date Added: Newest First"
+        android:textColor="?attr/textPrimary"
+        android:textSize="14sp"
+        android:gravity="center_vertical"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:background="?android:attr/selectableItemBackground" />
+
+    <TextView
+        android:id="@+id/sort_by_date_asc"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="Date Added: Oldest First"
+        android:textColor="?attr/textPrimary"
+        android:textSize="14sp"
+        android:gravity="center_vertical"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:background="?android:attr/selectableItemBackground" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/sort_by_size_desc"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="File Size: Largest First"
+        android:textColor="?attr/textPrimary"
+        android:textSize="14sp"
+        android:gravity="center_vertical"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:background="?android:attr/selectableItemBackground" />
+
+    <TextView
+        android:id="@+id/sort_by_size_asc"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="File Size: Smallest First"
+        android:textColor="?attr/textPrimary"
+        android:textSize="14sp"
+        android:gravity="center_vertical"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:background="?android:attr/selectableItemBackground" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/sort_by_name_asc"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="Filename: A to Z"
+        android:textColor="?attr/textPrimary"
+        android:textSize="14sp"
+        android:gravity="center_vertical"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:background="?android:attr/selectableItemBackground" />
+
+    <TextView
+        android:id="@+id/sort_by_name_desc"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="Filename: Z to A"
+        android:textColor="?attr/textPrimary"
+        android:textSize="14sp"
+        android:gravity="center_vertical"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:background="?android:attr/selectableItemBackground" />
+
+</LinearLayout>

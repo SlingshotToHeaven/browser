@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_input_box"
+    android:padding="12dp"
+    android:layout_marginBottom="8dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/seg_text_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Segment #1"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-bold" />
+
+        <TextView
+            android:id="@+id/seg_text_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ACTIVE"
+            android:textColor="?attr/accentColor"
+            android:textSize="10sp"
+            android:fontFamily="sans-serif-bold"
+            android:background="@drawable/bg_badge_running"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/seg_text_range"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Byte Range: 0 - 268435455"
+        android:textColor="?attr/textSecondary"
+        android:textSize="11sp"
+        android:layout_marginTop="4dp" />
+
+    <ProgressBar
+        android:id="@+id/seg_progress_bar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="6dp"
+        android:layout_marginTop="8dp"
+        android:progress="0"
+        android:max="100"
+        android:progressTint="#BB86FC"
+        android:progressBackgroundTint="?attr/borderHairline" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="6dp">
+
+        <TextView
+            android:id="@+id/seg_text_transferred"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="0 B / 256 MB"
+            android:textColor="?attr/textSecondary"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/seg_text_percent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0%"
+            android:textColor="?attr/textPrimary"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-bold" />
+    </LinearLayout>
+
+</LinearLayout>

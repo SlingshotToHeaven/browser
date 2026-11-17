@@ -1,0 +1,7 @@
+name = "adblock-state-sync"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+[[kv_namespaces]]
+binding = "ADBLOCK_STATES"
+id = "0f146e78a71f4ac5822027bb22ee2615"

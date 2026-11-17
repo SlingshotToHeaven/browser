@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fillViewport="true"
+    android:scrollbars="vertical"
+    android:background="?attr/bgDialogSurface">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <!-- Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="14dp">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_code"
+                android:tint="?attr/accentColor"
+                android:layout_marginEnd="10dp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="New Custom Scriptlet"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="16sp"
+                    android:fontFamily="sans-serif-medium" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Create a standalone JS block, defuser, or hook"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btn_close_create_script"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_close"
+                android:tint="?attr/textSecondary"
+                android:contentDescription="Close" />
+        </LinearLayout>
+
+        <!-- Preset / Template Selector Header -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Choose Starter Preset / Hook Template:"
+            android:textColor="?attr/textSecondary"
+            android:textSize="12sp"
+            android:layout_marginBottom="8dp" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:overScrollMode="never"
+            android:layout_marginBottom="8dp">
+
+            <LinearLayout
+                android:id="@+id/layout_preset_chips"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical" />
+        </HorizontalScrollView>
+
+        <!-- Template Description Box -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/bgInputBox"
+            android:padding="10dp"
+            android:layout_marginBottom="14dp">
+
+            <ImageView
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:src="@drawable/ic_code"
+                android:tint="?attr/accentColor"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/tv_preset_desc"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Empty starter template for custom JavaScript adblocking or page modification."
+                android:textColor="?attr/textSecondary"
+                android:textSize="11sp"
+                android:lineSpacingExtra="2dp" />
+        </LinearLayout>
+
+        <!-- Script Name Input -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Script File Name (.js):"
+            android:textColor="?attr/textSecondary"
+            android:textSize="12sp"
+            android:layout_marginBottom="4dp" />
+
+        <EditText
+            android:id="@+id/edit_script_name"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:background="?attr/bgInputBox"
+            android:hint="my_custom_script"
+            android:text="custom_script"
+            android:textColor="?attr/textPrimary"
+            android:textColorHint="?attr/textSecondary"
+            android:textSize="13sp"
+            android:fontFamily="monospace"
+            android:padding="10dp"
+            android:singleLine="true"
+            android:layout_marginBottom="12dp" />
+
+        <!-- URL Match Pattern -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Target URL Match Pattern (@match):"
+            android:textColor="?attr/textSecondary"
+            android:textSize="12sp"
+            android:layout_marginBottom="4dp" />
+
+        <EditText
+            android:id="@+id/edit_script_match"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:background="?attr/bgInputBox"
+            android:hint="*"
+            android:text="*"
+            android:textColor="?attr/textPrimary"
+            android:textColorHint="?attr/textSecondary"
+            android:textSize="13sp"
+            android:fontFamily="monospace"
+            android:padding="10dp"
+            android:singleLine="true"
+            android:layout_marginBottom="14dp" />
+
+        <!-- Timing Selection -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="When to inject into page:"
+            android:textColor="?attr/textSecondary"
+            android:textSize="12sp"
+            android:layout_marginBottom="8dp" />
+
+        <!-- Timing Option 1: document-start -->
+        <LinearLayout
+            android:id="@+id/layout_option_doc_start"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/bgInputBox"
+            android:padding="12dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:layout_marginBottom="8dp">
+
+            <RadioButton
+                android:id="@+id/rb_timing_start"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:clickable="false"
+                android:buttonTint="?attr/accentColor" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_marginStart="8dp">
+
+                <TextView
+                    android:id="@+id/tv_title_doc_start"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="document-start (Early / Pre-load)"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-medium" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Runs before page scripts execute. Required for window.open, ytInitialPlayerResponse, adsbygoogle, and fetch hooks."
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Timing Option 2: document-end -->
+        <LinearLayout
+            android:id="@+id/layout_option_doc_end"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/bgInputBox"
+            android:padding="12dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:layout_marginBottom="18dp">
+
+            <RadioButton
+                android:id="@+id/rb_timing_end"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="false"
+                android:clickable="false"
+                android:buttonTint="?attr/accentColor" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_marginStart="8dp">
+
+                <TextView
+                    android:id="@+id/tv_title_doc_end"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="document-end (DOM Ready / Page Loaded)"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-medium" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Runs after HTML is parsed and DOM is loaded. Best for MutationObserver, DOM banner pruning, and cosmetic tweaks."
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Bottom Buttons -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="end">
+
+            <Button
+                android:id="@+id/btn_cancel_create_script"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="Cancel"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:background="?attr/borderHairline"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/btn_confirm_create_script"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="Create Script"
+                android:textColor="@android:color/white"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:background="?attr/bgAccentButton"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp" />
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

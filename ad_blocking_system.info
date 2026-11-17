@@ -1,0 +1,347 @@
+================================================================================
+AD BLOCKING SYSTEM ARCHITECTURE AND IMPLEMENTATION OVERVIEW
+================================================================================
+
+This document details the multi-tiered ad blocking, cosmetic filtering, anti-adblock
+defusion, interactive element picking, custom user scriptlet execution, and cloud
+state synchronization architecture implemented across this browser.
+
+--------------------------------------------------------------------------------
+1. ARCHITECTURAL OVERVIEW & DEFENSE PIPELINE
+--------------------------------------------------------------------------------
+Ad blocking is not merely client-side JavaScript injection or a static host list.
+It operates as a coordinated, seven-layer defense pipeline spanning native Android
+Java interception, typed synthetic responses, early DOM defusion, interactive element
+pruning, custom user scriptlets, and Cloudflare KV state synchronization:
+
+  [Inbound Web Resource Request]
+                 |
+                 v
+  +-------------------------------------------------------------+
+  | LAYER 1: Native Network Interception                        |
+  | (PrivacyWebViewClient.shouldInterceptRequest)               |
+  | - Intercepts all subresources (scripts, CSS, XHR, iframes)  |
+  | - Evaluates URLs against AdBlockManager and blockedHosts    |
+  | - O(1) hash set matching with domain hierarchy fallback     |
+  +-------------------------------------------------------------+
+                 |
+                 +--> [If Allowed] --> Passes to network
+                 |
+                 +--> [If Blocked]
+                         |
+                         v
+  +-------------------------------------------------------------+
+  | LAYER 2: Synthetic Benign Response Engine                   |
+  | (PrivacyWebViewClient)                                      |
+  | - Emits HTTP 200 OK (never 403 / connection drop) to avoid  |
+  |   Chromium "Webpage not available" dinosaur error frames    |
+  | - Emits typed payloads (1x1 PNG, empty JS/CSS, empty JSON)  |
+  | - Emits self-collapsing, zero-dimension HTML for iframes   |
+  | - Injects permissive CORS and Access-Control headers        |
+  +-------------------------------------------------------------+
+                         |
+                         v
+  +-------------------------------------------------------------+
+  | LAYER 3: DOM Defusion & Cosmetic Pruning Engine             |
+  | (AntiAdblockDefuser.java injected at document_start)        |
+  | - Early proxy stubs: adsbygoogle, google_ad_client, etc.   |
+  | - Collapses ad placeholders (.adHolder, billboard, mpu)     |
+  | - Safeguards article content (<article>, <main>, <p>)       |
+  | - MutationObserver collapses dynamically injected ad slots  |
+  +-------------------------------------------------------------+
+                         |
+                         v
+  +-------------------------------------------------------------+
+  | LAYER 4: Specialized Feature Defusers                       |
+  | - PopupClickDefuser: Blocks non-gesture window.open calls   |
+  |   and neutralizes invisible clickjacking overlay divs       |
+  | - YouTubeAdDefuser: Strips adPlacements from player configs |
+  |   and hooks JSON.parse / fetch to prevent in-stream ads     |
+  | - UserFiltersManager: Compiles uBlock-format rules          |
+  |   (||domain^, @@||whitelist^, domain##selector)             |
+  +-------------------------------------------------------------+
+                         |
+                         v
+  +-------------------------------------------------------------+
+  | LAYER 5: Interactive Visual Element Picker & Zapper         |
+  | (ElementPickerEngine, ElementPickerBridge, Dialog)          |
+  | - Visual DOM highlighter with semi-transparent overlay      |
+  | - Dynamic opacity slider (10% to 100%) for visual clarity   |
+  | - Specificity selector chips, live test preview toggle      |
+  | - One-tap Element Zapper for instant client-side removal    |
+  | - Direct compilation into UserFiltersManager storage        |
+  +-------------------------------------------------------------+
+                         |
+                         v
+  +-------------------------------------------------------------+
+  | LAYER 6: Dynamic Custom User Scriptlet Engine               |
+  | (UserScriptManager, AdBlockFileManager, Creator Dialog)     |
+  | - In-app scriptlet creation with 6 built-in starter presets |
+  |   (Blank, window.open, ytInitialPlayerResponse, adsbygoogle,|
+  |    fetch/XHR hook, MutationObserver DOM pruner)             |
+  | - Metadata header parsing: @name, @run-at, @match, @enabled |
+  | - Dual-timing injection: document-start (WebViewCompat/     |
+  |   onPageStarted) vs document-end (onPageFinished)           |
+  | - Hot-reloading and timing toggle in Rules & Scripts editor |
+  +-------------------------------------------------------------+
+                         |
+                         v
+  +-------------------------------------------------------------+
+  | LAYER 7: Cloud State Synchronization & Snapshot Versioning  |
+  | (AdBlockCloudClient, AdBlockDiffEngine, CloudStatesDialog)  |
+  | - Cloudflare KV storage sync for hosts, rules, and scripts  |
+  | - Commit history, state snapshot rollbacks, differential    |
+  |   merge restore, and conflict resolution                    |
+  +-------------------------------------------------------------+
+
+--------------------------------------------------------------------------------
+2. DETAILED BREAKDOWN OF SYSTEM LAYERS
+--------------------------------------------------------------------------------
+
+LAYER 1: NATIVE NETWORK INTERCEPTION (JAVA / ANDROID OS)
+- Primary Files:
+  * app/src/main/java/com/privacy/browser/PrivacyWebViewClient.java
+  * app/src/main/java/com/privacy/browser/adblock/AdBlockManager.java
+  * app/src/main/java/com/privacy/browser/TrackerBlocker.java
+  * app_files/adblock/network/hosts.txt (app storage)
+  * app/src/main/assets/filters/hosts.txt (bootstrap template)
+- Operation:
+  * Overrides WebViewClient.shouldInterceptRequest(WebView, WebResourceRequest).
+  * Every request (CSS, JS, images, font, iframe, media, XHR, fetch) is inspected
+    at native Java speed prior to network transmission.
+  * Performs parent-domain and sub-domain parsing against blockedHosts set (O(1)
+    hash lookups for domains like doubleclick.net, googlesyndication.com, etc.).
+  * Recognizes YouTube video ad endpoints (/api/stats/ads, /pagead/, adformat=).
+  * Supports per-site toggles: NoScript, font blocking, large media blocking.
+  * Synchronously updates blocked request counters and statistics exposed in
+    AdBlockDashboardDialog.
+
+LAYER 2: SYNTHETIC BENIGN RESPONSE ENGINE (ANTI-ERROR PLACEHOLDER)
+- Primary File:
+  * app/src/main/java/com/privacy/browser/PrivacyWebViewClient.java
+- Problem Addressed:
+  * Standard ad blockers returning 403 Forbidden or dropping connections cause
+    Chromium to display its built-in "Webpage not available" error box inside
+    ad iframes, leaving visible broken error frames on the page.
+- Implementation:
+  * Every blocked request returns HTTP 200 OK with WebResourceResponse and benign
+    typed payloads matching the expected content type:
+    1. Images: 1x1 transparent PNG byte array (image/png).
+    2. Scripts: "/* blocked by privacy shield */" (application/javascript).
+    3. Stylesheets: "/* blocked */" (text/css).
+    4. APIs / XHR: "{}" (application/json).
+    5. Main-Frame: Clean informative HTML block notification page.
+    6. Subframes / Iframes: Self-collapsing, zero-dimension HTML document:
+       "<!DOCTYPE html><html><head><style>html,body{display:none!important;visibility:hidden!important;margin:0!important;padding:0!important;width:0!important;height:0!important;overflow:hidden!important;border:none!important;}</style></head><body></body></html>"
+  * Injects matching CORS headers (Access-Control-Allow-Origin, Access-Control-Allow-Credentials: true)
+    so single-page applications do not throw synthetic CORS exceptions.
+
+LAYER 3: DOM DEFUSION & COSMETIC PRUNING (DOCUMENT-START INJECTION)
+- Primary File:
+  * app/src/main/java/com/privacy/browser/adblock/AntiAdblockDefuser.java
+  * app_files/adblock/scripts/anti_adblock.js
+  * app_files/adblock/scripts/cosmetic_pruner.js
+- Operation:
+  * Injected at onPageStarted() (document_start) to precede publisher scripts.
+  * Anti-Adblock Shims:
+    - window.adsbygoogle = { loaded: true, push: function(obj) {} };
+    - window.google_ad_client = "ca-pub-0000000000000000";
+    - window.canRunAds = true;
+    - window.isAdBlockActive = false;
+  * Honeypot Bait Handling:
+    - Neutralizes anti-adblock detection scripts looking for collapsed dummy elements.
+  * Exact Container Collapse:
+    - Targets specific ad wrappers (.adHolder, .adHolder.mpu, div[id^="mpu_"],
+      .dmg-ads-ad, .dmg-ads-container, .billboard-container, .connatix-placeholder,
+      .taboola, .outbrain) with:
+      display: none !important;
+      height: 0 !important;
+      min-height: 0 !important;
+      max-height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: none !important;
+  * Content Protection Guards:
+    - Explicitly skips root article elements:
+      if (node.tagName === 'ARTICLE' || node.tagName === 'MAIN' ||
+          node.tagName === 'SECTION' || node.querySelector('p.mol-para-with-font')) continue;
+    - Prevents false-positive hiding of article text paragraphs annotated with publisher
+      ad-marker attributes (e.g. Daily Mail is="ad-marker-p").
+  * MutationObserver:
+    - Observes childList additions to body and dynamically prunes late-loaded ad slots.
+
+LAYER 4: SPECIALIZED DEFUSERS AND USER FILTER RULES
+- Primary Files:
+  * app/src/main/java/com/privacy/browser/adblock/PopupClickDefuser.java
+  * app/src/main/java/com/privacy/browser/adblock/YouTubeAdDefuser.java
+  * app/src/main/java/com/privacy/browser/adblock/rules/UserFiltersManager.java
+- Popup & Clickjack Defuser:
+  * Tracks user gesture timestamps (click, keydown, touchend).
+  * Hooks window.open; aborts popup attempts lacking a recent user gesture (< 1500ms)
+    or matching known aggressive popup ad networks (popads, exoclick, adcash, etc.).
+  * Scans for and removes full-screen transparent clickjacking divs (high z-index,
+    position: fixed/absolute, opacity: 0).
+- YouTube In-Stream Ad Defuser:
+  * Strips adPlacements, adSlots, and playerAds from window.ytInitialPlayerResponse.
+  * Hooks JSON.parse and Response.prototype.json to sanitize video stream responses.
+  * Fast-forwards video ads and clicks skip buttons if an ad bypasses initial filters.
+- User Filters (uBlock Origin format):
+  * Enables user-created network blocking (||host^), whitelisting (@@||host^),
+    and cosmetic element rules (domain##selector).
+  * Parses and caches rules per origin in UserFiltersManager.
+
+LAYER 5: INTERACTIVE VISUAL ELEMENT PICKER & ZAPPER
+- Primary Files:
+  * app/src/main/java/com/privacy/browser/adblock/picker/ElementPickerEngine.java
+  * app/src/main/java/com/privacy/browser/adblock/picker/ElementPickerBridge.java
+  * app/src/main/java/com/privacy/browser/adblock/picker/ElementPickerDialog.java
+- Interactive Picker Workflow:
+  * Activated from toolbar or adblock menu. Injects ElementPickerEngine into WebView.
+  * Renders a full-screen semi-transparent hovering inspector with red selection boundary
+    and badge indicating the tag and dimensions of the targeted element.
+  * Communicates via native JavascriptInterface (ElementPickerBridge) on element tap.
+- ElementPickerDialog Capabilities:
+  * Dynamic Opacity Slider: Interactive SeekBar at the top of the dialog allowing
+    the user to adjust modal opacity from 10% (ultra-clear glass) to 100% (solid),
+    letting them clearly view the underlying DOM element while configuring rules.
+    Opacity preference is persisted in SharedPreferences (element_picker_prefs).
+  * Rounded Specificity Chips: Generates candidate selectors (e.g. ID, class combinations,
+    composite path, parent container) styled as selectable pills.
+  * Custom Selector Input: Monospace input field for manual CSS tweaking.
+  * Live Preview Toggle: "Preview" button temporarily hides or reveals the element
+    in the live page to verify rule correctness before persisting.
+  * Create Rule: Appends the rule (e.g. example.com##div.banner-ad) directly into
+    UserFiltersManager and persists it to app_files/adblock/cosmetic/cosmetic_rules.txt.
+- Element Zapper Workflow:
+  * Immediate one-shot mode: user taps an element, and it is instantly pruned from
+    the live DOM without opening the dialog or persisting permanent filter rules.
+
+LAYER 6: DYNAMIC CUSTOM USER SCRIPTLET ENGINE
+- Primary Files:
+  * app/src/main/java/com/privacy/browser/adblock/UserScriptManager.java
+  * app/src/main/java/com/privacy/browser/adblock/AdBlockFileManager.java
+  * app/src/main/res/layout/dialog_create_user_script.xml
+  * app_files/adblock/user_scripts/*.js
+- Capabilities:
+  * Enables users to create, edit, toggle, and delete standalone custom JavaScript
+    scriptlets directly within the browser without rebuilding or recompiling.
+  * Header Metadata Parsing:
+    - // @name         Scriptlet display name
+    - // @run-at       document-start | document-end
+    - // @match        URL wildcard pattern (*, *youtube.com*, <all_urls>)
+    - // @enabled      true | false
+- Dual-Timing Injection Pipeline:
+  * document-start: Injected via WebViewCompat.addDocumentStartJavaScript and onPageStarted
+    prior to any webpage scripts executing. Essential for API hooks, defusers, and stubs.
+  * document-end: Injected via evaluateJavascript in onPageFinished after the DOM is ready.
+    Ideal for MutationObserver hooks, late cosmetic pruning, and DOM modifications.
+- Scriptlet Creation Modal & Presets:
+  * Spacious responsive container (min 92% screen width, capped at 520dp).
+  * 6 Built-In Starter Presets & Hook Templates:
+    1. Blank Scriptlet: Clean IIFE boilerplate for generic adblock logic.
+    2. window.open (Popups): Intercepts and sanitizes window.open to suppress popups.
+    3. ytInitialPlayerResponse (YouTube): Defuses in-stream video ads before player init.
+    4. adsbygoogle (Anti-Adblock): Stubs adsbygoogle array and bait detection probes.
+    5. fetch / XHR (Network): Hooks fetch and XMLHttpRequest to filter tracking payloads.
+    6. MutationObserver (DOM): Real-time observer to detect and prune dynamic ad elements.
+  * Automated defaults: selecting any preset pre-populates the filename, target @match,
+    recommended lifecycle timing, and production-grade boilerplate.
+
+LAYER 7: CLOUD STATE SYNCHRONIZATION & SNAPSHOT VERSIONING
+- Primary Files:
+  * app/src/main/java/com/privacy/browser/adblock/cloud/AdBlockCloudClient.java
+  * app/src/main/java/com/privacy/browser/adblock/cloud/AdBlockDiffEngine.java
+  * app/src/main/java/com/privacy/browser/adblock/cloud/AdBlockCloudStatesDialog.java
+- Functionality:
+  * Backs up and synchronizes user adblock rules, custom hosts, cosmetic filters,
+    and user scriptlets to Cloudflare KV storage.
+  * Displays visual commit history with timestamps, commit messages, and author hashes.
+  * Differential Inspection: side-by-side or line-by-line diff view showing added,
+    modified, or deleted rules across state snapshots.
+  * Rollback & Restore: Allows rolling back to any historical snapshot or performing
+    differential merge restores without overwriting unaffected local rules.
+  * Zero-knowledge token storage: API keys and account credentials securely saved in
+    private SharedPreferences.
+
+--------------------------------------------------------------------------------
+3. APP STORAGE & FILE SYSTEM ARCHITECTURE
+--------------------------------------------------------------------------------
+All ad blocking components reside in the app-private internal storage directory:
+  context.getFilesDir() / adblock /
+
+Directory Structure:
+  adblock/
+  |-- network/
+  |   `-- hosts.txt               <-- Active network blocklist (hostnames)
+  |-- cosmetic/
+  |   `-- cosmetic_rules.txt      <-- Active cosmetic element hiding rules
+  |-- scripts/
+  |   |-- anti_adblock.js         <-- Built-in anti-adblock shim and bait stubs
+  |   |-- cosmetic_pruner.js      <-- Built-in cosmetic DOM pruning script
+  |   |-- popups.js               <-- Built-in popup and overlay defuser
+  |   `-- youtube.js              <-- Built-in YouTube player ad defuser
+  `-- user_scripts/
+      |-- popup_interceptor.js    <-- User custom scriptlet
+      |-- yt_ad_defuser.js        <-- User custom scriptlet
+      `-- *.js                    <-- Additional standalone user scriptlets
+
+Asset Bootstrapping:
+- On first launch, AdBlockFileManager checks if app_files/adblock exists.
+- If missing, it copies baseline templates from assets/filters/ into app storage.
+- If assets are newer than storage files, it performs automated non-destructive updates.
+- All modifications made via the in-app editor or element picker persist in storage
+  and survive app updates.
+
+--------------------------------------------------------------------------------
+4. IN-APP IDE & RULES / SCRIPTS MANAGER (AdBlockModuleManagerDialog)
+--------------------------------------------------------------------------------
+A full-featured in-app code editor and management studio accessible via browser settings:
+- Active Tabs:
+  * Network: Edit blocked hostnames (hosts.txt) with instant validation.
+  * Cosmetic: Edit CSS cosmetic rules (cosmetic_rules.txt).
+  * Built-in Scripts: Edit anti-adblock, cosmetic pruner, popup, and YouTube defusers.
+  * User Scripts: Dynamically generated tabs for each user scriptlet in user_scripts/.
+- Editor Features:
+  * Monospace font with syntax highlighting container.
+  * Line numbering and active cursor line tracking.
+  * Hot-Reload: Applies modified rules or scripts to active WebViews immediately
+    without requiring an application restart.
+  * Timing Toggle: Live header button toggling script timing between document-start
+    and document-end, automatically updating the @run-at header in the editor text.
+  * Delete Script: Permanently deletes custom user scriptlets with confirmation.
+  * Cloud States Access: One-tap button opening Cloudflare KV sync and history dialog.
+
+--------------------------------------------------------------------------------
+5. SUMMARY OF KEY SOURCE FILES
+--------------------------------------------------------------------------------
+- app/src/main/java/com/privacy/browser/PrivacyWebViewClient.java
+  -> shouldInterceptRequest, benign payloads, CORS headers, subframe collapsing.
+- app/src/main/java/com/privacy/browser/adblock/AdBlockManager.java
+  -> Central coordinator, host blocklists, per-site toggles, blocking statistics.
+- app/src/main/java/com/privacy/browser/adblock/AdBlockFileManager.java
+  -> Manages storage persistence, bootstrapping, and I/O for hosts, rules, and scripts.
+- app/src/main/java/com/privacy/browser/adblock/AdBlockModuleManagerDialog.java
+  -> In-app IDE for editing, creating, and hot-reloading rules and scriptlets.
+- app/src/main/java/com/privacy/browser/adblock/UserScriptManager.java
+  -> Manages user scriptlet lifecycle, metadata parsing, presets, and dual-timing injection.
+- app/src/main/java/com/privacy/browser/adblock/AntiAdblockDefuser.java
+  -> document_start script injection, anti-adblock stubs, cosmetic pruning.
+- app/src/main/java/com/privacy/browser/adblock/PopupClickDefuser.java
+  -> window.open interception, transparent overlay defusion.
+- app/src/main/java/com/privacy/browser/adblock/YouTubeAdDefuser.java
+  -> Strips in-stream YouTube ads from initial player responses and JSON APIs.
+- app/src/main/java/com/privacy/browser/adblock/rules/UserFiltersManager.java
+  -> Stores, parses, and compiles custom uBlock Origin filter syntax rules.
+- app/src/main/java/com/privacy/browser/adblock/picker/ElementPickerEngine.java
+  -> Injected DOM element selection engine for visual element picking and zapping.
+- app/src/main/java/com/privacy/browser/adblock/picker/ElementPickerBridge.java
+  -> Native JavascriptInterface bridging DOM element selections to Android.
+- app/src/main/java/com/privacy/browser/adblock/picker/ElementPickerDialog.java
+  -> Visual dialog with opacity slider, specificity chips, and live test preview.
+- app/src/main/java/com/privacy/browser/adblock/cloud/AdBlockCloudClient.java
+  -> Cloudflare KV REST client for cloud backup and multi-device state synchronization.
+- app/src/main/java/com/privacy/browser/adblock/cloud/AdBlockDiffEngine.java
+  -> Differential comparison engine computing additions/deletions across snapshots.
+- app/src/main/java/com/privacy/browser/adblock/cloud/AdBlockCloudStatesDialog.java
+  -> UI for inspecting snapshot history, visual diffs, and rolling back/merging states.
+================================================================================

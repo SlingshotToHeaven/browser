@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Translucent Frosted Glass Dial Disc (Radius 26dp, Center 54, 54) -->
+    <path
+        android:pathData="M54,28 C68.36,28 80,39.64 80,54 C80,68.36 68.36,80 54,80 C39.64,80 28,68.36 28,54 C28,39.64 39.64,28 54,28 Z"
+        android:fillColor="#18FFFFFF" />
+
+    <!-- Apple-style Vector Globe Graticule (inside the R=26dp circle) -->
+    <!-- 1. Equator: horizontal line from X=28 to X=80 at Y=54 -->
+    <path
+        android:pathData="M28,54 L80,54"
+        android:strokeWidth="0.8"
+        android:strokeColor="#30FFFFFF" />
+
+    <!-- 2. Prime Meridian: vertical line from Y=28 to Y=80 at X=54 -->
+    <path
+        android:pathData="M54,28 L54,80"
+        android:strokeWidth="0.8"
+        android:strokeColor="#30FFFFFF" />
+
+    <!-- 3. Northern Latitude Parallels (Y=41 & Y=47.5) -->
+    <path
+        android:pathData="M31.5,41 C38,44 70,44 76.5,41"
+        android:strokeWidth="0.75"
+        android:strokeColor="#28FFFFFF" />
+    <path
+        android:pathData="M28.8,47.5 C36,49.5 72,49.5 79.2,47.5"
+        android:strokeWidth="0.75"
+        android:strokeColor="#28FFFFFF" />
+
+    <!-- 4. Southern Latitude Parallels (Y=60.5 & Y=67) -->
+    <path
+        android:pathData="M28.8,60.5 C36,58.5 72,58.5 79.2,60.5"
+        android:strokeWidth="0.75"
+        android:strokeColor="#28FFFFFF" />
+    <path
+        android:pathData="M31.5,67 C38,64 70,64 76.5,67"
+        android:strokeWidth="0.75"
+        android:strokeColor="#28FFFFFF" />
+
+    <!-- 5. Western Longitude Meridians (Elliptical Arcs passing through poles 54,28 and 54,80) -->
+    <path
+        android:pathData="M54,28 C42,28 42,80 54,80"
+        android:strokeWidth="0.8"
+        android:strokeColor="#2EFFFFFF" />
+    <path
+        android:pathData="M54,28 C33,28 33,80 54,80"
+        android:strokeWidth="0.7"
+        android:strokeColor="#24FFFFFF" />
+
+    <!-- 6. Eastern Longitude Meridians (Elliptical Arcs passing through poles 54,28 and 54,80) -->
+    <path
+        android:pathData="M54,28 C66,28 66,80 54,80"
+        android:strokeWidth="0.8"
+        android:strokeColor="#2EFFFFFF" />
+    <path
+        android:pathData="M54,28 C75,28 75,80 54,80"
+        android:strokeWidth="0.7"
+        android:strokeColor="#24FFFFFF" />
+
+    <!-- Outer Compass Bezel / Ticks Ring (Radius 26dp, Center 54, 54) -->
+    <path
+        android:pathData="M54,28 C68.36,28 80,39.64 80,54 C80,68.36 68.36,80 54,80 C39.64,80 28,68.36 28,54 C28,39.64 39.64,28 54,28 Z"
+        android:strokeWidth="1.2"
+        android:strokeColor="#50FFFFFF"
+        android:fillColor="#00000000" />
+
+    <!-- Major Cardinal Ticks (North, East, South, West) -->
+    <path
+        android:pathData="M54,24.5 L54,28.5 M54,79.5 L54,83.5 M24.5,54 L28.5,54 M79.5,54 L83.5,54"
+        android:strokeWidth="2"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round" />
+
+    <!-- 45-degree Diagonal Ticks (NE, NW, SE, SW) -->
+    <path
+        android:pathData="M72.4,35.6 L69.5,38.5 M35.6,72.4 L38.5,69.5 M35.6,35.6 L38.5,38.5 M72.4,72.4 L69.5,69.5"
+        android:strokeWidth="1.4"
+        android:strokeColor="#85FFFFFF"
+        android:strokeLineCap="round" />
+
+    <!-- Bold 3D Compass Needle Assembly -->
+
+    <!-- 1. Needle Drop Shadow (Translucent directional shadow on dial face) -->
+    <path
+        android:pathData="M55.2,55.2 L73.2,37.2 L60.8,60.8 L37.2,73.2 L49.6,49.6 Z"
+        android:fillColor="#38001028" />
+
+    <!-- 2. North Needle: Left / Top-Left Facet (Luminous Coral Red Key Light) -->
+    <path
+        android:pathData="M54,54 L72,36 L48.4,48.4 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="48.4"
+                android:startY="48.4"
+                android:endX="72"
+                android:endY="36"
+                android:type="linear">
+                <item android:color="#FF5A36" android:offset="0.0" />
+                <item android:color="#FF2D55" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 3. North Needle: Right / Bottom-Right Facet (Deep Ruby Crimson Bevel Shadow) -->
+    <path
+        android:pathData="M54,54 L72,36 L59.6,59.6 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="54"
+                android:startY="54"
+                android:endX="72"
+                android:endY="36"
+                android:type="linear">
+                <item android:color="#D0001C" android:offset="0.0" />
+                <item android:color="#980012" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 4. South Needle: Left / Top-Left Facet (Brilliant Platinum White Light) -->
+    <path
+        android:pathData="M54,54 L36,72 L48.4,48.4 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="48.4"
+                android:startY="48.4"
+                android:endX="36"
+                android:endY="72"
+                android:type="linear">
+                <item android:color="#FFFFFF" android:offset="0.0" />
+                <item android:color="#F1F5F9" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 5. South Needle: Right / Bottom-Right Facet (Cool Brushed Titanium Shadow) -->
+    <path
+        android:pathData="M54,54 L36,72 L59.6,59.6 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="54"
+                android:startY="54"
+                android:endX="36"
+                android:endY="72"
+                android:type="linear">
+                <item android:color="#CBD5E1" android:offset="0.0" />
+                <item android:color="#94A3B8" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 6. Center Spine Razor Hairline Highlight -->
+    <path
+        android:pathData="M72,36 L54,54"
+        android:strokeWidth="0.6"
+        android:strokeColor="#70FFFFFF"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M54,54 L36,72"
+        android:strokeWidth="0.5"
+        android:strokeColor="#50FFFFFF"
+        android:strokeLineCap="round" />
+
+    <!-- 7. Center Pivot Mechanical Jewel Assembly -->
+    <!-- Drop Shadow beneath Pivot -->
+    <path
+        android:pathData="M54,48.8 C56.87,48.8 59.2,51.13 59.2,54 C59.2,56.87 56.87,59.2 54,59.2 C51.13,59.2 48.8,56.87 48.8,54 C48.8,51.13 51.13,48.8 54,48.8 Z"
+        android:fillColor="#35000000" />
+
+    <!-- Outer Chrome Ring (Polished White Collar) -->
+    <path
+        android:pathData="M54,49.5 C56.48,49.5 58.5,51.52 58.5,54 C58.5,56.48 56.48,58.5 54,58.5 C51.52,58.5 49.5,56.48 49.5,54 C49.5,51.52 51.52,49.5 54,49.5 Z"
+        android:fillColor="#FFFFFF" />
+
+    <!-- Recessed Cobalt Jewel Bed -->
+    <path
+        android:pathData="M54,51.2 C55.55,51.2 56.8,52.45 56.8,54 C56.8,55.55 55.55,56.8 54,56.8 C52.45,56.8 51.2,55.55 51.2,54 C51.2,52.45 52.45,51.2 54,51.2 Z"
+        android:fillColor="#0A1E3F" />
+
+    <!-- Central Sapphire Pin Specular Point -->
+    <path
+        android:pathData="M53.7,52.4 C54.42,52.4 55.0,52.98 55.0,53.7 C55.0,54.42 54.42,55.0 53.7,55.0 C52.98,55.0 52.4,54.42 52.4,53.7 C52.4,52.98 52.98,52.4 53.7,52.4 Z"
+        android:fillColor="#38BDF8" />
+
+</vector>

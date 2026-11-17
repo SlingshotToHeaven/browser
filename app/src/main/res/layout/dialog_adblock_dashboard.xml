@@ -1,0 +1,490 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="20dp">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="14dp">
+
+        <ImageView
+            android:id="@+id/iv_adblock_icon"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@drawable/ic_shield"
+            android:tint="#4CAF50" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="uBlock Origin Shield"
+                android:textColor="?attr/textPrimary"
+                android:textSize="17sp"
+                android:fontFamily="sans-serif-medium" />
+
+            <TextView
+                android:id="@+id/tv_adblock_site_host"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="example.com"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:singleLine="true"
+                android:ellipsize="end" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/btn_close_adblock"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:src="@drawable/ic_close"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:tint="?attr/iconTintSecondary"
+            android:scaleType="centerInside" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:maxHeight="480dp"
+        android:overScrollMode="never">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Site Protection Master Toggle Card -->
+            <LinearLayout
+                android:id="@+id/card_site_protection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/surfaceCard"
+                android:padding="14dp"
+                android:layout_marginBottom="10dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_site_protection_title"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Power: Filtering on this site"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="14sp"
+                        android:fontFamily="sans-serif-medium" />
+
+                    <TextView
+                        android:id="@+id/tv_site_protection_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="ACTIVE"
+                        android:textColor="#4CAF50"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/switch_site_protection"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:thumbTint="?attr/switchThumbTint"
+                    android:trackTint="?attr/switchTrackTint"
+                    android:checked="true" />
+            </LinearLayout>
+
+            <!-- Quick Tools Toolbar (Zapper, Picker, My Filters, Edit Modules) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="12dp">
+
+                <Button
+                    android:id="@+id/btn_tool_zapper"
+                    android:layout_width="0dp"
+                    android:layout_height="38dp"
+                    android:layout_weight="1"
+                    android:text="Zapper"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="11sp"
+                    android:background="?attr/borderHairline"
+                    android:layout_marginEnd="3dp" />
+
+                <Button
+                    android:id="@+id/btn_tool_picker"
+                    android:layout_width="0dp"
+                    android:layout_height="38dp"
+                    android:layout_weight="1"
+                    android:text="Picker"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="11sp"
+                    android:background="?attr/borderHairline"
+                    android:layout_marginStart="3dp"
+                    android:layout_marginEnd="3dp" />
+
+                <Button
+                    android:id="@+id/btn_tool_my_filters"
+                    android:layout_width="0dp"
+                    android:layout_height="38dp"
+                    android:layout_weight="1"
+                    android:text="My Filters"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="11sp"
+                    android:background="?attr/borderHairline"
+                    android:layout_marginStart="3dp"
+                    android:layout_marginEnd="3dp" />
+
+                <Button
+                    android:id="@+id/btn_tool_edit_modules"
+                    android:layout_width="0dp"
+                    android:layout_height="38dp"
+                    android:layout_weight="1.1"
+                    android:text="Modules"
+                    android:textColor="?attr/accentColor"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:background="?attr/borderHairline"
+                    android:layout_marginStart="3dp" />
+            </LinearLayout>
+
+            <!-- Stats Grid (3 Metrics) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="12dp">
+
+                <!-- Blocked on this page -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:background="?attr/surfaceCard"
+                    android:padding="10dp"
+                    android:layout_marginEnd="4dp">
+
+                    <TextView
+                        android:id="@+id/tv_count_page_blocked"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0"
+                        android:textColor="#4CAF50"
+                        android:textSize="20sp"
+                        android:fontFamily="sans-serif-bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Blocked page"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="10sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <!-- Percent Blocked -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:background="?attr/surfaceCard"
+                    android:padding="10dp"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginEnd="2dp">
+
+                    <TextView
+                        android:id="@+id/tv_count_percent_blocked"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0%"
+                        android:textColor="#2196F3"
+                        android:textSize="20sp"
+                        android:fontFamily="sans-serif-bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Req. blocked"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="10sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <!-- Blocked All Time -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1.2"
+                    android:orientation="vertical"
+                    android:background="?attr/surfaceCard"
+                    android:padding="10dp"
+                    android:layout_marginStart="4dp">
+
+                    <TextView
+                        android:id="@+id/tv_count_total_blocked"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="20sp"
+                        android:fontFamily="sans-serif-bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Blocked total"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="10sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Per-Site Granular Switches (uBlock Style) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="?attr/surfaceCard"
+                android:padding="12dp"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Per-Site Rules (uBlock Origin Switches)"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:layout_marginBottom="6dp" />
+
+                <!-- JavaScript NoScript -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="JavaScript (NoScript toggle)"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="12sp" />
+
+                    <Switch
+                        android:id="@+id/switch_site_js"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:thumbTint="?attr/switchThumbTint"
+                        android:trackTint="?attr/switchTrackTint"
+                        android:checked="true" />
+                </LinearLayout>
+
+                <!-- Pop-up Windows -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Block Pop-up Windows"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="12sp" />
+
+                    <Switch
+                        android:id="@+id/switch_site_popups"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:thumbTint="?attr/switchThumbTint"
+                        android:trackTint="?attr/switchTrackTint"
+                        android:checked="true" />
+                </LinearLayout>
+
+                <!-- Cosmetic Filtering -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Cosmetic Element Hiding"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="12sp" />
+
+                    <Switch
+                        android:id="@+id/switch_site_cosmetic"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:thumbTint="?attr/switchThumbTint"
+                        android:trackTint="?attr/switchTrackTint"
+                        android:checked="true" />
+                </LinearLayout>
+
+                <!-- Remote Fonts -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Block Remote Web Fonts"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="12sp" />
+
+                    <Switch
+                        android:id="@+id/switch_site_fonts"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:thumbTint="?attr/switchThumbTint"
+                        android:trackTint="?attr/switchTrackTint"
+                        android:checked="false" />
+                </LinearLayout>
+
+                <!-- Large Media -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Block Large Media (>50KB)"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="12sp" />
+
+                    <Switch
+                        android:id="@+id/switch_site_media"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:thumbTint="?attr/switchThumbTint"
+                        android:trackTint="?attr/switchTrackTint"
+                        android:checked="false" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Anti-Adblock Defeater Details -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="?attr/surfaceCard"
+                android:padding="12dp"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Neutralized Anti-Adblock Probes"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:layout_marginBottom="6dp" />
+
+                <LinearLayout
+                    android:id="@+id/ll_antiadblock_log"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_antiadblock_empty"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="No anti-adblock detection attempts on this page."
+                        android:textColor="?attr/textMuted"
+                        android:textSize="11sp"
+                        android:fontStyle="italic" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Blocked Domains Breakdown -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="?attr/surfaceCard"
+                android:padding="12dp"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Blocked Domains on Page"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:layout_marginBottom="6dp" />
+
+                <LinearLayout
+                    android:id="@+id/ll_blocked_domains"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_blocked_domains_empty"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="No domains blocked on this page yet."
+                        android:textColor="?attr/textMuted"
+                        android:textSize="11sp"
+                        android:fontStyle="italic" />
+                </LinearLayout>
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- Bottom Action: Refresh Page Button -->
+    <Button
+        android:id="@+id/btn_reload_page"
+        android:layout_width="match_parent"
+        android:layout_height="42dp"
+        android:text="Reload Page to Apply Changes"
+        android:textColor="#FFFFFF"
+        android:background="?attr/bgAccentButton"
+        android:textSize="13sp"
+        android:fontFamily="sans-serif-medium"
+        android:layout_marginTop="8dp" />
+
+</LinearLayout>

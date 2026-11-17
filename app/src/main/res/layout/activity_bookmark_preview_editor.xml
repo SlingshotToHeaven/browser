@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?attr/surfaceRoot"
+    android:fitsSystemWindows="true">
+
+    <!-- Top Toolbar -->
+    <LinearLayout
+        android:id="@+id/editor_toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="?attr/surfaceRoot"
+        android:paddingStart="6dp"
+        android:paddingEnd="14dp"
+        android:layout_alignParentTop="true">
+
+        <ImageView
+            android:id="@+id/editor_btn_back"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:src="@drawable/ic_close"
+            android:scaleType="centerInside"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:tint="?attr/iconTintPrimary"
+            android:clickable="true"
+            android:focusable="true"
+            android:padding="8dp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="6dp">
+
+            <TextView
+                android:id="@+id/editor_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Choose Cover Preview"
+                android:textColor="?attr/textPrimary"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-bold" />
+
+            <TextView
+                android:id="@+id/editor_subtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Scroll to target section and tap Save"
+                android:textColor="?attr/textSecondary"
+                android:textSize="10.5sp" />
+        </LinearLayout>
+
+        <!-- Save Action Pill -->
+        <Button
+            android:id="@+id/editor_btn_save"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:text="Save"
+            android:textColor="#000000"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif-bold"
+            android:background="@drawable/bg_history_icon_tile"
+            android:backgroundTint="?attr/accentColor"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp" />
+
+    </LinearLayout>
+
+    <View
+        android:id="@+id/editor_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/surfaceToolbar"
+        android:layout_below="@id/editor_toolbar" />
+
+    <ProgressBar
+        android:id="@+id/editor_progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="2dp"
+        android:layout_below="@id/editor_divider"
+        android:progressDrawable="@drawable/bg_history_icon_tile"
+        android:progressTint="?attr/accentColor"
+        android:visibility="gone" />
+
+    <!-- Interactive Viewport Area with Centered Scaled-Down WebView and Dimmed Square Crop Overlay -->
+    <com.privacy.browser.bookmarks.CropStageContainer
+        android:id="@+id/editor_stage_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/editor_progress"
+        android:background="?attr/surfaceCard">
+
+        <!-- Scaled WebView Wrapper positioned at top-left, dynamically scaled & centered -->
+        <FrameLayout
+            android:id="@+id/editor_webview_wrapper"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start">
+
+            <WebView
+                android:id="@+id/editor_webview"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+        </FrameLayout>
+
+        <!-- Dimmed Square Crop Overlay (interactive visual guide with clear square hole) -->
+        <com.privacy.browser.bookmarks.CropOverlayView
+            android:id="@+id/editor_crop_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Floating Guide Caption -->
+        <TextView
+            android:id="@+id/editor_guide_caption"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="24dp"
+            android:background="@drawable/bg_history_search_pill"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="Drag square &amp; scroll page to choose snap"
+            android:textColor="#CC00E5FF"
+            android:textSize="11.5sp"
+            android:fontFamily="sans-serif-medium" />
+
+    </com.privacy.browser.bookmarks.CropStageContainer>
+
+</RelativeLayout>

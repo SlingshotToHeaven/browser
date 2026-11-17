@@ -1,0 +1,40 @@
+# Android & Gradle Build Artifacts
+.gradle/
+build/
+*/build/
+bin/
+gen/
+out/
+
+# Packaging & Compiled Files
+*.apk
+*.apks
+*.aab
+*.dex
+*.class
+
+# Local Configuration (Android SDK path, etc.)
+local.properties
+
+# Proguard / R8
+proguard/
+
+# Keystores & Signing
+*.keystore
+*.jks
+
+# IDE & Editor Settings
+.idea/
+*.iml
+.vscode/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Node / Cloudflare worker temp (if applicable)
+node_modules/
+.wrangler/

@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?attr/surfaceRoot"
+    android:fitsSystemWindows="true">
+
+    <!-- Top Toolbars Container (Standard Toolbar & Contextual Selection Toolbar) -->
+    <FrameLayout
+        android:id="@+id/history_toolbars_container"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_alignParentTop="true">
+
+        <!-- Top Standard Toolbar (Clean AMOLED Header) -->
+        <LinearLayout
+            android:id="@+id/history_toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/surfaceToolbar"
+            android:paddingStart="6dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:id="@+id/history_btn_back"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_arrow_back"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="?attr/iconTintPrimary"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_marginStart="6dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="History"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="17sp"
+                    android:fontFamily="sans-serif-bold" />
+
+                <TextView
+                    android:id="@+id/history_text_count"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0 visits"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- Clear All (Styled as an AMOLED Outlined Pill) -->
+            <LinearLayout
+                android:id="@+id/history_btn_clear_all"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:gravity="center_vertical"
+                android:background="@drawable/bg_history_clear_badge"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:src="@drawable/ic_trash"
+                    android:tint="#FF5252"
+                    android:scaleType="centerInside"
+                    android:layout_marginEnd="5dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Clear All"
+                    android:textColor="#FF5252"
+                    android:textSize="11.5sp"
+                    android:fontFamily="sans-serif-medium" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Contextual Multi-Selection Toolbar -->
+        <LinearLayout
+            android:id="@+id/history_selection_toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/surfaceToolbar"
+            android:paddingStart="6dp"
+            android:paddingEnd="12dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/history_btn_close_selection"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_close"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="?attr/iconTintPrimary"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp" />
+
+            <TextView
+                android:id="@+id/history_text_selected_count"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="1 selected"
+                android:textColor="#00E5FF"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-bold"
+                android:layout_marginStart="8dp" />
+
+            <TextView
+                android:id="@+id/history_btn_select_all"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:gravity="center"
+                android:text="Select All"
+                android:textColor="?attr/accentColor"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <ImageView
+                android:id="@+id/history_btn_delete_selected"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_trash"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="#FF5252"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp"
+                android:layout_marginStart="4dp" />
+
+        </LinearLayout>
+
+    </FrameLayout>
+
+    <View
+        android:id="@+id/history_toolbar_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/surfaceToolbar"
+        android:layout_below="@id/history_toolbars_container" />
+
+    <!-- Search Box Header (Clean Floating Pill) -->
+    <LinearLayout
+        android:id="@+id/history_search_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/history_toolbar_divider"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="?attr/surfaceRoot"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="8dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/bgSearchPill"
+            android:paddingStart="12dp"
+            android:paddingEnd="8dp">
+
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/ic_search"
+                android:tint="?attr/accentColor"
+                android:scaleType="centerInside"
+                android:layout_marginEnd="8dp" />
+
+            <EditText
+                android:id="@+id/history_edit_search"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@null"
+                android:hint="Search history..."
+                android:textColorHint="?attr/textMuted"
+                android:textColor="?attr/textPrimary"
+                android:textSize="13sp"
+                android:singleLine="true"
+                android:imeOptions="actionSearch" />
+
+            <ImageView
+                android:id="@+id/history_btn_clear_search"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_close"
+                android:tint="?attr/iconTintSecondary"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="5dp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <View
+        android:id="@+id/history_search_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/surfaceToolbar"
+        android:layout_below="@id/history_search_container" />
+
+    <!-- History List (Compact Spacing & Hairline Dividers) -->
+    <ListView
+        android:id="@+id/history_list"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/history_search_divider"
+        android:divider="?attr/borderHairline"
+        android:dividerHeight="1dp"
+        android:overScrollMode="never" />
+
+    <!-- Empty State -->
+    <LinearLayout
+        android:id="@+id/history_empty_view"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="32dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_history"
+            android:tint="?attr/borderHairline"
+            android:scaleType="centerInside"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/history_empty_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="No browsing history"
+            android:textColor="?attr/textPrimary"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif-medium" />
+
+        <TextView
+            android:id="@+id/history_empty_desc"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Pages you visit in standard tabs will appear here."
+            android:textColor="?attr/textSecondary"
+            android:textSize="12sp"
+            android:gravity="center"
+            android:layout_marginTop="4dp" />
+
+    </LinearLayout>
+
+</RelativeLayout>

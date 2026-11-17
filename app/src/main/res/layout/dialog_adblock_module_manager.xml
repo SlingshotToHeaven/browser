@@ -1,0 +1,362 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?attr/surfaceCard"
+    android:padding="16dp">
+
+    <!-- Header bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="14dp">
+
+        <ImageView
+            android:id="@+id/iv_module_icon"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_code"
+            android:tint="?attr/accentColor"
+            android:layout_marginEnd="10dp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tv_module_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Rules &amp; Scriptlets"
+                android:textColor="?attr/textPrimary"
+                android:textSize="17sp"
+                android:fontFamily="sans-serif-medium"
+                android:singleLine="true"
+                android:ellipsize="end" />
+
+            <TextView
+                android:id="@+id/tv_module_subtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Modular adblock engine configuration"
+                android:textColor="?attr/textSecondary"
+                android:textSize="11sp"
+                android:singleLine="true"
+                android:ellipsize="end" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_open_cloud_states"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:text="Cloud States"
+            android:textColor="?attr/accentColor"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/borderHairline"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="6dp" />
+
+        <ImageButton
+            android:id="@+id/btn_close_manager"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_close"
+            android:tint="?attr/textSecondary"
+            android:contentDescription="Close" />
+    </LinearLayout>
+
+    <!-- Category selector pills (Horizontal scroll) -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:overScrollMode="never"
+        android:layout_marginBottom="12dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <!-- Category 1: Network Rules -->
+            <Button
+                android:id="@+id/btn_tab_network"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:text="Network Rules"
+                android:textSize="12sp"
+                android:textColor="?attr/textPrimary"
+                android:background="?attr/borderHairline"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginEnd="6dp" />
+
+            <!-- Category 2: Cosmetic Rules -->
+            <Button
+                android:id="@+id/btn_tab_cosmetic"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:text="Cosmetic Rules"
+                android:textSize="12sp"
+                android:textColor="?attr/textPrimary"
+                android:background="?attr/borderHairline"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginEnd="6dp" />
+
+            <!-- Category 3: Anti-Adblock Defuser -->
+            <Button
+                android:id="@+id/btn_tab_script_anti_adblock"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:text="Anti-Adblock JS"
+                android:textSize="12sp"
+                android:textColor="?attr/textPrimary"
+                android:background="?attr/borderHairline"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginEnd="6dp" />
+
+            <!-- Category 4: Cosmetic Pruner JS -->
+            <Button
+                android:id="@+id/btn_tab_script_cosmetic_pruner"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:text="Cosmetic Pruner JS"
+                android:textSize="12sp"
+                android:textColor="?attr/textPrimary"
+                android:background="?attr/borderHairline"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginEnd="6dp" />
+
+            <!-- Category 5: Popup Defuser JS -->
+            <Button
+                android:id="@+id/btn_tab_script_popups"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:text="Popup Defuser JS"
+                android:textSize="12sp"
+                android:textColor="?attr/textPrimary"
+                android:background="?attr/borderHairline"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginEnd="6dp" />
+
+            <!-- Category 6: YouTube Defuser JS -->
+            <Button
+                android:id="@+id/btn_tab_script_youtube"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:text="YouTube Defuser JS"
+                android:textSize="12sp"
+                android:textColor="?attr/textPrimary"
+                android:background="?attr/borderHairline"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginEnd="6dp" />
+
+            <!-- Custom User Script Tabs Container -->
+            <LinearLayout
+                android:id="@+id/ll_custom_tabs_container"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+
+            <!-- Add Custom Script Button -->
+            <Button
+                android:id="@+id/btn_add_user_script"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:text="+ Add Script"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="?attr/accentColor"
+                android:background="?attr/bgBtnSecondary"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <!-- File sub-selector and status row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:id="@+id/tv_active_file_label"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="hosts.txt (Network Blocklist)"
+            android:textColor="?attr/textPrimary"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif-medium"
+            android:singleLine="true"
+            android:ellipsize="middle" />
+
+        <TextView
+            android:id="@+id/tv_file_stats"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="365 lines | 6.0 KB"
+            android:textColor="?attr/textSecondary"
+            android:textSize="11sp"
+            android:fontFamily="monospace"
+            android:layout_marginStart="8dp" />
+    </LinearLayout>
+
+    <!-- Custom User Script Controls (Visible when editing user script) -->
+    <LinearLayout
+        android:id="@+id/ll_user_script_controls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:visibility="gone"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Inject at:"
+            android:textColor="?attr/textSecondary"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium"
+            android:layout_marginEnd="6dp" />
+
+        <Button
+            android:id="@+id/btn_script_timing"
+            android:layout_width="wrap_content"
+            android:layout_height="28dp"
+            android:text="document-start"
+            android:textColor="?attr/textPrimary"
+            android:textSize="11sp"
+            android:fontFamily="monospace"
+            android:background="?attr/bgBtnSecondary"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:stateListAnimator="@null"
+            android:minHeight="0dp"
+            android:minWidth="0dp" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <Button
+            android:id="@+id/btn_delete_user_script"
+            android:layout_width="wrap_content"
+            android:layout_height="28dp"
+            android:text="Delete Script"
+            android:textColor="#EF4444"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/bgBtnSecondary"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:stateListAnimator="@null"
+            android:minHeight="0dp"
+            android:minWidth="0dp" />
+    </LinearLayout>
+
+    <!-- Editor card container -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:background="?attr/borderHairline"
+        android:padding="2dp">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <EditText
+                android:id="@+id/edit_code_content"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@android:color/transparent"
+                android:gravity="top|start"
+                android:padding="10dp"
+                android:textColor="?attr/textPrimary"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:inputType="textMultiLine|textNoSuggestions"
+                android:scrollbars="vertical" />
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- Action bottom bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="10dp"
+        android:gravity="center_vertical">
+
+        <Button
+            android:id="@+id/btn_restore_default"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:text="Restore"
+            android:textColor="?attr/textSecondary"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/bgBtnSecondary"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:layout_marginEnd="6dp"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <Button
+            android:id="@+id/btn_validate_syntax"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:text="Check Syntax"
+            android:textColor="?attr/textPrimary"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/bgBtnSecondary"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:layout_marginEnd="6dp"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <Button
+            android:id="@+id/btn_save_and_apply"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:text="Save &amp; Apply"
+            android:textColor="@android:color/white"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/bgAccentButton"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:singleLine="true"
+            android:ellipsize="end" />
+    </LinearLayout>
+</LinearLayout>

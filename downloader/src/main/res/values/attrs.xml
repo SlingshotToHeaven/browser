@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dynamic Semantic Theme Attributes -->
+    <attr name="surfaceRoot" format="color" />
+    <attr name="surfaceToolbar" format="color" />
+    <attr name="surfaceCard" format="color" />
+    <attr name="surfacePill" format="color" />
+    <attr name="borderHairline" format="color" />
+    <attr name="borderPill" format="color" />
+    <attr name="textPrimary" format="color" />
+    <attr name="textSecondary" format="color" />
+    <attr name="textMuted" format="color" />
+    <attr name="iconTintPrimary" format="color" />
+    <attr name="iconTintSecondary" format="color" />
+    <attr name="accentColor" format="color" />
+    <attr name="bgCardDownload" format="reference" />
+    <attr name="bgDialogSurface" format="reference" />
+    <attr name="bgOmniboxPill" format="reference" />
+    <attr name="bgMenuDropdown" format="reference" />
+    <attr name="bgBookmarkCard" format="reference" />
+    <attr name="bgTabCard" format="reference" />
+    <attr name="switchThumbTint" format="color" />
+    <attr name="switchTrackTint" format="color" />
+    <attr name="bgAccentButton" format="reference" />
+    <attr name="bgVideoQualitySheet" format="reference" />
+    <attr name="bgQualityItemSelector" format="reference" />
+    <attr name="bgCircleButton" format="reference" />
+    <attr name="bgChipAction" format="reference" />
+    <attr name="bgSearchPill" format="reference" />
+    <attr name="bgBookmarkCardSelected" format="reference" />
+    <attr name="bgTabCardActive" format="reference" />
+    <attr name="bgHistorySelectedRow" format="reference" />
+    <attr name="bgHistoryIconTile" format="reference" />
+    <attr name="bgHistoryCountPill" format="reference" />
+    <attr name="bgTabBadgeBorder" format="reference" />
+    <attr name="bgFilterPillSelected" format="reference" />
+    <attr name="bgFilterPillUnselected" format="reference" />
+    <attr name="bgPillThreadSelected" format="reference" />
+    <attr name="bgPillThreadUnselected" format="reference" />
+    <attr name="bgInputBox" format="reference" />
+    <attr name="bgBtnSecondary" format="reference" />
+</resources>

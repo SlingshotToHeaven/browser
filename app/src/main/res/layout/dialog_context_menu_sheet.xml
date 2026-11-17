@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgTabCard"
+    android:padding="20dp">
+
+    <!-- Header / Title -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="12dp">
+
+        <ImageView
+            android:id="@+id/ctx_header_icon"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_search"
+            android:tint="?attr/accentColor"
+            android:background="?attr/bgTabCardActive"
+            android:padding="6dp"
+            android:scaleType="centerInside"
+            android:layout_marginEnd="10dp" />
+
+        <TextView
+            android:id="@+id/ctx_header_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Page Link / Image"
+            android:textColor="?attr/textPrimary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-bold"
+            android:singleLine="true"
+            android:ellipsize="middle" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline"
+        android:layout_marginBottom="10dp" />
+
+    <!-- Action Rows Container -->
+    <LinearLayout
+        android:id="@+id/ctx_actions_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical" />
+
+    <Button
+        android:id="@+id/ctx_btn_dismiss"
+        android:layout_width="match_parent"
+        android:layout_height="42dp"
+        android:text="Cancel"
+        android:textColor="?attr/textSecondary"
+        android:textSize="13sp"
+        android:fontFamily="sans-serif-medium"
+        android:background="?attr/bgTabCard"
+        android:layout_marginTop="12dp" />
+
+</LinearLayout>

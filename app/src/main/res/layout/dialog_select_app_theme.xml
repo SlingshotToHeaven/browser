@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="20dp">
+
+    <!-- Header -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="APPLICATION THEME"
+        android:textColor="?attr/accentColor"
+        android:textSize="12sp"
+        android:fontFamily="sans-serif-bold"
+        android:letterSpacing="0.08" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Choose how the browser application UI is styled."
+        android:textColor="?attr/textSecondary"
+        android:textSize="12sp"
+        android:layout_marginTop="4dp" />
+
+    <RadioGroup
+        android:id="@+id/dialog_radio_group_app_theme"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="14dp">
+
+        <!-- Dark (AMOLED) -->
+        <RadioButton
+            android:id="@+id/radio_app_theme_dark"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Dark\nAMOLED pitch-black UI designed for OLED displays"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:buttonTint="#00E5FF"
+            android:lineSpacingExtra="2dp"
+            android:paddingStart="8dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp" />
+
+        <!-- Light -->
+        <RadioButton
+            android:id="@+id/radio_app_theme_light"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Light\nClean light UI with bright surfaces and dark typography"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:buttonTint="#00E5FF"
+            android:lineSpacingExtra="2dp"
+            android:paddingStart="8dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp" />
+
+        <!-- System Default -->
+        <RadioButton
+            android:id="@+id/radio_app_theme_system"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="System Default (Auto)\nAutomatically match your device system display setting"
+            android:textColor="?attr/textPrimary"
+            android:textSize="13sp"
+            android:buttonTint="#00E5FF"
+            android:lineSpacingExtra="2dp"
+            android:paddingStart="8dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp" />
+    </RadioGroup>
+</LinearLayout>

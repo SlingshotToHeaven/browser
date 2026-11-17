@@ -1,0 +1,479 @@
+{
+  "system_manifest": {
+    "version": "1.0.0",
+    "name": "Browser Agent Knowledge Base",
+    "zero_emoji_policy": true,
+    "communication_rules": [
+      "Be concise, technical, precise, and direct.",
+      "Never use emojis in any responses, thoughts, logs, or tool arguments.",
+      "Always verify state before and after performing modifications.",
+      "Never execute destructive actions (deletion, clearing storage, committing rules) without user confirmation.",
+      "In Structured Mode, use the declared tools exclusively to perform tasks."
+    ]
+  },
+  "browser_internals": {
+    "history": {
+      "table": "history",
+      "fields": ["id", "url", "title", "visit_time", "visit_count"],
+      "search_behavior": "Fuzzy substring matching on url and title."
+    },
+    "bookmarks": {
+      "table": "bookmarks",
+      "fields": ["id", "url", "title", "folder", "created_at"],
+      "search_behavior": "Fuzzy substring matching on title, url, or folder."
+    },
+    "downloads": {
+      "storage_location": "Download/BrowserDownloads",
+      "fields": ["id", "file_name", "file_path", "file_size", "mime_type", "timestamp"]
+    },
+    "storage_and_cookies": {
+      "cookie_manager": "android.webkit.CookieManager",
+      "web_storage": "android.webkit.WebStorage",
+      "capabilities": ["clear_cookies_for_domain", "clear_all_cookies", "clear_cache", "clear_local_storage_origin"]
+    },
+    "adblock_engine": {
+      "rules_path": "filters/",
+      "user_scripts_path": "user_scripts.json",
+      "cosmetic_syntax": "domain.com##selector or ##selector",
+      "scriptlet_syntax": "domain.com##+js(scriptlet_name, args...)",
+      "injection_timings": ["DOCUMENT_START", "DOCUMENT_END"],
+      "cloud_state_commits": "community worker state commit pipeline"
+    }
+  },
+  "execution_playbooks": [
+    {
+      "intent": "heal_anti_adblock",
+      "description": "Iterative diagnostic loop to remove anti-adblock walls, overlays, and restore site access.",
+      "steps": [
+        "1. Call adblock_inspect_page to identify blocker scripts, overlays, and blocked network requests.",
+        "2. Call vision_capture_viewport to visually observe overlay, modal backdrop, or anti-adblock message.",
+        "3. Generate cosmetic hide rule (e.g., domain.com###overlay, .modal-backdrop) or scriptlet defuser.",
+        "4. Call adblock_test_rule to dynamically inject and verify if overlay disappears and page scrolling is restored.",
+        "5. If still blocked, repeat with alternative scriptlet or cosmetic rule (up to 3 iterations).",
+        "6. Call adblock_save_and_commit to persist the verified fix upon user confirmation."
+      ]
+    },
+    {
+      "intent": "clean_history_or_bookmarks",
+      "description": "Search and batch-remove targeted records based on user topic or domain filter.",
+      "steps": [
+        "1. Call history_search or bookmarks_search with fuzzy query matching target topic/domain.",
+        "2. Review matched items count and sample records.",
+        "3. Call history_delete or bookmarks_delete. The system will prompt the user with an Action Confirmation Card before deleting."
+      ]
+    },
+    {
+      "intent": "automated_page_interaction",
+      "description": "Navigate, search, and click elements or complete forms automatically.",
+      "steps": [
+        "1. Call nav_open_url to load target page.",
+        "2. Call dom_find_elements or dom_get_page_content to locate target buttons or search inputs.",
+        "3. Call dom_type_text to enter search terms.",
+        "4. Call dom_click_element to activate the search or submit button.",
+        "5. Verify state change using dom_find_elements or vision_capture_viewport."
+      ]
+    },
+    {
+      "intent": "schedule_timed_automation",
+      "description": "Register exact wall-clock background alarms to execute multi-step browser tasks.",
+      "steps": [
+        "1. Compute target epoch timestamp in milliseconds for trigger time.",
+        "2. Author structured recipe JSON defining sequence of steps.",
+        "3. Call automation_schedule_task to register the recipe with Android AlarmManager."
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "nav_open_url",
+      "description": "Navigate the current active tab or open a new tab with the given URL.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "url": { "type": "STRING", "description": "The full destination URL to load." },
+          "in_new_tab": { "type": "BOOLEAN", "description": "Whether to open the URL in a new tab." }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "nav_get_active_tab_info",
+      "description": "Retrieve title, URL, scroll position, and loading state of the active tab.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {}
+      }
+    },
+    {
+      "name": "nav_list_tabs",
+      "description": "List all currently open browser tabs with their IDs, titles, and URLs.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {}
+      }
+    },
+    {
+      "name": "nav_switch_tab",
+      "description": "Switch the active view to a specific tab by ID.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "tab_id": { "type": "INTEGER", "description": "The unique integer ID of the tab." }
+        },
+        "required": ["tab_id"]
+      }
+    },
+    {
+      "name": "nav_close_tab",
+      "description": "Close a specific tab by ID.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "tab_id": { "type": "INTEGER", "description": "The ID of the tab to close." }
+        },
+        "required": ["tab_id"]
+      }
+    },
+    {
+      "name": "nav_reload_page",
+      "description": "Reload the current page.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "bypass_cache": { "type": "BOOLEAN", "description": "Force hard reload bypassing cache." }
+        }
+      }
+    },
+    {
+      "name": "nav_go_back_or_forward",
+      "description": "Navigate backward or forward in the active tab history.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "direction": { "type": "STRING", "description": "'back' or 'forward'." }
+        },
+        "required": ["direction"]
+      }
+    },
+    {
+      "name": "dom_get_page_content",
+      "description": "Extract structured text or element descriptions from the active web page.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "format": { "type": "STRING", "description": "One of: 'interactive_elements', 'headings', 'links', 'forms', 'text'." }
+        },
+        "required": ["format"]
+      }
+    },
+    {
+      "name": "dom_find_elements",
+      "description": "Search DOM for elements matching a CSS selector or XPath, returning visibility, attributes, and text.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "css_selector": { "type": "STRING", "description": "CSS selector to query." },
+          "xpath": { "type": "STRING", "description": "Optional XPath expression." }
+        }
+      }
+    },
+    {
+      "name": "dom_click_element",
+      "description": "Scroll to and click an element matching a CSS selector (dispatches pointer/mouse events).",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "css_selector": { "type": "STRING", "description": "CSS selector of element to click." },
+          "index": { "type": "INTEGER", "description": "Zero-based index if multiple elements match." }
+        },
+        "required": ["css_selector"]
+      }
+    },
+    {
+      "name": "dom_type_text",
+      "description": "Focus an input field or textarea and type specified text.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "css_selector": { "type": "STRING", "description": "CSS selector of the input field." },
+          "text": { "type": "STRING", "description": "Text string to enter." },
+          "clear_first": { "type": "BOOLEAN", "description": "Clear existing field value before typing." },
+          "press_enter": { "type": "BOOLEAN", "description": "Dispatch Enter key event after typing." }
+        },
+        "required": ["css_selector", "text"]
+      }
+    },
+    {
+      "name": "dom_scroll_page",
+      "description": "Scroll page viewport up or down by pixels or directly to an element.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "direction": { "type": "STRING", "description": "'down', 'up', 'top', or 'bottom'." },
+          "pixels": { "type": "INTEGER", "description": "Number of pixels to scroll." },
+          "to_element_selector": { "type": "STRING", "description": "Optional selector to scroll into view." }
+        }
+      }
+    },
+    {
+      "name": "dom_select_dropdown",
+      "description": "Select an option from a HTML select dropdown.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "css_selector": { "type": "STRING", "description": "CSS selector of select element." },
+          "option_value_or_text": { "type": "STRING", "description": "Option value or visible text." }
+        },
+        "required": ["css_selector", "option_value_or_text"]
+      }
+    },
+    {
+      "name": "vision_capture_viewport",
+      "description": "Capture the visible viewport rendering of the active tab as a high-resolution image for visual analysis.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "include_full_page": { "type": "BOOLEAN", "description": "Whether to capture full scrollable document height." }
+        }
+      }
+    },
+    {
+      "name": "vision_capture_element",
+      "description": "Capture a cropped screenshot of a specific DOM element (e.g., captcha, chart, or banner) for visual inspection.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "css_selector": { "type": "STRING", "description": "CSS selector of element to crop and capture." }
+        },
+        "required": ["css_selector"]
+      }
+    },
+    {
+      "name": "history_search",
+      "description": "Search browser history with fuzzy text query, domain filter, or timestamp range.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "query": { "type": "STRING", "description": "Fuzzy text search for title or URL." },
+          "domain": { "type": "STRING", "description": "Target website domain filter." },
+          "start_time_ms": { "type": "INTEGER", "description": "Filter visits after this epoch millisecond." },
+          "end_time_ms": { "type": "INTEGER", "description": "Filter visits before this epoch millisecond." },
+          "limit": { "type": "INTEGER", "description": "Maximum records to return (default 50)." }
+        }
+      }
+    },
+    {
+      "name": "history_delete",
+      "description": "Permanently delete history records matching filter query or list of IDs.",
+      "requires_confirmation": true,
+      "confirmation_template": "Delete history entries matching criteria?",
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "query_filter": { "type": "STRING", "description": "Fuzzy text query to delete matching visits." },
+          "ids": { "type": "ARRAY", "items": { "type": "INTEGER" }, "description": "Specific history record IDs to remove." },
+          "all_matching": { "type": "BOOLEAN", "description": "Confirm deletion of all matching results." }
+        }
+      }
+    },
+    {
+      "name": "bookmarks_search",
+      "description": "Search stored bookmarks by title, URL, or folder name.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "query": { "type": "STRING", "description": "Fuzzy text search string." },
+          "folder": { "type": "STRING", "description": "Filter by bookmark folder." },
+          "url_pattern": { "type": "STRING", "description": "Filter by URL wildcard or substring." }
+        }
+      }
+    },
+    {
+      "name": "bookmarks_create",
+      "description": "Add a new bookmark.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "title": { "type": "STRING", "description": "Bookmark title." },
+          "url": { "type": "STRING", "description": "Destination URL." },
+          "folder": { "type": "STRING", "description": "Optional folder name." }
+        },
+        "required": ["title", "url"]
+      }
+    },
+    {
+      "name": "bookmarks_delete",
+      "description": "Permanently delete bookmarks by IDs or URL pattern.",
+      "requires_confirmation": true,
+      "confirmation_template": "Delete matching bookmarks?",
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "ids": { "type": "ARRAY", "items": { "type": "INTEGER" }, "description": "Specific bookmark record IDs." },
+          "url_pattern": { "type": "STRING", "description": "Fuzzy pattern or domain to delete bookmarks for." }
+        }
+      }
+    },
+    {
+      "name": "downloads_list",
+      "description": "List downloaded files matching a filename wildcard or status.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "name_pattern": { "type": "STRING", "description": "Filename pattern to filter, e.g. '*.iso' or 'ubuntu'." },
+          "status": { "type": "STRING", "description": "'all', 'completed', 'in_progress'." }
+        }
+      }
+    },
+    {
+      "name": "downloads_delete",
+      "description": "Delete download records and optionally erase the physical files from device storage.",
+      "requires_confirmation": true,
+      "confirmation_template": "Delete download records and associated physical files?",
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "file_paths": { "type": "ARRAY", "items": { "type": "STRING" }, "description": "List of file paths to remove." },
+          "remove_files_from_disk": { "type": "BOOLEAN", "description": "Permanently delete physical file on disk." }
+        },
+        "required": ["file_paths"]
+      }
+    },
+    {
+      "name": "privacy_get_site_data",
+      "description": "Query cookie count, cache status, and web storage usage for a specific domain.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "domain": { "type": "STRING", "description": "Target site domain, e.g. 'example.com'." }
+        },
+        "required": ["domain"]
+      }
+    },
+    {
+      "name": "privacy_clear_site_data",
+      "description": "Clear cookies, local storage, or cache for a domain or globally.",
+      "requires_confirmation": true,
+      "confirmation_template": "Clear cookies and site data for domain?",
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "domain": { "type": "STRING", "description": "Target site domain, or '*' for all sites." },
+          "clear_cookies": { "type": "BOOLEAN", "description": "Purge cookies matching domain." },
+          "clear_cache": { "type": "BOOLEAN", "description": "Clear HTTP cache." },
+          "clear_storage": { "type": "BOOLEAN", "description": "Clear HTML5 localStorage and WebSQL/IndexedDB." }
+        },
+        "required": ["domain"]
+      }
+    },
+    {
+      "name": "adblock_inspect_page",
+      "description": "Inspect network blocks, active cosmetic rules, and anti-adblock detection scripts on the active page.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {}
+      }
+    },
+    {
+      "name": "adblock_test_rule",
+      "description": "Temporarily inject a cosmetic rule or scriptlet in memory to verify if it removes an ad/overlay.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "rule_text": { "type": "STRING", "description": "Adblock filter syntax or scriptlet code." },
+          "rule_type": { "type": "STRING", "description": "'cosmetic', 'scriptlet', or 'network'." }
+        },
+        "required": ["rule_text", "rule_type"]
+      }
+    },
+    {
+      "name": "adblock_save_and_commit",
+      "description": "Persist a verified adblock rule to filters/scripts and create a cloud state commit.",
+      "requires_confirmation": true,
+      "confirmation_template": "Save adblock rule and commit cloud state?",
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "rule_text": { "type": "STRING", "description": "Rule line to add." },
+          "target_file": { "type": "STRING", "description": "File path (e.g., 'filters/custom_rules.txt' or 'user_scripts.json')." },
+          "commit_message": { "type": "STRING", "description": "Descriptive commit message for the fix." }
+        },
+        "required": ["rule_text", "target_file", "commit_message"]
+      }
+    },
+    {
+      "name": "automation_schedule_task",
+      "description": "Schedule a timed browser routine using Android AlarmManager with a multi-step recipe.",
+      "requires_confirmation": true,
+      "confirmation_template": "Schedule automation task at specified time?",
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "title": { "type": "STRING", "description": "Short name for the automation." },
+          "trigger_time_epoch_ms": { "type": "INTEGER", "description": "Exact epoch timestamp in milliseconds." },
+          "cron_or_delay": { "type": "STRING", "description": "Optional recurring specification." },
+          "recipe_json": { "type": "STRING", "description": "JSON array of action steps to execute sequentially." }
+        },
+        "required": ["title", "trigger_time_epoch_ms", "recipe_json"]
+      }
+    },
+    {
+      "name": "automation_list_tasks",
+      "description": "List all active scheduled automations.",
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {}
+      }
+    },
+    {
+      "name": "automation_cancel_task",
+      "description": "Cancel a scheduled automation by its task ID.",
+      "requires_confirmation": true,
+      "confirmation_template": "Cancel scheduled automation?",
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "task_id": { "type": "STRING", "description": "Unique ID of task to cancel." }
+        },
+        "required": ["task_id"]
+      }
+    },
+    {
+      "name": "termux_execute_command",
+      "description": "Execute a shell command or CLI script inside the local Termux Linux environment (via the sidecar bridge) and retrieve terminal stdout, stderr, and exit code.",
+      "requires_confirmation": true,
+      "confirmation_template": "Execute Termux command: {command}?",
+      "parameters": {
+        "type": "OBJECT",
+        "properties": {
+          "command": { "type": "STRING", "description": "The command line or script to run inside Termux (e.g. 'python script.py', 'curl ...', 'sqlite3 ...')." },
+          "timeout_seconds": { "type": "INTEGER", "description": "Execution timeout in seconds (default 30)." }
+        },
+        "required": ["command"]
+      }
+    }
+  ]
+}

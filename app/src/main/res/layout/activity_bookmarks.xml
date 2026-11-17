@@ -1,0 +1,352 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?attr/surfaceRoot"
+    android:fitsSystemWindows="true">
+
+    <!-- Top Toolbars Container (Standard Toolbar & Contextual Selection Toolbar) -->
+    <FrameLayout
+        android:id="@+id/bookmarks_toolbars_container"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_alignParentTop="true">
+
+        <!-- Top Standard Toolbar -->
+        <LinearLayout
+            android:id="@+id/bookmarks_toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/surfaceToolbar"
+            android:paddingStart="6dp"
+            android:paddingEnd="14dp">
+
+            <ImageView
+                android:id="@+id/bookmarks_btn_back"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_arrow_back"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="?attr/iconTintPrimary"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_marginStart="6dp">
+
+                <TextView
+                    android:id="@+id/bookmarks_header_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Bookmarks"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="17sp"
+                    android:fontFamily="sans-serif-bold" />
+
+                <TextView
+                    android:id="@+id/bookmarks_text_count"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0 saved"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- View Mode Toggle (Grid / List) -->
+            <ImageView
+                android:id="@+id/bookmarks_btn_toggle_view"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_view_grid"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="?attr/accentColor"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="6dp"
+                android:layout_marginEnd="6dp" />
+
+            <!-- New Folder Action Badge -->
+            <LinearLayout
+                android:id="@+id/bookmarks_btn_new_folder"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:gravity="center_vertical"
+                android:background="@drawable/bg_history_icon_tile"
+                android:paddingStart="9dp"
+                android:paddingEnd="9dp"
+                android:layout_marginEnd="6dp"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:src="@drawable/ic_add"
+                    android:tint="?attr/accentColor"
+                    android:scaleType="centerInside"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Folder"
+                    android:textColor="#00E5FF"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Contextual Multi-Selection Toolbar -->
+        <LinearLayout
+            android:id="@+id/bookmarks_selection_toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/surfaceToolbar"
+            android:paddingStart="6dp"
+            android:paddingEnd="12dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/bookmarks_btn_close_selection"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_close"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="?attr/iconTintPrimary"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp" />
+
+            <TextView
+                android:id="@+id/bookmarks_text_selected_count"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="1 selected"
+                android:textColor="#00E5FF"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-bold"
+                android:layout_marginStart="8dp" />
+
+            <TextView
+                android:id="@+id/bookmarks_btn_move_selected"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:gravity="center"
+                android:text="Move"
+                android:textColor="#00E5FF"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <TextView
+                android:id="@+id/bookmarks_btn_select_all"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:gravity="center"
+                android:text="Select All"
+                android:textColor="?attr/accentColor"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <ImageView
+                android:id="@+id/bookmarks_btn_delete_selected"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_trash"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="#FF5252"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp"
+                android:layout_marginStart="4dp" />
+
+        </LinearLayout>
+
+    </FrameLayout>
+
+    <View
+        android:id="@+id/bookmarks_toolbar_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/surfaceToolbar"
+        android:layout_below="@id/bookmarks_toolbars_container" />
+
+    <!-- Search Box Header (Clean Floating Pill) -->
+    <LinearLayout
+        android:id="@+id/bookmarks_search_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/bookmarks_toolbar_divider"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="?attr/surfaceRoot"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/bgSearchPill"
+            android:paddingStart="12dp"
+            android:paddingEnd="8dp">
+
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/ic_search"
+                android:tint="?attr/accentColor"
+                android:scaleType="centerInside"
+                android:layout_marginEnd="8dp" />
+
+            <EditText
+                android:id="@+id/bookmarks_edit_search"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@null"
+                android:hint="Search bookmarks..."
+                android:textColorHint="?attr/textMuted"
+                android:textColor="?attr/textPrimary"
+                android:textSize="13sp"
+                android:singleLine="true"
+                android:imeOptions="actionSearch" />
+
+            <ImageView
+                android:id="@+id/bookmarks_btn_clear_search"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_close"
+                android:tint="?attr/iconTintSecondary"
+                android:scaleType="centerInside"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="5dp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Breadcrumb Navigation Bar (Folders) -->
+    <HorizontalScrollView
+        android:id="@+id/bookmarks_breadcrumb_container"
+        android:layout_width="match_parent"
+        android:layout_height="30dp"
+        android:layout_below="@id/bookmarks_search_container"
+        android:scrollbars="none"
+        android:background="?attr/surfaceCard"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp">
+
+        <LinearLayout
+            android:id="@+id/bookmarks_breadcrumb_layout"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical" />
+
+    </HorizontalScrollView>
+
+    <View
+        android:id="@+id/bookmarks_search_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/surfaceToolbar"
+        android:layout_below="@id/bookmarks_breadcrumb_container" />
+
+    <!-- Bookmarks List (1-Column List Mode) -->
+    <ListView
+        android:id="@+id/bookmarks_list"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/bookmarks_search_divider"
+        android:divider="?attr/borderHairline"
+        android:dividerHeight="1dp"
+        android:overScrollMode="never"
+        android:visibility="gone" />
+
+    <!-- Bookmarks Grid (2-Column Card Grid Mode) -->
+    <GridView
+        android:id="@+id/bookmarks_grid"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/bookmarks_search_divider"
+        android:numColumns="2"
+        android:verticalSpacing="8dp"
+        android:horizontalSpacing="8dp"
+        android:padding="8dp"
+        android:clipToPadding="false"
+        android:overScrollMode="never" />
+
+    <!-- Empty State -->
+    <LinearLayout
+        android:id="@+id/bookmarks_empty_view"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="32dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_bookmark"
+            android:tint="?attr/borderHairline"
+            android:scaleType="centerInside"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/bookmarks_empty_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="No saved bookmarks"
+            android:textColor="?attr/textPrimary"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif-medium" />
+
+        <TextView
+            android:id="@+id/bookmarks_empty_desc"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Webpages you bookmark will appear here for fast access."
+            android:textColor="?attr/textSecondary"
+            android:textSize="12sp"
+            android:gravity="center"
+            android:layout_marginTop="4dp" />
+
+    </LinearLayout>
+
+</RelativeLayout>

@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="20dp">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="14dp">
+
+        <ImageView
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:src="@drawable/ic_check_circle"
+            android:tint="?attr/accentColor"
+            android:background="@drawable/bg_pill_thread_selected"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:layout_marginEnd="12dp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SHA-256 Checksum"
+                android:textColor="?attr/textPrimary"
+                android:textSize="18sp"
+                android:fontFamily="sans-serif-bold" />
+
+            <TextView
+                android:id="@+id/checksum_text_filename"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Verifying file integrity"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:singleLine="true"
+                android:ellipsize="middle"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Computed Hash Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="COMPUTED SHA-256 HASH"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp"
+                android:layout_marginTop="6dp">
+
+                <TextView
+                    android:id="@+id/checksum_text_computed_hash"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Computing SHA-256 hash..."
+                    android:textColor="?attr/accentColor"
+                    android:textSize="12sp"
+                    android:fontFamily="monospace"
+                    android:textIsSelectable="true" />
+
+                <ImageView
+                    android:id="@+id/checksum_btn_copy"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_content_copy"
+                    android:tint="?attr/accentColor"
+                    android:scaleType="centerInside"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:padding="5dp"
+                    android:layout_marginStart="8dp" />
+            </LinearLayout>
+
+            <!-- Compare Hash Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="VERIFY AGAINST EXPECTED HASH"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="16dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/bgInputBox"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginTop="6dp">
+
+                <EditText
+                    android:id="@+id/checksum_edit_expected"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:hint="Paste expected hash to verify..."
+                    android:textColor="?attr/textPrimary"
+                    android:textColorHint="?attr/textMuted"
+                    android:textSize="12sp"
+                    android:fontFamily="monospace"
+                    android:singleLine="true"
+                    android:background="@null" />
+            </LinearLayout>
+
+            <!-- Verification Status Badge -->
+            <TextView
+                android:id="@+id/checksum_text_status_badge"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Enter expected hash above to verify match"
+                android:textColor="?attr/textSecondary"
+                android:textSize="12sp"
+                android:gravity="center"
+                android:background="@drawable/bg_pill_thread_unselected"
+                android:padding="10dp"
+                android:layout_marginTop="14dp" />
+
+        </LinearLayout>
+    </ScrollView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <!-- Action Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="14dp">
+
+        <Button
+            android:id="@+id/checksum_btn_close"
+            android:layout_width="match_parent"
+            android:layout_height="46dp"
+            android:text="Close"
+            android:textColor="?attr/textPrimary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-bold"
+            android:background="@drawable/bg_btn_primary" />
+    </LinearLayout>
+
+</LinearLayout>

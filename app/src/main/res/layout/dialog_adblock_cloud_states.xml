@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?attr/surfaceCard"
+    android:padding="16dp">
+
+    <!-- Header bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="14dp">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_cloud"
+            android:tint="?attr/accentColor"
+            android:layout_marginEnd="10dp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="AdBlock Cloud States"
+                android:textColor="?attr/textPrimary"
+                android:textSize="17sp"
+                android:fontFamily="sans-serif-medium"
+                android:singleLine="true"
+                android:ellipsize="end" />
+
+            <TextView
+                android:id="@+id/tv_cloud_endpoint_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Sync diffs across community and devices"
+                android:textColor="?attr/textSecondary"
+                android:textSize="11sp"
+                android:singleLine="true"
+                android:ellipsize="middle" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/btn_cloud_settings"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_settings"
+            android:tint="?attr/textSecondary"
+            android:layout_marginEnd="4dp"
+            android:contentDescription="Settings" />
+
+        <ImageButton
+            android:id="@+id/btn_close_cloud_dialog"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_close"
+            android:tint="?attr/textSecondary"
+            android:contentDescription="Close" />
+    </LinearLayout>
+
+    <!-- Top Mode Actions (Commit Current State vs Browse Cloud) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="12dp">
+
+        <Button
+            android:id="@+id/btn_action_commit_state"
+            android:layout_width="0dp"
+            android:layout_height="38dp"
+            android:layout_weight="1"
+            android:text="Commit Current State"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/bgAccentButton"
+            android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/btn_action_refresh_states"
+            android:layout_width="0dp"
+            android:layout_height="38dp"
+            android:layout_weight="1"
+            android:text="Refresh List"
+            android:textColor="?attr/textPrimary"
+            android:textSize="12sp"
+            android:background="?attr/borderHairline"
+            android:layout_marginStart="4dp" />
+    </LinearLayout>
+
+    <!-- States List Container -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tv_cloud_states_header"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Community State Commits"
+            android:textColor="?attr/textSecondary"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif-medium"
+            android:layout_marginBottom="6dp" />
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:id="@+id/ll_cloud_states_container"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_cloud_states_empty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Loading states from cloud..."
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="13sp"
+                    android:gravity="center"
+                    android:padding="24dp" />
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+</LinearLayout>

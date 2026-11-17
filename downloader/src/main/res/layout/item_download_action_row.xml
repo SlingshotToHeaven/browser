@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="?android:attr/selectableItemBackground"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:clickable="true"
+    android:focusable="true">
+
+    <ImageView
+        android:id="@+id/action_item_icon"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:src="@drawable/ic_download"
+        android:tint="?attr/accentColor"
+        android:scaleType="centerInside"
+        android:layout_marginEnd="14dp" />
+
+    <TextView
+        android:id="@+id/action_item_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="Action"
+        android:textColor="?attr/textPrimary"
+        android:textSize="13.5sp"
+        android:fontFamily="sans-serif-medium" />
+
+</LinearLayout>

@@ -1,0 +1,25 @@
+# Minimalist Utility App Directive
+
+Add the following block to your prompt when building a minimalist, distraction-free utility application:
+
+---
+
+### [MINIMALIST DESIGN & PERFORMANCE DIRECTIVES]
+
+1. **Design Philosophy (Clean Minimalist Launcher Aesthetic):**
+   - Pure, distraction-free utility: use it, accomplish the task, leave.
+   - Clean, typography-first interface inspired by minimalist phone launchers (e.g., Olauncher, Minimalist Phone).
+   - True pitch-black AMOLED background (`#000000`) with clean, high-contrast sans-serif typography and generous whitespace.
+   - Zero visual clutter: NO colorful app icons, avatar images, cards, containers, elevation shadows, gradients, floating action buttons (FABs), or decorative animations.
+   - Plain, vertically aligned text lists with simple, elegant tap targets and subtle tactile haptic feedback.
+
+2. **Ultra-Lean Architecture & Footprint:**
+   - Avoid heavy runtime frameworks or multi-megabyte icon bundles (e.g., avoid full Compose/Material3 icon packs for simple utility apps).
+   - Target an ultra-lightweight APK footprint (< 4 MB, single compact DEX) with minimal RAM overhead (< 15 MB) and instant cold launch (< 50 ms).
+
+3. **120 FPS Fluid Scrolling & Battery Efficiency:**
+   - Utilize hardware-accelerated, efficient list recycling (`RecyclerView` with `DiffUtil.ItemCallback` and pre-warmed view recycling).
+   - Zero dropped frames, locked 120 FPS scroll fluidity, and zero unnecessary background wakeups for maximum battery life.
+
+4. **Lifecycle & Boot Reliability (Optional — If Start at Boot / Background Service Required):**
+   - If the app is a default system handler, service, or background utility that must work immediately on device startup: ensure direct boot awareness (`android:directBootAware="true"`) and register a `BootReceiver` (`RECEIVE_BOOT_COMPLETED`, `LOCKED_BOOT_COMPLETED`) so background triggers work across reboots without requiring manual app launch.

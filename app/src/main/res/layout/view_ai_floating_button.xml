@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/ai_floating_container"
+    android:layout_width="56dp"
+    android:layout_height="56dp"
+    android:elevation="16dp">
+
+    <!-- Background Processing Halo Ring -->
+    <View
+        android:id="@+id/v_ai_processing_ring"
+        android:layout_width="54dp"
+        android:layout_height="54dp"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_agent_processing_ring"
+        android:visibility="gone" />
+
+    <!-- Main Agent Floating Icon -->
+    <ImageView
+        android:id="@+id/iv_ai_floating_icon"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_ai_floating_button"
+        android:src="@drawable/ic_ai_spark"
+        android:tint="#FFFFFF"
+        android:padding="11dp"
+        android:scaleType="centerInside"
+        android:contentDescription="Agent" />
+
+    <!-- Active Session Indicator Dot -->
+    <View
+        android:id="@+id/v_ai_active_badge"
+        android:layout_width="12dp"
+        android:layout_height="12dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="2dp"
+        android:layout_marginEnd="2dp"
+        android:background="@drawable/bg_agent_status_dot_active"
+        android:visibility="gone" />
+
+</FrameLayout>

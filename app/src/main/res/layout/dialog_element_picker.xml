@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_picker_dialog_surface"
+    android:paddingStart="18dp"
+    android:paddingEnd="18dp"
+    android:paddingTop="18dp"
+    android:paddingBottom="22dp">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="12dp">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:src="@drawable/ic_search"
+            android:tint="#E53935" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="10dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Element Picker"
+                android:textColor="?attr/textPrimary"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-medium" />
+
+            <TextView
+                android:id="@+id/tv_picker_domain"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="example.com"
+                android:textColor="?attr/textSecondary"
+                android:textSize="11sp"
+                android:singleLine="true" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/btn_picker_close"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@drawable/ic_close"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:tint="?attr/textSecondary"
+            android:contentDescription="Close"
+            android:scaleType="centerInside" />
+    </LinearLayout>
+
+    <!-- Transparency Slider Row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="12dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Opacity"
+            android:textColor="?attr/textSecondary"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium" />
+
+        <SeekBar
+            android:id="@+id/seek_picker_opacity"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:max="100"
+            android:progress="45"
+            android:splitTrack="false"
+            android:progressTint="?attr/accentColor"
+            android:thumbTint="?attr/accentColor"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp" />
+
+        <TextView
+            android:id="@+id/tv_picker_opacity_value"
+            android:layout_width="36dp"
+            android:layout_height="wrap_content"
+            android:text="45%"
+            android:textColor="?attr/textPrimary"
+            android:textSize="11sp"
+            android:fontFamily="monospace"
+            android:gravity="end" />
+    </LinearLayout>
+
+    <!-- Hierarchy Stepper (Wider / Narrower) in a rounded container -->
+    <LinearLayout
+        android:id="@+id/layout_stepper_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_picker_input_box"
+        android:padding="6dp"
+        android:layout_marginBottom="12dp">
+
+        <Button
+            android:id="@+id/btn_hierarchy_narrow"
+            android:layout_width="wrap_content"
+            android:layout_height="34dp"
+            android:text="&lt; Child"
+            android:textColor="?attr/textPrimary"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/bgBtnSecondary"
+            android:stateListAnimator="@null"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp" />
+
+        <TextView
+            android:id="@+id/tv_hierarchy_node"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="div#ad-banner"
+            android:textColor="#10B981"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:singleLine="true"
+            android:ellipsize="middle"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp" />
+
+        <Button
+            android:id="@+id/btn_hierarchy_wider"
+            android:layout_width="wrap_content"
+            android:layout_height="34dp"
+            android:text="Parent &gt;"
+            android:textColor="?attr/textPrimary"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium"
+            android:background="?attr/bgBtnSecondary"
+            android:stateListAnimator="@null"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp" />
+    </LinearLayout>
+
+    <!-- Candidate Selectors Chips ScrollView -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Select filter pattern:"
+        android:textColor="?attr/textSecondary"
+        android:textSize="11sp"
+        android:layout_marginBottom="6dp" />
+
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:overScrollMode="never"
+        android:layout_marginBottom="12dp">
+
+        <LinearLayout
+            android:id="@+id/ll_selector_chips"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
+
+    <!-- Filter Rule Result Editor -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Generated Filter Rule:"
+        android:textColor="?attr/textSecondary"
+        android:textSize="11sp"
+        android:layout_marginBottom="4dp" />
+
+    <EditText
+        android:id="@+id/edit_filter_rule"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="42dp"
+        android:background="@drawable/bg_picker_input_box"
+        android:textColor="?attr/textPrimary"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:padding="10dp"
+        android:layout_marginBottom="14dp"
+        android:singleLine="true" />
+
+    <!-- Action Buttons (Preview & Create) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_picker_preview"
+            android:layout_width="0dp"
+            android:layout_height="38dp"
+            android:layout_weight="1"
+            android:text="Preview"
+            android:textColor="?attr/textPrimary"
+            android:background="?attr/bgBtnSecondary"
+            android:stateListAnimator="@null"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif-medium"
+            android:layout_marginEnd="6dp" />
+
+        <Button
+            android:id="@+id/btn_picker_create"
+            android:layout_width="0dp"
+            android:layout_height="38dp"
+            android:layout_weight="1.2"
+            android:text="Create Filter"
+            android:textColor="@android:color/white"
+            android:background="?attr/bgAccentButton"
+            android:stateListAnimator="@null"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif-medium"
+            android:layout_marginStart="6dp" />
+    </LinearLayout>
+
+</LinearLayout>

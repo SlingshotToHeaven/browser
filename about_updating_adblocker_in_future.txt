@@ -1,0 +1,193 @@
+================================================================================
+AD BLOCKING AND ANTI-ADBLOCK DEFUSER MAINTENANCE GUIDE FOR AI AGENTS
+================================================================================
+
+MANDATORY LIVING DOCUMENT RULE:
+Any future AI agent or engineer modifying, tuning, or updating the ad blocking
+or anti-adblock defusion engine MUST read this document prior to making changes.
+If you discover a new edge case, anti-adblock detection method, publisher layout
+quirk, or failure mode during your task, you MUST update this file with your
+findings and solutions before completing your turn.
+
+--------------------------------------------------------------------------------
+1. CORE ARCHITECTURE OVERVIEW
+--------------------------------------------------------------------------------
+Ad blocking in this browser operates across two complementary layers:
+
+A. Network Layer (PrivacyWebViewClient.shouldInterceptRequest):
+   - Intercepts all subresource requests (scripts, images, iframes, stylesheets,
+     XHR/fetch).
+   - Evaluates URLs against AdBlocker rules (domain matching, path patterns).
+   - Returns synthetic WebResourceResponse objects instead of letting requests hit
+     the network.
+
+B. DOM / Scripting Layer (AntiAdblockDefuser):
+   - Injected at document_start (onPageStarted) before publisher scripts run.
+   - Stubs common ad APIs and bait detection globals (e.g. adsbygoogle, ga).
+   - Injects cosmetic CSS and runs DOM pruning routines to eliminate visual ad
+     placeholders and collapse zeroed-out containers seamlessly.
+   - Observes DOM mutations via MutationObserver to collapse late-injected ad
+     wrappers.
+
+--------------------------------------------------------------------------------
+2. HARD-EARNED LESSONS AND CRITICAL PITFALLS
+--------------------------------------------------------------------------------
+
+PITFALL 1: THE CHROMIUM "WEBPAGE NOT AVAILABLE" ERROR BOX
+- Problem: Returning HTTP 403 Forbidden or network error codes for blocked
+  subresources (especially subframes / iframes) causes Chromium WebView to render
+  its default "Webpage not available" dinosaur error frame in place of the ad.
+- Solution: Blocked resources MUST NEVER return 403 or network failure. They MUST
+  return HTTP 200 OK with benign typed payloads:
+  * Images: 1x1 transparent PNG byte array (image/png).
+  * Scripts: Empty JS or comment "/* blocked */" (application/javascript).
+  * Stylesheets: Empty string "" (text/css).
+  * XHR/Fetch/JSON: "{}" (application/json) or "" (text/plain).
+  * Subframes / iframes: An empty HTML document string with zero dimensions:
+    "<!DOCTYPE html><html><head><style>html,body{margin:0;padding:0;width:0;height:0;overflow:hidden;}</style></head><body></body></html>"
+    (text/html).
+
+PITFALL 2: BLIND ANCESTOR COLLAPSE AND GENERIC ATTRIBUTE MATCHING
+- Problem: Daily Mail and other complex publishers annotate article text with
+  ad marker attributes (e.g. is="ad-marker-p" data-ad-marker-group="article-body"
+  on every <p class="mol-para-with-font">).
+  Blindly matching wildcards like div[data-ad], [data-ad-type], or looping
+  upward through parent nodes (e.g. while (p && d < 6) p.style.display = 'none')
+  will hide <article>, <main>, and the entire readable article body, rendering
+  the page blank.
+- Solution:
+  * NEVER use open-ended regexes or wildcard selectors like [data-ad] or [class*=ad].
+  * ALWAYS protect root content containers: explicitly skip <article>, <main>,
+    <section>, and any container holding legitimate article paragraphs:
+    if (node.tagName === 'ARTICLE' || node.tagName === 'MAIN' ||
+        node.querySelector('p.mol-para-with-font')) continue;
+  * Target EXACT ad slot containers by ID prefix or known publisher class names.
+
+PITFALL 3: BLANK WHITESPACE GAPS (COLLAPSE LIKE UBLOCK ORIGIN)
+- Problem: Simply blocking the ad network network-side leaves empty layout boxes
+  (e.g. 250px or 600px tall) with gray or white backgrounds where ads used to be.
+- Solution: Specific ad placeholder containers must be styled with full collapse
+  properties:
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+- Common containers requiring exact collapse:
+  .adHolder, .adHolder.mpu, .dmg-ads-container, .dmg-ads-ad, .dmg-ads-label-container,
+  .billboard-container, .connatix-placeholder, .taboola, .outbrain, div[id^="mpu_"].
+
+PITFALL 4: CORS AND CREDENTIAL HEADERS ON INTERCEPTED RESPONSES
+- Problem: Modern single-page applications and ad engines use fetch() with
+  credentials: "include" or expect standard CORS headers. If an intercepted
+  200 OK response omits Access-Control-Allow-Origin, the browser throws a CORS
+  exception, which publishers use as an ad blocker detection trigger.
+- Solution: Dynamically reflect the request "Origin" header in the response:
+  Map<String, String> headers = new HashMap<>();
+  headers.put("Access-Control-Allow-Origin", requestOrigin != null ? requestOrigin : "*");
+  headers.put("Access-Control-Allow-Credentials", "true");
+  headers.put("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  headers.put("Cache-Control", "no-store, no-cache, must-revalidate");
+
+PITFALL 5: EMBEDDED CONTENT VIDEO PLAYERS
+- Problem: News publishers embed editorial videos (e.g. Video.js, JWPlayer) inside
+  the article body. Some ad filters mistake these video containers for video ads.
+- Solution: Preserve elements matching .video-js, [id^="vjs_video_"], and legitimate
+  video players. Ensure cosmetic pruning checks for video content before removing
+  or hiding elements.
+
+--------------------------------------------------------------------------------
+3. ANTI-ADBLOCK DEFUSER DETAILS AND STUBS
+--------------------------------------------------------------------------------
+Publishers use several common techniques to detect ad blockers:
+
+A. Global Property Checks:
+   Detection scripts test whether window.google_ad_client or window.adsbygoogle
+   exist.
+   - Defuser Action: Provide lightweight proxy stubs on window:
+     window.adsbygoogle = { loaded: true, push: function(obj) {} };
+     window.google_ad_client = "ca-pub-0000000000000000";
+     window.canRunAds = true;
+     window.isAdBlockActive = false;
+
+B. Bait Element Measurement (Honeypots):
+   Publishers create invisible dummy DOM elements with classes like "adsbox",
+   "ad-banner", or ID "adsense-test", insert them into document.body, and check
+   if offsetHeight === 0 or offsetWidth === 0.
+   - Defuser Action: Do NOT collapse honeypot bait elements if doing so triggers
+     anti-adblock walls. Alternatively, override HTMLElement.prototype.offsetHeight
+     and offsetWidth for detected bait elements to return simulated positive
+     dimensions (e.g. 250), or defuse the specific anti-adblock detection function.
+
+C. Timing of Injection:
+   - Injections must occur as early as possible. In PrivacyWebViewClient, inject
+     defusion scripts inside onPageStarted() as well as evaluateJavascript at
+     document_start so properties are defined before inline page scripts execute.
+
+--------------------------------------------------------------------------------
+4. HOW TO DO BASIC UPDATES
+--------------------------------------------------------------------------------
+
+A. Updating Blocklists:
+   - Location: AdBlocker.java and asset blocklist files.
+   - Adding domains: Add host strings to the hash set in lowercase.
+   - Keep lookup performance at O(1) or trie-based; do not use heavy unanchored
+     regular expressions across thousands of rules.
+
+B. Updating Cosmetic Rules:
+   - Location: AntiAdblockDefuser.java (COSMETIC_FILTER_JS).
+   - Add new site-specific ad slot selectors to the targeted querySelectorAll list.
+   - ALWAYS validate JS syntax before compiling:
+     Extract the JS string and run:
+     /System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc /tmp/test.js
+     or node --check /tmp/test.js to ensure zero syntax errors.
+
+C. Updating Benign Payloads:
+   - Location: PrivacyWebViewClient.java.
+   - Ensure new MIME types map to appropriate empty responses (e.g. audio/video
+     returning empty streams with 200 OK).
+
+--------------------------------------------------------------------------------
+5. HOW TO VERIFY VIABILITY ON LIVE DEVICES
+--------------------------------------------------------------------------------
+Do NOT rely on assumptions. Verify ad blocking and page integrity on a real device
+or emulator using Chrome DevTools Protocol over ADB:
+
+Step 1: Find the target WebView remote socket:
+   adb shell cat /proc/net/unix | grep webview_devtools_remote
+
+Step 2: Forward the socket to localhost TCP:
+   adb forward tcp:9222 localabstract:webview_devtools_remote_<PID>
+
+Step 3: Query active pages via HTTP:
+   curl -s http://127.0.0.1:9222/json
+
+Step 4: Connect via WebSocket to the page webSocketDebuggerUrl and evaluate DOM state:
+   Run Runtime.evaluate with a script checking:
+   - Article presence: document.querySelector("article") !== null
+   - Article visibility: article.offsetHeight > 0
+   - Paragraph count: document.querySelectorAll("p").length
+   - Visible paragraphs: Array.from(paragraphs).filter(p => p.offsetParent !== null).length
+   - Ad slot collapse: Array.from(document.querySelectorAll(".adHolder, div[id^=mpu_]"))
+     must all have offsetHeight === 0 and getBoundingClientRect().height === 0.
+
+Step 5: Check logs:
+   adb logcat -d -s AntiAdblockDefuser:D PrivacyWebViewClient:D chromium:I
+
+Step 6: Remove port forward:
+   adb forward --remove tcp:9222
+
+--------------------------------------------------------------------------------
+6. SUMMARY CHECKLIST FOR UPDATING AD BLOCKING
+--------------------------------------------------------------------------------
+[ ] Blocked subresources return HTTP 200 OK benign payloads, NEVER 403 or net error.
+[ ] Iframe blocks return empty 0x0 HTML documents to avoid Chromium error frames.
+[ ] Cosmetic selectors target specific ad wrappers, NOT broad data-ad* attributes.
+[ ] Article and main content containers are guarded against pruning.
+[ ] Ad slot containers collapse with height: 0 !important; margin: 0 !important.
+[ ] JavaScript syntax in AntiAdblockDefuser is validated with a JS parser.
+[ ] DOM layout is verified via CDP evaluating offsetHeight and paragraph counts.
+[ ] If new behavior was discovered, this file was updated.
+================================================================================

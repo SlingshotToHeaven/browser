@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="20dp">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="14dp">
+
+        <ImageView
+            android:id="@+id/dialog_icon"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:src="@drawable/ic_image_search"
+            android:tint="?attr/accentColor"
+            android:background="?attr/bgInputBox"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:layout_marginEnd="12dp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/dialog_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Search by Image"
+                android:textColor="?attr/textPrimary"
+                android:textSize="17.5sp"
+                android:fontFamily="sans-serif-bold" />
+
+            <TextView
+                android:id="@+id/dialog_subtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Reverse image lookup across 35+ engines"
+                android:textColor="?attr/textSecondary"
+                android:textSize="11.5sp"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/btn_dialog_close"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_close"
+            android:scaleType="centerInside"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:tint="?attr/iconTintSecondary"
+            android:padding="6dp" />
+    </LinearLayout>
+
+    <!-- Selected Image Preview Pill -->
+    <LinearLayout
+        android:id="@+id/container_selected_image_preview"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="?attr/bgInputBox"
+        android:padding="10dp"
+        android:layout_marginBottom="12dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_image_search"
+            android:tint="?attr/accentColor"
+            android:scaleType="centerInside"
+            android:layout_marginEnd="8dp" />
+
+        <TextView
+            android:id="@+id/text_selected_image_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="https://..."
+            android:textColor="?attr/textPrimary"
+            android:textSize="12sp"
+            android:singleLine="true"
+            android:ellipsize="middle"
+            android:fontFamily="sans-serif" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <!-- Actions / Modes Strip (5 Modes matching upstream extension) -->
+    <LinearLayout
+        android:id="@+id/container_actions_strip"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp">
+
+        <!-- Action 1: Select Web Image -->
+        <LinearLayout
+            android:id="@+id/btn_select_image"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="?android:attr/selectableItemBackground"
+            android:padding="4dp">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_touch"
+                android:tint="?attr/accentColor"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Select"
+                android:textColor="?attr/textPrimary"
+                android:textSize="10sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+
+        <!-- Action 2: Capture Region / Crop -->
+        <LinearLayout
+            android:id="@+id/btn_capture_region"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="?android:attr/selectableItemBackground"
+            android:padding="4dp">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_crop"
+                android:tint="#FFA726"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Capture"
+                android:textColor="?attr/textPrimary"
+                android:textSize="10sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+
+        <!-- Action 3: Upload Local File (Browse) -->
+        <LinearLayout
+            android:id="@+id/btn_upload_file"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="?android:attr/selectableItemBackground"
+            android:padding="4dp">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_upload"
+                android:tint="#42A5F5"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Upload"
+                android:textColor="?attr/textPrimary"
+                android:textSize="10sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+
+        <!-- Action 4: Enter Image URL -->
+        <LinearLayout
+            android:id="@+id/btn_enter_url"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="?android:attr/selectableItemBackground"
+            android:padding="4dp">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_search"
+                android:tint="#66BB6A"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="URL"
+                android:textColor="?attr/textPrimary"
+                android:textSize="10sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+
+        <!-- Action 5: Search All Engines -->
+        <LinearLayout
+            android:id="@+id/btn_search_all_engines"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="?android:attr/selectableItemBackground"
+            android:padding="4dp">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_share"
+                android:tint="#AB47BC"
+                android:scaleType="centerInside" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="All"
+                android:textColor="?attr/textPrimary"
+                android:textSize="10sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:id="@+id/divider_below_actions"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/borderHairline" />
+
+    <!-- Category Filter Tabs Horizontal Strip -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:overScrollMode="never"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp">
+
+        <LinearLayout
+            android:id="@+id/container_category_filters"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
+
+    <!-- Engines List Container -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="260dp"
+        android:scrollbars="vertical"
+        android:overScrollMode="never">
+
+        <LinearLayout
+            android:id="@+id/container_engine_items"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+
+</LinearLayout>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Pitch-black AMOLED Minimalist Palette -->
+    <color name="black">#000000</color>
+    <color name="surface_pill">#141414</color>
+    <color name="surface_card">#0D0D0D</color>
+    <color name="border_light">#262626</color>
+    <color name="border_pill">#2E2E2E</color>
+    <color name="white">#FFFFFF</color>
+    <color name="text_primary">#EAEAEA</color>
+    <color name="text_secondary">#8E8E8E</color>
+    <color name="text_tertiary">#555555</color>
+    <color name="shield_green">#00E676</color>
+</resources>

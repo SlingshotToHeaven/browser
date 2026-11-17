@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgVideoQualitySheet"
+    android:padding="20dp">
+
+    <!-- Drag / Top Indicator Handle -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:background="?attr/borderHairline"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Static Header Row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="4dp">
+
+        <TextView
+            android:id="@+id/dialog_video_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Video Title"
+            android:textColor="?attr/textPrimary"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:maxLines="2"
+            android:ellipsize="end" />
+
+        <ImageView
+            android:id="@+id/dialog_btn_refresh"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginEnd="6dp"
+            android:src="@drawable/ic_reload"
+            android:scaleType="centerInside"
+            android:tint="?attr/accentColor"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:focusable="true" />
+
+        <ImageView
+            android:id="@+id/dialog_btn_close"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_close"
+            android:scaleType="centerInside"
+            android:tint="#8E8E93"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:focusable="true" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/dialog_video_subtitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Select download quality"
+        android:textColor="?attr/textSecondary"
+        android:textSize="13sp"
+        android:layout_marginBottom="14dp" />
+
+    <!-- Scrollable Middle Formats Section (Static Buttons Stay Below) -->
+    <ScrollView
+        android:id="@+id/dialog_scroll_view"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:scrollbars="vertical"
+        android:fadeScrollbars="false"
+        android:layout_marginBottom="14dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Video Section Header -->
+            <LinearLayout
+                android:id="@+id/dialog_section_video_header"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="VIDEO RESOLUTION &amp; CODEC"
+                    android:textColor="#00E5FF"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.05" />
+
+                <TextView
+                    android:id="@+id/dialog_video_count_badge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="6 Options"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- Video Container -->
+            <LinearLayout
+                android:id="@+id/dialog_quality_container"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginBottom="14dp" />
+
+            <!-- Audio Section Header -->
+            <LinearLayout
+                android:id="@+id/dialog_section_audio_header"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="AUDIO TRACK"
+                    android:textColor="#00E5FF"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.05" />
+
+                <TextView
+                    android:id="@+id/dialog_audio_count_badge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="2 Tracks"
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- Audio Container -->
+            <LinearLayout
+                android:id="@+id/dialog_audio_container"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginBottom="8dp" />
+
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- Static Download Action Button (Always Visible) -->
+    <Button
+        android:id="@+id/dialog_btn_download"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="DOWNLOAD VIDEO"
+        android:textColor="#000000"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:background="@drawable/bg_download_btn_accent"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Static Link Grabber Option -->
+    <TextView
+        android:id="@+id/dialog_btn_link_grabber"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:text="View all page media in Link Grabber"
+        android:textColor="#00E5FF"
+        android:textSize="13sp"
+        android:padding="6dp"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="true" />
+
+</LinearLayout>

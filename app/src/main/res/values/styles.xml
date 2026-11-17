@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- AMOLED Dark Theme (Default) -->
+    <style name="Theme.MinimalistBrowser" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:colorAccent">#00E5FF</item>
+        <item name="android:colorControlActivated">#00E5FF</item>
+        <item name="android:windowBackground">@color/black</item>
+        <item name="android:colorBackground">@color/black</item>
+        <item name="android:navigationBarColor">@color/black</item>
+        <item name="android:statusBarColor">@color/black</item>
+        <item name="android:textColorPrimary">@color/white</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:scrollbarStyle">outsideOverlay</item>
+        <item name="android:scrollbarThumbVertical">@drawable/scrollbar_thumb_amoled</item>
+        <item name="android:scrollbarSize">2.5dp</item>
+
+        <!-- Semantic Design Tokens -->
+        <item name="surfaceRoot">#000000</item>
+        <item name="surfaceToolbar">#121218</item>
+        <item name="surfaceCard">#12121A</item>
+        <item name="surfacePill">#141414</item>
+        <item name="borderHairline">#242436</item>
+        <item name="borderPill">#2E2E2E</item>
+        <item name="textPrimary">#FFFFFF</item>
+        <item name="textSecondary">#8E8EA8</item>
+        <item name="textMuted">#555566</item>
+        <item name="iconTintPrimary">#FFFFFF</item>
+        <item name="iconTintSecondary">#8E8EA8</item>
+        <item name="accentColor">#00E5FF</item>
+        <item name="bgCardDownload">@drawable/card_download_bg</item>
+        <item name="bgDialogSurface">@drawable/bg_dialog_surface</item>
+        <item name="bgOmniboxPill">@drawable/omnibox_pill_bg</item>
+        <item name="bgMenuDropdown">@drawable/menu_dropdown_bg</item>
+        <item name="bgBookmarkCard">@drawable/bg_bookmark_card</item>
+        <item name="bgTabCard">@drawable/bg_tab_card</item>
+        <item name="switchThumbTint">@color/switch_thumb_amoled</item>
+        <item name="switchTrackTint">@color/switch_track_amoled</item>
+        <item name="bgAccentButton">@drawable/bg_download_btn_accent</item>
+        <item name="bgVideoQualitySheet">@drawable/bg_video_quality_sheet</item>
+        <item name="bgQualityItemSelector">@drawable/bg_quality_item_selector</item>
+        <item name="bgCircleButton">@drawable/bg_circle_button</item>
+        <item name="bgChipAction">@drawable/bg_chip_action</item>
+        <item name="bgSearchPill">@drawable/bg_history_search_pill</item>
+        <item name="bgBookmarkCardSelected">@drawable/bg_bookmark_card_selected</item>
+        <item name="bgTabCardActive">@drawable/bg_tab_card_active</item>
+        <item name="bgHistorySelectedRow">@drawable/bg_history_selected_row</item>
+        <item name="bgHistoryIconTile">@drawable/bg_history_icon_tile</item>
+        <item name="bgHistoryCountPill">@drawable/bg_history_count_pill</item>
+        <item name="bgTabBadgeBorder">@drawable/tab_badge_border</item>
+        <item name="bgFilterPillSelected">@drawable/filter_pill_selected</item>
+        <item name="bgFilterPillUnselected">@drawable/filter_pill_unselected</item>
+        <item name="bgPillThreadSelected">@drawable/bg_pill_thread_selected</item>
+        <item name="bgPillThreadUnselected">@drawable/bg_pill_thread_unselected</item>
+        <item name="bgInputBox">@drawable/bg_input_box</item>
+        <item name="bgBtnSecondary">@drawable/bg_btn_secondary</item>
+    </style>
+
+    <!-- Clean Light Theme -->
+    <style name="Theme.MinimalistBrowser.Light" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:colorAccent">#007AFF</item>
+        <item name="android:colorControlActivated">#007AFF</item>
+        <item name="android:windowBackground">#F7F8FA</item>
+        <item name="android:colorBackground">#F7F8FA</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:textColorPrimary">#111827</item>
+        <item name="android:textColorSecondary">#6B7280</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:scrollbarStyle">outsideOverlay</item>
+        <item name="android:scrollbarSize">2.5dp</item>
+
+        <!-- Semantic Design Tokens -->
+        <item name="surfaceRoot">#F7F8FA</item>
+        <item name="surfaceToolbar">#FFFFFF</item>
+        <item name="surfaceCard">#FFFFFF</item>
+        <item name="surfacePill">#F2F3F5</item>
+        <item name="borderHairline">#E5E7EB</item>
+        <item name="borderPill">#E5E7EB</item>
+        <item name="textPrimary">#111827</item>
+        <item name="textSecondary">#6B7280</item>
+        <item name="textMuted">#9CA3AF</item>
+        <item name="iconTintPrimary">#111827</item>
+        <item name="iconTintSecondary">#6B7280</item>
+        <item name="accentColor">#007AFF</item>
+        <item name="bgCardDownload">@drawable/card_download_bg_light</item>
+        <item name="bgDialogSurface">@drawable/bg_dialog_surface_light</item>
+        <item name="bgOmniboxPill">@drawable/omnibox_pill_bg_light</item>
+        <item name="bgMenuDropdown">@drawable/menu_dropdown_bg_light</item>
+        <item name="bgBookmarkCard">@drawable/bg_bookmark_card_light</item>
+        <item name="bgTabCard">@drawable/bg_tab_card_light</item>
+        <item name="switchThumbTint">@color/switch_thumb_light</item>
+        <item name="switchTrackTint">@color/switch_track_light</item>
+        <item name="bgAccentButton">@drawable/bg_download_btn_accent_light</item>
+        <item name="bgVideoQualitySheet">@drawable/bg_video_quality_sheet_light</item>
+        <item name="bgQualityItemSelector">@drawable/bg_quality_item_selector_light</item>
+        <item name="bgCircleButton">@drawable/bg_circle_button_light</item>
+        <item name="bgChipAction">@drawable/bg_chip_action_light</item>
+        <item name="bgSearchPill">@drawable/bg_history_search_pill_light</item>
+        <item name="bgBookmarkCardSelected">@drawable/bg_bookmark_card_selected_light</item>
+        <item name="bgTabCardActive">@drawable/bg_tab_card_active_light</item>
+        <item name="bgHistorySelectedRow">@drawable/bg_history_selected_row_light</item>
+        <item name="bgHistoryIconTile">@drawable/bg_history_icon_tile_light</item>
+        <item name="bgHistoryCountPill">@drawable/bg_history_count_pill_light</item>
+        <item name="bgTabBadgeBorder">@drawable/tab_badge_border_light</item>
+        <item name="bgFilterPillSelected">@drawable/filter_pill_selected_light</item>
+        <item name="bgFilterPillUnselected">@drawable/filter_pill_unselected_light</item>
+        <item name="bgPillThreadSelected">@drawable/bg_pill_thread_selected_light</item>
+        <item name="bgPillThreadUnselected">@drawable/bg_pill_thread_unselected_light</item>
+        <item name="bgInputBox">@drawable/bg_input_box_light</item>
+        <item name="bgBtnSecondary">@drawable/bg_btn_secondary_light</item>
+    </style>
+
+    <!-- Agent Bottom Sheet Animation Style -->
+    <style name="Animation.AgentBottomSheet" parent="@android:style/Animation">
+        <item name="android:windowEnterAnimation">@anim/slide_in_bottom</item>
+        <item name="android:windowExitAnimation">@anim/slide_out_bottom</item>
+    </style>
+</resources>

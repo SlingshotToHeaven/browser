@@ -1,0 +1,388 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/bgDialogSurface"
+    android:padding="16dp">
+
+    <!-- Header (Pinned) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:src="@drawable/ic_info"
+            android:tint="?attr/accentColor"
+            android:scaleType="centerInside" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="TASK DETAILS"
+            android:textColor="?attr/textPrimary"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif-bold"
+            android:letterSpacing="0.02"
+            android:layout_marginStart="8dp" />
+
+        <TextView
+            android:id="@+id/diag_text_status_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="RUNNING"
+            android:textColor="?attr/accentColor"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-bold"
+            android:background="@drawable/bg_badge_running"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/diag_text_file_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="filename.mp4"
+        android:textColor="?attr/textPrimary"
+        android:textSize="14sp"
+        android:fontFamily="sans-serif-medium"
+        android:singleLine="true"
+        android:ellipsize="middle"
+        android:layout_marginTop="10dp" />
+
+    <!-- Scrollable Body -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:scrollbars="vertical"
+        android:layout_marginTop="10dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Card 1: Overview & Active Phase -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp">
+
+                <!-- Mode -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Transfer Mode:"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:id="@+id/diag_text_stream_mode"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Single Direct Download"
+                        android:textColor="?attr/accentColor"
+                        android:textSize="11sp"
+                        android:fontFamily="sans-serif-medium" />
+                </LinearLayout>
+
+                <!-- Phase / Step -->
+                <LinearLayout
+                    android:id="@+id/diag_layout_phase"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Active Phase:"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:id="@+id/diag_text_current_phase"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Downloading video track..."
+                        android:textColor="?attr/accentColor"
+                        android:textSize="11sp"
+                        android:fontFamily="sans-serif-bold" />
+                </LinearLayout>
+
+                <!-- Speed / ETA -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Speed / ETA:"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:id="@+id/diag_text_speed_eta"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0 B/s • ETA --:--"
+                        android:textColor="?attr/accentColor"
+                        android:textSize="11sp"
+                        android:fontFamily="sans-serif-medium" />
+                </LinearLayout>
+
+                <!-- Transferred Total -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Transferred Total:"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:id="@+id/diag_text_total_progress"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0 B / 0 B (0%)"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="11sp"
+                        android:fontFamily="sans-serif-bold" />
+                </LinearLayout>
+
+                <!-- HTTP 206 Range Acceleration -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Byte Range (HTTP 206):"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:id="@+id/diag_text_range_support"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Supported"
+                        android:textColor="#4CAF50"
+                        android:textSize="11sp"
+                        android:fontFamily="sans-serif-bold" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Card 2: Track Details (Video & Companion Audio) -->
+            <LinearLayout
+                android:id="@+id/diag_card_stream_tracks"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp"
+                android:layout_marginTop="10dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="STREAM TRACK DETAILS"
+                    android:textColor="?attr/accentColor"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:letterSpacing="0.04" />
+
+                <!-- Video Track Line -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="8dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Video Stream:"
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:id="@+id/diag_text_video_track_info"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:text="-- MB"
+                        android:textColor="?attr/textPrimary"
+                        android:textSize="11sp"
+                        android:fontFamily="sans-serif-medium" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/diag_text_video_url"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="https://..."
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:maxLines="2"
+                    android:ellipsize="middle"
+                    android:layout_marginTop="2dp" />
+
+                <!-- Audio Track Line -->
+                <LinearLayout
+                    android:id="@+id/diag_layout_audio_track"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="8dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Audio Stream:"
+                            android:textColor="?attr/textSecondary"
+                            android:textSize="11sp" />
+
+                        <TextView
+                            android:id="@+id/diag_text_audio_track_info"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:gravity="end"
+                            android:text="-- MB"
+                            android:textColor="?attr/textPrimary"
+                            android:textSize="11sp"
+                            android:fontFamily="sans-serif-medium" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/diag_text_audio_url"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="https://..."
+                        android:textColor="?attr/textSecondary"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:maxLines="2"
+                        android:ellipsize="middle"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Card 3: Storage Location -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="?attr/bgInputBox"
+                android:padding="12dp"
+                android:layout_marginTop="10dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="STORAGE DESTINATION"
+                    android:textColor="?attr/accentColor"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-bold"
+                    android:letterSpacing="0.04" />
+
+                <TextView
+                    android:id="@+id/diag_text_destination_path"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="/storage/emulated/0/Download/..."
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:maxLines="2"
+                    android:ellipsize="middle"
+                    android:layout_marginTop="4dp" />
+            </LinearLayout>
+
+            <!-- Segments Header -->
+            <TextView
+                android:id="@+id/diag_label_segments"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="PARALLEL CONNECTION CHUNKS"
+                android:textColor="?attr/accentColor"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.05"
+                android:layout_marginTop="14dp" />
+
+            <!-- Segments Container -->
+            <LinearLayout
+                android:id="@+id/diag_container_segments"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="6dp">
+
+                <TextView
+                    android:id="@+id/diag_text_no_segments"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Single connection stream in progress."
+                    android:textColor="?attr/textSecondary"
+                    android:textSize="11sp"
+                    android:padding="12dp"
+                    android:gravity="center"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- Bottom Action Button (Pinned) -->
+    <Button
+        android:id="@+id/diag_btn_close"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:text="Close"
+        android:textColor="?attr/textPrimary"
+        android:textSize="14sp"
+        android:fontFamily="sans-serif-bold"
+        android:background="?attr/bgBtnSecondary"
+        android:layout_marginTop="12dp" />
+
+</LinearLayout>
