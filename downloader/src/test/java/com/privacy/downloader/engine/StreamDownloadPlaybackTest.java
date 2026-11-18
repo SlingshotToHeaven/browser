@@ -158,7 +158,7 @@ public class StreamDownloadPlaybackTest {
     }
 
     private void assertPlayable(DownloadItem item) throws Exception {
-        assertEquals(item.getErrorMessage() + "\n" + Files.readString(log), DownloadStatus.COMPLETED, item.getStatus());
+        assertEquals(item.getErrorMessage() + "\n" + new String(Files.readAllBytes(log), StandardCharsets.UTF_8), DownloadStatus.COMPLETED, item.getStatus());
         assertOnlyOutcome(item, true);
         checked("-xerror", "-abort_on", "empty_output+empty_output_stream", "-i", item.getDestinationPath(),
                 "-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-");
@@ -173,7 +173,7 @@ public class StreamDownloadPlaybackTest {
 
     private void checked(String... args) throws IOException {
         int code = execute(List.of(args));
-        assertEquals(Files.readString(log), 0, code);
+        assertEquals(new String(Files.readAllBytes(log), StandardCharsets.UTF_8), 0, code);
     }
 
     private int execute(List<String> args) throws IOException {

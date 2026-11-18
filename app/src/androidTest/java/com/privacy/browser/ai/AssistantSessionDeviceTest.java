@@ -11,6 +11,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.view.View;
 import android.widget.EditText;
+import android.widget.RadioGroup;
+import android.widget.ScrollView;
 
 import androidx.test.platform.app.InstrumentationRegistry;
 
@@ -148,6 +150,38 @@ public class AssistantSessionDeviceTest {
         approveAndHold(FIRST_TEXT);
         ui(() -> { tap(R.id.tab_mode_raw); return null; });
         assertEquals(AiConfigManager.MODE_RAW, ui(mode::getMode));
+        assertCancelledBeforeSettlement();
+    }
+
+    @Test public void settingsGearOpensCustomPanelAndStopsTheHeldRun() throws Exception {
+        startTurn();
+        approveAndHold(FIRST_TEXT);
+        ui(() -> {
+            boolean selectedBefore = mode.isGeminiSelected();
+            tap(R.id.btn_ai_sheet_settings);
+            Dialog settings = (Dialog) field(AgentBottomSheet.class, "settingsDialog").get(sheet);
+            assertNotNull(settings);
+            assertTrue(settings.isShowing());
+            assertTrue(settings.findViewById(R.id.agent_settings_panel) instanceof ScrollView);
+            RadioGroup providers = settings.findViewById(R.id.rg_agent_chat_provider);
+            assertEquals(2, providers.getChildCount());
+            assertEquals(selectedBefore ? R.id.tab_provider_gemini : R.id.tab_provider_off, providers.getCheckedRadioButtonId());
+            providers.check(R.id.tab_provider_gemini);
+            assertEquals(View.VISIBLE, settings.findViewById(R.id.layout_gemini_config).getVisibility());
+            assertEquals(selectedBefore, mode.isGeminiSelected());
+            EditText model = settings.findViewById(R.id.et_gemini_model);
+            model.setText("models/invalid-for-fixture");
+            assertTrue(settings.findViewById(R.id.btn_agent_settings_save).performClick());
+            assertTrue(settings.isShowing());
+            assertNotNull(model.getError());
+            assertEquals(selectedBefore, mode.isGeminiSelected());
+            providers.check(R.id.tab_provider_off);
+            assertEquals(View.GONE, settings.findViewById(R.id.layout_gemini_config).getVisibility());
+            assertTrue(settings.findViewById(R.id.btn_agent_settings_cancel).performClick());
+            assertFalse(settings.isShowing());
+            assertEquals(selectedBefore, mode.isGeminiSelected());
+            return null;
+        });
         assertCancelledBeforeSettlement();
     }
 

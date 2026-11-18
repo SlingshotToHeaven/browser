@@ -57,7 +57,9 @@
     </style>
 
     <!-- Clean Light Theme -->
-    <style name="Theme.MinimalistBrowser.Light" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+    <style name="Theme.MinimalistBrowser.Light" parent="Theme.MinimalistBrowser.LightBase" />
+
+    <style name="Theme.MinimalistBrowser.LightBase" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
         <item name="android:colorAccent">#007AFF</item>
         <item name="android:colorControlActivated">#007AFF</item>
         <item name="android:windowBackground">#F7F8FA</item>
@@ -65,7 +67,6 @@
         <item name="android:navigationBarColor">#FFFFFF</item>
         <item name="android:statusBarColor">#FFFFFF</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:textColorPrimary">#111827</item>
         <item name="android:textColorSecondary">#6B7280</item>
         <item name="android:windowContentOverlay">@null</item>

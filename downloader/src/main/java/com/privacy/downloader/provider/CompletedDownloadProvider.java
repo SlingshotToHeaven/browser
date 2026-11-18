@@ -9,6 +9,7 @@ import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
 import android.os.Binder;
+import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.os.Process;
 import android.provider.OpenableColumns;
@@ -32,6 +33,9 @@ import java.util.regex.Pattern;
 
 /** Read-only, exact-URI access to a committed download. There are no filesystem roots to browse. */
 public final class CompletedDownloadProvider extends ContentProvider {
+    // Bionic's Linux open flag on Oreo (asm-generic/fcntl.h). API 26 accepts it
+    // in Os.open but exposes neither OsConstants.O_CLOEXEC nor public Os.fcntlInt.
+    private static final int O_CLOEXEC_API_26 = 02000000;
     private static final String AUTHORITY_SUFFIX = ".completed-downloads";
     private static final String UNAVAILABLE = "Completed file is missing, has changed, or was saved by an older version.";
     private static final Pattern ID = Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
@@ -95,7 +99,10 @@ public final class CompletedDownloadProvider extends ContentProvider {
             if (!row.identity.equals(PublishedFileIdentity.capture(path, row.size))) throw unavailable();
             FileDescriptor fd = null;
             try {
-                fd = Os.open(path, OsConstants.O_RDONLY | OsConstants.O_NOFOLLOW | OsConstants.O_NONBLOCK | OsConstants.O_CLOEXEC, 0);
+                int closeOnExec = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1
+                        ? OsConstants.O_CLOEXEC : O_CLOEXEC_API_26;
+                fd = Os.open(path, OsConstants.O_RDONLY | OsConstants.O_NOFOLLOW
+                        | OsConstants.O_NONBLOCK | closeOnExec, 0);
                 // Validate the opened descriptor, not just the name: removable/shared folders can change.
                 if (!row.identity.equals(PublishedFileIdentity.of(Os.fstat(fd), row.size))) throw unavailable();
                 return ParcelFileDescriptor.dup(fd);

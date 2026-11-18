@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/agent_settings_panel"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?attr/bgDialogSurface"
+    android:clipToOutline="true"
+    android:overScrollMode="ifContentScrolls"
+    android:scrollbars="vertical">
+
+    <LinearLayout
+        android:id="@+id/ll_settings_root"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:focusableInTouchMode="true"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="18dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:baselineAligned="false"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="?attr/bgCircleButton"
+                android:importantForAccessibility="no"
+                android:padding="8dp"
+                android:src="@drawable/ic_ai_spark"
+                android:tint="#4A88F7" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="10dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/agent_settings_title"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="19sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    style="@style/AgentSettingsBody"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/agent_settings_subtitle" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btn_settings_close"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/agent_settings_close"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_close"
+                android:tint="?attr/iconTintSecondary" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="14dp"
+            android:background="?attr/borderHairline" />
+
+        <TextView
+            style="@style/AgentSettingsSection"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/agent_settings_provider" />
+
+        <RadioGroup
+            android:id="@+id/rg_agent_chat_provider"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:baselineAligned="false"
+            android:orientation="horizontal">
+
+            <RadioButton
+                android:id="@+id/tab_provider_gemini"
+                style="@style/AgentSettingsChoice"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/agent_settings_gemini" />
+
+            <RadioButton
+                android:id="@+id/tab_provider_off"
+                style="@style/AgentSettingsChoice"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="@string/agent_settings_off" />
+        </RadioGroup>
+
+        <LinearLayout
+            android:id="@+id/agent_settings_provider_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                android:id="@+id/tv_agent_settings_recipient"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="?attr/textPrimary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_provider_summary"
+                style="@style/AgentSettingsBody"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:accessibilityLiveRegion="polite" />
+
+            <LinearLayout
+                android:id="@+id/layout_gemini_config"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/AgentSettingsSection"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:labelFor="@id/et_gemini_model"
+                    android:text="@string/agent_settings_model" />
+
+                <EditText
+                    android:id="@+id/et_gemini_model"
+                    style="@style/AgentSettingsField"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:hint="@string/agent_settings_model_hint"
+                    android:imeOptions="actionNext|flagNoPersonalizedLearning"
+                    android:inputType="text|textNoSuggestions"
+                    android:maxLength="80" />
+
+                <TextView
+                    style="@style/AgentSettingsSection"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:labelFor="@id/et_gemini_api_key"
+                    android:text="@string/agent_settings_key" />
+
+                <EditText
+                    android:id="@+id/et_gemini_api_key"
+                    style="@style/AgentSettingsField"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:hint="@string/agent_settings_key_hint"
+                    android:imeOptions="actionDone|flagNoPersonalizedLearning"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:maxLength="256"
+                    android:saveEnabled="false" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            style="@style/AgentSettingsSection"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/agent_settings_local_tools" />
+
+        <LinearLayout
+            android:id="@+id/agent_settings_tools_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:clipToOutline="true"
+            android:orientation="vertical"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp">
+
+            <Button
+                android:id="@+id/btn_agent_settings_review"
+                style="@style/AgentSettingsAction"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:drawableStart="@drawable/ic_code"
+                android:text="@string/agent_settings_review" />
+
+            <Button
+                android:id="@+id/btn_agent_settings_reminders"
+                style="@style/AgentSettingsAction"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:drawableStart="@drawable/ic_history"
+                android:text="@string/agent_settings_reminders" />
+
+            <Button
+                android:id="@+id/btn_agent_settings_cleanup"
+                style="@style/AgentSettingsAction"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:drawableStart="@drawable/ic_trash"
+                android:text="@string/agent_settings_cleanup" />
+
+            <Button
+                android:id="@+id/btn_agent_settings_forget_login"
+                style="@style/AgentSettingsAction"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:drawableStart="@drawable/ic_lock"
+                android:text="@string/agent_settings_forget_login"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="14dp"
+            android:layout_marginBottom="12dp"
+            android:background="?attr/borderHairline" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:baselineAligned="false"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_agent_settings_cancel"
+                style="@style/AgentSettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@android:string/cancel" />
+
+            <Button
+                android:id="@+id/btn_agent_settings_save"
+                style="@style/AgentSettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="@string/agent_settings_save"
+                android:textColor="@android:color/white" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

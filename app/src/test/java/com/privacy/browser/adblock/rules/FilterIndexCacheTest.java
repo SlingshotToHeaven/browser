@@ -10,6 +10,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -140,8 +141,8 @@ public class FilterIndexCacheTest {
         Path assets = Path.of("src/main/assets/filters");
         if (!Files.isDirectory(assets)) assets = Path.of("app/src/main/assets/filters");
         EnumMap<Part, String> text = rules();
-        text.put(Part.HOSTS, Files.readString(assets.resolve("hosts.txt")));
-        text.put(Part.COSMETIC, Files.readString(assets.resolve("cosmetic_rules.txt")));
+        text.put(Part.HOSTS, new String(Files.readAllBytes(assets.resolve("hosts.txt")), StandardCharsets.UTF_8));
+        text.put(Part.COSMETIC, new String(Files.readAllBytes(assets.resolve("cosmetic_rules.txt")), StandardCharsets.UTF_8));
         FilterSnapshot parsed = f.cache().loadOrBuild(text);
         assertTrue(parsed.hostCount() > 100_000);
         f.finishWrite();

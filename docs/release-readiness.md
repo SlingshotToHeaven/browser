@@ -1,6 +1,6 @@
 # Step 21: release verification and staged recovery
 
-**Not cleared to distribute.** Local source checks and fixtures do not produce or approve a release. The [input inventory](release-inputs.md) has open redistribution/provenance items. No Android SDK build, signed APK, 20 MB result, in-place upgrade or device run is recorded for this checkout. The [physical typing push gate](../README.md#device-procedure-perf-07) and other [device checks](../DEVICE_TEST_CHECKLIST.md) still apply. See the [SDK/device handoff](device-handoff.md) for matched sources and the run order.
+**Not cleared to distribute.** Local source checks and fixtures do not produce or approve a release. The [input inventory](release-inputs.md) has open redistribution/provenance items. A [debug device run](android-test-followup.md#what-the-first-report-establishes) was reported for the earlier source. There is no passed minified build, signed APK, signed size result, or release upgrade/device result for this checkout. The [physical typing push gate](../README.md#device-procedure-perf-07) and other [device checks](../DEVICE_TEST_CHECKLIST.md) still apply. See the [SDK/device handoff](device-handoff.md) for matched sources and the run order.
 
 ## Local evidence (2026-11-17)
 

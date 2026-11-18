@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="agent_settings_title">Agent settings</string>
+    <string name="agent_settings_subtitle">Cloud chat and local tools</string>
+    <string name="agent_settings_close">Close Agent settings</string>
+    <string name="agent_settings_provider">Cloud provider</string>
+    <string name="agent_settings_gemini">Gemini API</string>
+    <string name="agent_settings_off">Off</string>
+    <string name="agent_settings_recipient">Google AI Studio</string>
+    <string name="agent_settings_disclosure">Sends your prompts, recent chat context, and approved tool results to Google AI Studio. Images are not sent.</string>
+    <string name="agent_settings_off_title">Cloud chat is off</string>
+    <string name="agent_settings_off_summary">No chat is sent to a cloud provider. Local recipes and reminders are still available.</string>
+    <string name="agent_settings_model">Gemini model ID</string>
+    <string name="agent_settings_model_hint">Enter a model ID</string>
+    <string name="agent_settings_model_error">Enter a model ID without the models/ prefix.</string>
+    <string name="agent_settings_key">Gemini API key</string>
+    <string name="agent_settings_key_hint">Enter an API key</string>
+    <string name="agent_settings_key_error">Enter a valid Gemini API key.</string>
+    <string name="agent_settings_local_tools">Local tools</string>
+    <string name="agent_settings_review">Review a recipe</string>
+    <string name="agent_settings_reminders">Recipe reminders</string>
+    <string name="agent_settings_cleanup">Clean up old Agent data</string>
+    <string name="agent_settings_forget_login">Remove old Antigravity credentials from this app</string>
+    <string name="agent_settings_login_forgotten">Local copy removed. This does not revoke access at Google.</string>
+    <string name="agent_settings_save">Save settings</string>
+
+    <style name="AgentSettingsSection">
+        <item name="android:textColor">?attr/textSecondary</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.08</item>
+    </style>
+
+    <style name="AgentSettingsBody">
+        <item name="android:textColor">?attr/textSecondary</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <style name="AgentSettingsField">
+        <item name="android:minHeight">48dp</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingEnd">14dp</item>
+        <item name="android:textColor">?attr/textPrimary</item>
+        <item name="android:textColorHint">?attr/textSecondary</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:backgroundTint">@null</item>
+    </style>
+
+    <style name="AgentSettingsButton">
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">?attr/textPrimary</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:backgroundTint">@null</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+
+    <style name="AgentSettingsChoice" parent="AgentSettingsButton">
+        <item name="android:button">@null</item>
+        <item name="android:gravity">center</item>
+    </style>
+
+    <style name="AgentSettingsAction" parent="AgentSettingsButton">
+        <item name="android:gravity">start|center_vertical</item>
+        <item name="android:drawablePadding">12dp</item>
+        <item name="android:drawableTint">?attr/iconTintSecondary</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+    </style>
+</resources>

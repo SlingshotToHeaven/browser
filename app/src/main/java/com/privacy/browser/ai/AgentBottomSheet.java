@@ -18,7 +18,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.widget.PopupMenu;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -51,6 +50,7 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
 
     private final MainActivity owner;
     private final AiFloatingButtonView button;
+    private Dialog settingsDialog;
     private AlertDialog cleanupConfirmation;
 
     public AgentBottomSheet(MainActivity activity, AiFloatingButtonView button) {
@@ -287,28 +287,8 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
             }
         });
 
-        btnSettings.setContentDescription("Agent options");
-        btnSettings.setOnClickListener(v -> {
-            PopupMenu menu = new PopupMenu(context, btnSettings);
-            menu.getMenu().add(0, 1, 0, "Agent settings");
-            menu.getMenu().add(0, 2, 1, "Review a recipe");
-            menu.getMenu().add(0, 3, 2, "Recipe reminders");
-            menu.getMenu().add(0, 4, 3, "Clean up old Agent data");
-            menu.setOnMenuItemClickListener(item -> {
-                if (item.getItemId() == 1) {
-                    sessionManager.stopActiveSession();
-                    AiSettingsDialog.show(context, () -> {
-                        sessionManager.settingsChanged();
-                        updateRecipient();
-                    });
-                }
-                else if (item.getItemId() == 2) AutomationRecipeRunner.paste(owner, sessionManager, this::isShowing);
-                else if (item.getItemId() == 3) AutomationRecipeRunner.reminders(owner, sessionManager, this::isShowing);
-                else if (item.getItemId() == 4) confirmLegacyCleanup();
-                return true;
-            });
-            menu.show();
-        });
+        btnSettings.setContentDescription(context.getString(R.string.agent_settings_title));
+        btnSettings.setOnClickListener(v -> showSettings());
 
         if (btnStop != null) {
             btnStop.setColorFilter(Color.parseColor("#EF4444"));
@@ -342,6 +322,31 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
             }
         });
 
+    }
+
+    private void showSettings() {
+        if (!isShowing() || owner.isFinishing() || owner.isDestroyed() || settingsDialog != null) return;
+        sessionManager.stopActiveSession();
+        Dialog settings = AiSettingsDialog.create(owner, () -> {
+            sessionManager.settingsChanged();
+            updateRecipient();
+        }, action -> {
+            if (!isShowing() || owner.isFinishing() || owner.isDestroyed()) return;
+            switch (action) {
+                case REVIEW_RECIPE -> AutomationRecipeRunner.paste(owner, sessionManager, this::isShowing);
+                case REMINDERS -> AutomationRecipeRunner.reminders(owner, sessionManager, this::isShowing);
+                case CLEANUP -> confirmLegacyCleanup();
+            }
+        });
+        settingsDialog = settings;
+        settings.setOnDismissListener(d -> { if (settingsDialog == settings) settingsDialog = null; });
+        settings.show();
+    }
+
+    private void dismissSettings() {
+        Dialog settings = settingsDialog;
+        settingsDialog = null;
+        if (settings != null) settings.dismiss();
     }
 
     private void confirmLegacyCleanup() {
@@ -437,6 +442,7 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
 
     public void pageChanged() { sessionManager.pageChanged(owner); }
     public void ownerPaused() {
+        dismissSettings();
         dismissCleanupConfirmation();
         sessionManager.pauseActivity(owner);
     }
@@ -460,6 +466,7 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
     }
 
     private void closeSheet() {
+        dismissSettings();
         dismissCleanupConfirmation();
         sessionManager.closeSheet(owner, this);
     }

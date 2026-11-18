@@ -1,6 +1,6 @@
 # Physical-device verification checklist
 
-**Status: no physical-device passes recorded.** Every unchecked item is **Not run** unless it is marked **Blocked**. Use this file to track checks that need Android or real hardware. The [remediation plan](REMEDIATION_PLAN.md) records the implementation order and host results; the [README](README.md) has the detailed test commands and expected behavior. Host fixtures and API-stub compilation are not device results. An emulator can help triage Android failures, but record that run separately from a phone or tablet run.
+**Status: an initial device run was reported; the revised candidate still needs retesting.** See the [report review and targeted rerun](docs/android-test-followup.md). Unchecked gates remain open; a suite pass can be partial evidence, not a full checklist pass. The [remediation plan](REMEDIATION_PLAN.md) records the implementation order and host results; the [README](README.md) has the detailed test commands and expected behavior. Host fixtures and API-stub compilation are not device results. An emulator can help triage Android failures, but record that run separately from a phone or tablet run.
 
 ## Before testing
 
@@ -10,7 +10,7 @@
 - Cover API 26 (the minimum) and a recent Android release, including the API 31+ alarm path and an API 29+ device with a terminable WebView renderer. Record the Android build, ABI, page size and WebView provider/version (`adb shell dumpsys webviewupdate`). Where a provider feature is absent, test the supported fallback and record the feature-dependent case as skipped, not passed.
 - Use **ARM64 hardware** for the bundled FFmpeg checks. The release matrix also needs a supported ARM64 configuration running with **16 KiB** pages. For paired performance runs, keep the hardware, WebView, build variant, seed data and network conditions fixed.
 
-### Authored Android suites — all not run
+### Authored Android suites
 
 Run one class at a time on a connected test device:
 
@@ -21,7 +21,7 @@ Run one class at a time on a connected test device:
 | Class | Coverage / setup |
 | --- | --- |
 | `com.privacy.browser.BrowserViewLifecycleTest` | Bundled home and renderer recovery. See [browser lifecycle setup](README.md#verify-browser-chrome-and-renderer-recovery). |
-| `com.privacy.browser.BrowserPrivacyTest` | Private admission refusal, disposable cookie clear, asynchronous local cleanup reporting and a test-only provider-profile probe. See [privacy setup](README.md#private-tabs-and-clearing-browser-data). |
+| `com.privacy.browser.BrowserPrivacyTest` | Private admission refusal, disposable cookie clear and asynchronous local cleanup reporting. See [privacy setup](README.md#private-tabs-and-clearing-browser-data). |
 | `com.privacy.browser.TabSessionDeviceTest` | Native same-address entries, Back position and owner-thread parcel/restore. Intercepts synthetic pages; no saved app tabs are changed. See [session setup](README.md#tab-session-checks-on-android-not-yet-run). |
 | `com.privacy.browser.TabResourcesDeviceTest` | Visits 30 fixture tabs, checks live-view eviction and native recovery, grid preview trim and renderer loss. Replaces tab rows on a disposable install. Start [the loopback fixture and adb reverse](README.md#device-procedure-perf-03). |
 | `com.privacy.browser.FilterInterceptionDeviceTest` | Calls the real Android interception code with synthetic requests; checks response types, revisions, Home and private counts. Uses a disposable profile, no external fetch. See [filter work](README.md#device-procedure-perf-0506). |
@@ -31,13 +31,13 @@ Run one class at a time on a connected test device:
 | `com.privacy.browser.ai.AssistantReviewDeviceTest` | Same-address reload and cold/warm intent rejection. Run [the tab fixture](tests/fixtures/tab_trust.py) with `adb reverse tcp:8011 tcp:8011`. |
 | `com.privacy.browser.ai.AssistantPersistenceDeviceTest` | Legacy confirmation rows and Android reminder persistence. Use a disposable install without saved reminders. |
 | `com.privacy.browser.ai.AssistantLegacyDataDeviceTest` | Real v1→v2 chat upgrade, logical cleanup, rollback and bounded image decoding. Seeds isolated temporary state. |
-| `com.privacy.browser.ai.AssistantSessionDeviceTest` | Real sheet, native review and held WebView replies through the Android main queue. Use the [assistant loopback setup](README.md#assistant-checks-on-android-not-yet-run), no cloud account. |
+| `com.privacy.browser.ai.AssistantSessionDeviceTest` | Real sheet, custom settings and native review, with held WebView replies through the Android main queue. Use the [assistant loopback setup](README.md#assistant-checks-on-android-not-yet-run), no cloud account. |
 | `com.privacy.browser.bookmarks.BookmarkDbHelperDeviceTest` | SQLite upgrades, transactional moves and cycle-safe deletion. Seeds and removes only its own test databases. See [bookmark setup](README.md#bookmark-checks-on-android-not-yet-run). |
 | `com.privacy.browser.images.LocalThumbnailStoreDeviceTest` | Actual Android thumbnail codec, StrictMode on load entry points, file limits and reset/replace. Uses a temporary directory. See [thumbnail setup](README.md#bookmark-cover-and-favicon-checks-on-android-not-yet-run). |
 | `com.privacy.browser.downloads.DownloadHistoryDeviceTest` | Real history schema v8, paging and v7 upgrade. See [PERF-09 setup](README.md#device-procedure-perf-09). |
 | `com.privacy.browser.downloads.CompletedDownloadGrantTest` | Real content provider and exact URI grant/revoke, including a separate shell UID on an unrooted device. See [grant setup](README.md#open-or-share-a-completed-download). |
 
-These suites cover only part of the checklist. In particular, a profile feature probe is not proof of isolation or deletion, and an intent metadata check does not verify delivery through the system chooser.
+These suites cover only part of the checklist; a grant fixture is not delivery through the system chooser. Run the opt-in [named WebView profile probe](docs/android-test-followup.md#3-run-the-named-profile-probe-in-separate-processes) separately. It is not a private tab implementation or proof of disk erasure.
 
 ## Checks for the current build
 
@@ -62,8 +62,8 @@ These suites cover only part of the checklist. In particular, a profile feature 
 
 - [ ] **AI-01 — Native review and invalidation.** With a harmless manual recipe, verify that opening/importing it runs nothing and approval runs only the selected normalized step. Exercise Deny/Back, expiry, second use, same-URL reload, tab switch and return, sheet close, Activity recreation/backgrounding, and session/settings changes. Cold/warm intents may not run recipes. See [assistant device instructions](README.md#assistant-checks-on-android-not-yet-run).
 - [ ] **AI-02 — Real reminder lifecycle.** Exercise inexact/unavailable status on API 31+ and the older alarm path. Check registration, cancellation, reboot, app restart, clock changes, delayed/overdue delivery and an obsolete alarm. Where exact capability already exists, check its refusal or loss; don't enable new special access for the test. Delivery must only mark a reminder due for review, with no notification, Activity launch or recipe execution.
-- [ ] **AI-03 — Legacy transcript and local previews (not run).** Run `AssistantLegacyDataDeviceTest` and upgrade a disposable install with v1 chat rows, a pending confirmation, saved images and legacy context. Original chats stay readable, approvals stay inert, and supported images decode locally. Open **Agent options → Clean up old Agent data**; cancel once, then confirm. Confirm context and obsolete arguments are removed, shared previews and chat rows stay, orphan files disappear, and repeating cleanup is safe. No old context or image is sent to a provider. Check the retired Termux and Antigravity choices have no fallback.
-- [ ] **AI-04 — Stop, late results and pairing (not run).** Run [`AssistantSessionDeviceTest`](README.md#assistant-checks-on-android-not-yet-run) with the loopback page and instance-local fake provider. The real sheet and Android main queue must ignore a held WebView result after Stop, New Chat, changing mode, or backgrounding. Check one paired follow-up for native Deny and an execution timeout, and no old page text after a same-address reload. Separately verify best-effort cancellation of Android HTTPS transport with a non-production test account and no sensitive data; the fake provider confirms the cancellation call, not network teardown or recall of sent bytes.
+- [ ] **AI-03 — Legacy transcript and local previews (not run).** Run `AssistantLegacyDataDeviceTest` and upgrade a disposable install with v1 chat rows, a pending confirmation, saved images and legacy context. Original chats stay readable, approvals stay inert, and supported images decode locally. Open **Agent settings → Clean up old Agent data**; cancel once, then confirm. Confirm context and obsolete arguments are removed, shared previews and chat rows stay, orphan files disappear, and repeating cleanup is safe. No old context or image is sent to a provider. Check the retired Termux and Antigravity choices have no fallback.
+- [ ] **AI-04 — Stop, late results and pairing (not run).** Run [`AssistantSessionDeviceTest`](README.md#assistant-checks-on-android-not-yet-run) with the loopback page and instance-local fake provider. The real sheet and Android main queue must ignore a held WebView result after Stop, New Chat, changing mode, opening settings, or backgrounding. Check one paired follow-up for native Deny and an execution timeout, and no old page text after a same-address reload. Separately verify best-effort cancellation of Android HTTPS transport with a non-production test account and no sensitive data; the fake provider confirms the cancellation call, not network teardown or recall of sent bytes.
 - [ ] **IMG-01 — Single-destination URL sharing.** Review a synthetic HTTP(S) image URL, cancel and then confirm one chosen destination. Only the confirmed URL goes to that provider; file, data and blob inputs don't go out. Change the initiating tab/document or leave the Activity before confirming and verify nothing is sent. Opening a search page is not evidence of an image match.
 
 ### Comic archives (Step 13)
@@ -125,4 +125,4 @@ Record one row per check, build and device configuration. Report **Pass**, **Fai
 
 | Check ID | Date / build revision or APK hash | Physical / emulator; model, OS/API, ABI, page size, WebView | Result | Evidence / remaining gaps |
 | --- | --- | --- | --- | --- |
-| — | — | — | Not run | No device results recorded yet. |
+| Initial SDK/device run | Exact source ID not reported; debug APK SHA-256 `fc6f40b5d573483ca2b002eeee4706e75bb18ebe7de78546c96635b919136273` | Physical; Galaxy S21 FE, API 36, ARM64, 4 KiB, WebView 137.0.7151.115 | Partial (reported) | 14/16 suites passed; privacy probe and native history failed. 100 synthetic completed rows preserved in-place. See the [report review](docs/android-test-followup.md#what-the-first-report-establishes) for limits and follow-up. |

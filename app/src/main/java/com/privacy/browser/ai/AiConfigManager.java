@@ -29,6 +29,7 @@ public class AiConfigManager {
     String getMode() { return MODE_RAW.equals(prefs.getString(PREF_AI_MODE, null)) ? MODE_RAW : MODE_STRUCTURED; }
     void setMode(String mode) { prefs.edit().putString(PREF_AI_MODE, mode).apply(); }
 
+    boolean isGeminiSelected() { return PROVIDER_GEMINI.equals(prefs.getAll().get(PREF_AI_PROVIDER)); }
     String geminiKey() { return prefs.getString(PREF_GEMINI_API_KEY, ""); }
     String geminiModel() { return prefs.getString(PREF_GEMINI_MODEL, ""); }
 

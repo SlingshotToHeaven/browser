@@ -98,8 +98,8 @@
         <!-- Scaled WebView Wrapper positioned at top-left, dynamically scaled & centered -->
         <FrameLayout
             android:id="@+id/editor_webview_wrapper"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
             android:layout_gravity="top|start">
 
             <WebView

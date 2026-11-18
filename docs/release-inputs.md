@@ -19,6 +19,7 @@
 | `androidx.recyclerview:recyclerview:1.3.2` | app, downloader | AndroidX, Apache-2.0 |
 | `androidx.webkit:webkit:1.12.0` | app, downloader | AndroidX, Apache-2.0 |
 | `org.jsoup:jsoup:1.18.1` | app | [jsoup 1.18.1 LICENSE](https://github.com/jhy/jsoup/blob/jsoup-1.18.1/LICENSE), MIT |
+| `org.jspecify:jspecify:1.0.0` | app | [JSpecify 1.0.0 LICENSE](https://github.com/jspecify/jspecify/blob/v1.0.0/LICENSE), Apache-2.0. Resolves jsoup's annotation types for R8; confirm the resolved JAR and packaged notices. |
 | FFmpeg / `libffmpegkit.so` | downloader | Embedded markers below; corresponding source and notices unresolved |
 
 JUnit, host `org.json`, AndroidX test runner, instrumentation and synthetic media fixtures are not release runtime inputs. These are **declared** Android library coordinates, not the selected transitive graph or APK contents. From the build that produces the signed artifact, retain:
