@@ -284,7 +284,8 @@
                 <!-- JavaScript NoScript -->
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="36dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
 
@@ -292,7 +293,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="JavaScript (NoScript toggle)"
+                        android:text="@string/no_script_site_rule"
                         android:textColor="?attr/textPrimary"
                         android:textSize="12sp" />
 
@@ -300,10 +301,25 @@
                         android:id="@+id/switch_site_js"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:contentDescription="@string/no_script_site_rule"
                         android:thumbTint="?attr/switchThumbTint"
-                        android:trackTint="?attr/switchTrackTint"
-                        android:checked="true" />
+                        android:trackTint="?attr/switchTrackTint" />
                 </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_no_script_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/no_script_active_all_tabs"
+                    android:textColor="?attr/textPrimary"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+                <Button
+                    android:id="@+id/btn_clear_no_script_rules"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/no_script_clear_rules" />
 
                 <!-- Pop-up Windows -->
                 <LinearLayout

@@ -1,8 +1,8 @@
 package com.privacy.browser.ai;
 
+import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Context;
-import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.util.DisplayMetrics;
@@ -11,7 +11,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
-import android.webkit.WebView;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
@@ -19,13 +18,13 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.PopupMenu;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.privacy.browser.MainActivity;
 import com.privacy.browser.R;
-import com.privacy.browser.TabsManager;
 import com.privacy.browser.ThemeManager;
 
 import java.util.List;
@@ -50,19 +49,23 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
     private TextView tvEmptyTitle, tvEmptySubtitle;
     private TextView chipSummarize, chipExtract, chipInspect;
 
-    private LinearLayout llPendingAttachment;
-    private ImageView ivPendingAttachmentThumb;
-    private TextView tvPendingAttachmentLabel;
-    private ImageButton btnRemovePendingAttachment;
-    private String pendingAttachmentPath = null;
-    private WebView activeWebView;
+    private final MainActivity owner;
+    private final AiFloatingButtonView button;
+    private AlertDialog cleanupConfirmation;
 
-    public AgentBottomSheet(Context context, WebView activeWebView, MainActivity activity, TabsManager tabsManager) {
+    public AgentBottomSheet(MainActivity activity, AiFloatingButtonView button) {
+        this(activity, button, AgentSessionManager.getInstance(activity));
+    }
+
+    // Instance-local wiring for the Android fixture. Production always supplies the real manager.
+    AgentBottomSheet(MainActivity activity, AiFloatingButtonView button, AgentSessionManager manager) {
+        Context context = activity;
         this.context = context;
-        this.activeWebView = activeWebView;
+        this.owner = activity;
+        this.button = button;
         this.isDark = ThemeManager.isAppDarkTheme(context);
         this.configManager = new AiConfigManager(context);
-        this.sessionManager = AgentSessionManager.getInstance(context);
+        this.sessionManager = manager;
 
         this.dialog = new Dialog(context);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -80,10 +83,8 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
         }
 
         initViews(view);
-        updateActiveContext(activeWebView, activity, tabsManager);
-
-        // Register session callback
-        sessionManager.setSessionCallback(this);
+        dialog.setOnCancelListener(d -> closeSheet());
+        dialog.setOnDismissListener(d -> { if (!isShowing()) closeSheet(); });
     }
 
     private void initViews(View view) {
@@ -100,7 +101,7 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
             scrim.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    dialog.dismiss();
+                    dismiss();
                 }
             });
         }
@@ -202,31 +203,6 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
         btnSend = view.findViewById(R.id.btn_ai_send);
         btnAttachVision = view.findViewById(R.id.btn_ai_attach_vision);
 
-        // Pending attachment preview bar
-        llPendingAttachment = view.findViewById(R.id.ll_pending_attachment_bar);
-        ivPendingAttachmentThumb = view.findViewById(R.id.iv_pending_attachment_thumb);
-        tvPendingAttachmentLabel = view.findViewById(R.id.tv_pending_attachment_label);
-        btnRemovePendingAttachment = view.findViewById(R.id.btn_remove_pending_attachment);
-
-        if (ivPendingAttachmentThumb != null) {
-            ivPendingAttachmentThumb.setClipToOutline(true);
-        }
-        if (llPendingAttachment != null) {
-            llPendingAttachment.setBackgroundResource(isDark ? R.drawable.bg_agent_pending_attachment : R.drawable.bg_agent_pending_attachment_light);
-        }
-        if (tvPendingAttachmentLabel != null) {
-            tvPendingAttachmentLabel.setTextColor(isDark ? Color.parseColor("#94A3B8") : Color.parseColor("#475569"));
-        }
-        if (btnRemovePendingAttachment != null) {
-            btnRemovePendingAttachment.setColorFilter(isDark ? Color.parseColor("#94A3B8") : Color.parseColor("#64748B"));
-            btnRemovePendingAttachment.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    clearPendingAttachment(true);
-                }
-            });
-        }
-
         etPrompt.setTextColor(isDark ? Color.WHITE : Color.parseColor("#0F172A"));
         etPrompt.setHintTextColor(isDark ? Color.parseColor("#64748B") : Color.parseColor("#94A3B8"));
 
@@ -256,7 +232,7 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
                         return true;
                     case android.view.MotionEvent.ACTION_UP:
                         if (root.getTranslationY() > 200) {
-                            dialog.dismiss();
+                            dismiss();
                         }
                         root.animate().translationY(0).setDuration(200).start();
                         return true;
@@ -269,6 +245,7 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
         tabStructured.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                if (!AiConfigManager.MODE_STRUCTURED.equals(configManager.getMode())) sessionManager.settingsChanged();
                 configManager.setMode(AiConfigManager.MODE_STRUCTURED);
                 updateModeUI();
             }
@@ -277,6 +254,7 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
         tabRaw.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                if (!AiConfigManager.MODE_RAW.equals(configManager.getMode())) sessionManager.settingsChanged();
                 configManager.setMode(AiConfigManager.MODE_RAW);
                 updateModeUI();
             }
@@ -285,7 +263,6 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
         btnNewChat.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                clearPendingAttachment(true);
                 sessionManager.startNewSession();
                 Toast.makeText(context, "New conversation started", Toast.LENGTH_SHORT).show();
             }
@@ -310,11 +287,27 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
             }
         });
 
-        btnSettings.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                AiSettingsDialog.show(context, null);
-            }
+        btnSettings.setContentDescription("Agent options");
+        btnSettings.setOnClickListener(v -> {
+            PopupMenu menu = new PopupMenu(context, btnSettings);
+            menu.getMenu().add(0, 1, 0, "Agent settings");
+            menu.getMenu().add(0, 2, 1, "Review a recipe");
+            menu.getMenu().add(0, 3, 2, "Recipe reminders");
+            menu.getMenu().add(0, 4, 3, "Clean up old Agent data");
+            menu.setOnMenuItemClickListener(item -> {
+                if (item.getItemId() == 1) {
+                    sessionManager.stopActiveSession();
+                    AiSettingsDialog.show(context, () -> {
+                        sessionManager.settingsChanged();
+                        updateRecipient();
+                    });
+                }
+                else if (item.getItemId() == 2) AutomationRecipeRunner.paste(owner, sessionManager, this::isShowing);
+                else if (item.getItemId() == 3) AutomationRecipeRunner.reminders(owner, sessionManager, this::isShowing);
+                else if (item.getItemId() == 4) confirmLegacyCleanup();
+                return true;
+            });
+            menu.show();
         });
 
         if (btnStop != null) {
@@ -330,48 +323,13 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
         btnClose.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                dialog.dismiss();
+                dismiss();
             }
         });
 
-        btnAttachVision.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (activeWebView == null) {
-                    Toast.makeText(context, "No active web page to capture", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                VisionToolExecutor.captureViewportBase64(activeWebView, new VisionToolExecutor.VisionCallback() {
-                    @Override
-                    public void onCaptured(String base64Image) {
-                        // Discard any existing unsent attachment
-                        if (pendingAttachmentPath != null) {
-                            AgentAttachmentManager.deleteAttachment(pendingAttachmentPath);
-                        }
-                        String savedPath = AgentAttachmentManager.saveBase64Webp(context, base64Image);
-                        if (savedPath != null) {
-                            pendingAttachmentPath = savedPath;
-                            Bitmap thumb = AgentAttachmentManager.loadSampledBitmap(savedPath, 96, 96);
-                            if (thumb != null && ivPendingAttachmentThumb != null) {
-                                ivPendingAttachmentThumb.setImageBitmap(thumb);
-                            }
-                            if (llPendingAttachment != null) {
-                                llPendingAttachment.setVisibility(View.VISIBLE);
-                            }
-                            btnAttachVision.setColorFilter(Color.parseColor("#4A88F7"));
-                            Toast.makeText(context, "Screenshot captured & attached", Toast.LENGTH_SHORT).show();
-                        } else {
-                            Toast.makeText(context, "Failed to save screenshot", Toast.LENGTH_SHORT).show();
-                        }
-                    }
-
-                    @Override
-                    public void onError(String error) {
-                        Toast.makeText(context, "Vision error: " + error, Toast.LENGTH_SHORT).show();
-                    }
-                });
-            }
-        });
+        btnAttachVision.setContentDescription("Image attachments unavailable");
+        btnAttachVision.setOnClickListener(v -> Toast.makeText(context,
+                "Image attachments are unavailable; no image will be captured or uploaded.", Toast.LENGTH_LONG).show());
 
         btnSend.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -384,17 +342,46 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
             }
         });
 
-        chatAdapter.setOnConfirmationDecisionListener(new AiChatAdapter.OnConfirmationDecisionListener() {
-            @Override
-            public void onConfirmed(AiChatAdapter.ChatMessage message) {
-                sessionManager.executeApprovedTool(message.toolName, message.toolArgs);
-            }
+    }
 
-            @Override
-            public void onCancelled(AiChatAdapter.ChatMessage message) {
-                sessionManager.cancelPendingTool(message.toolName);
-            }
+    private void confirmLegacyCleanup() {
+        if (!isShowing() || owner.isFinishing() || owner.isDestroyed() || cleanupConfirmation != null) return;
+        if (sessionManager.getSessionState() == AiFloatingButtonView.STATE_PROCESSING) {
+            Toast.makeText(context, "Stop the current Agent request before cleaning up old data.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        AlertDialog confirm = new AlertDialog.Builder(owner, ThemeManager.getDialogTheme(owner))
+                .setTitle("Clean up old Agent data?")
+                .setMessage("Remove old provider replay data, including any inline images and pending calls, "
+                        + "unused saved action arguments, and unused legacy Agent image files. Saved chat text and "
+                        + "images still used by a chat stay. This does not clear browsing data or credentials, send "
+                        + "anything, or securely erase other copies of this data.")
+                .setNegativeButton("Cancel", null).setPositiveButton("Clean up", null).create();
+        cleanupConfirmation = confirm;
+        confirm.setOnDismissListener(d -> { if (cleanupConfirmation == confirm) cleanupConfirmation = null; });
+        confirm.show();
+        View clean = confirm.getButton(AlertDialog.BUTTON_POSITIVE);
+        clean.setFilterTouchesWhenObscured(true);
+        clean.setOnClickListener(v -> {
+            if (cleanupConfirmation != confirm || !confirm.isShowing() || !isShowing()
+                    || owner.isFinishing() || owner.isDestroyed()) return;
+            dismissCleanupConfirmation();
+            boolean queued = AgentAttachmentManager.scheduleLegacyCleanup(AgentDbHelper.getInstance(context), result -> {
+                if (owner.isFinishing() || owner.isDestroyed()) return;
+                String message;
+                if (!result.replayCleared) message = "Couldn't confirm old Agent data was removed. Try again.";
+                else message = "Old provider data cleared. Unused image files removed: " + result.files.removed
+                        + (result.files.complete ? "." : ". Some old files could not be checked or removed.");
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show();
+            });
+            if (!queued) Toast.makeText(context, "Agent storage is busy. Try again shortly.", Toast.LENGTH_SHORT).show();
         });
+    }
+
+    private void dismissCleanupConfirmation() {
+        AlertDialog confirm = cleanupConfirmation;
+        cleanupConfirmation = null;
+        if (confirm != null) confirm.dismiss();
     }
 
     private void setupEmptyStateChips() {
@@ -437,53 +424,54 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
         }
     }
 
-    private void clearPendingAttachment(boolean deleteFile) {
-        if (deleteFile && pendingAttachmentPath != null) {
-            AgentAttachmentManager.deleteAttachment(pendingAttachmentPath);
-        }
-        pendingAttachmentPath = null;
-        if (llPendingAttachment != null) {
-            llPendingAttachment.setVisibility(View.GONE);
-        }
-        int iconTint = isDark ? Color.parseColor("#94A3B8") : Color.parseColor("#64748B");
-        if (btnAttachVision != null) {
-            btnAttachVision.setColorFilter(iconTint);
-        }
-    }
-
     private void handleSendUserPrompt() {
         String text = etPrompt.getText().toString().trim();
-        if (text.isEmpty() && pendingAttachmentPath == null) return;
+        if (text.isEmpty()) return;
         submitPrompt(text);
     }
 
     private void submitPrompt(String text) {
         etPrompt.setText("");
-        String imagePath = pendingAttachmentPath;
-        clearPendingAttachment(false); // Retain file on disk because it is being sent with the message
-
-        sessionManager.sendUserPrompt(text, imagePath);
+        sessionManager.sendUserPrompt(text, null);
     }
 
-    public void updateActiveContext(WebView webView, MainActivity activity, TabsManager tabsManager) {
-        this.activeWebView = webView;
-        sessionManager.updateActiveContext(webView, activity, tabsManager);
+    public void pageChanged() { sessionManager.pageChanged(owner); }
+    public void ownerPaused() {
+        dismissCleanupConfirmation();
+        sessionManager.pauseActivity(owner);
     }
 
-    public boolean isShowing() {
-        return dialog != null && dialog.isShowing();
+    public void disabled() {
+        sessionManager.settingsChanged();
+        dismiss();
     }
+
+    public boolean isShowing() { return dialog.isShowing(); }
 
     public void show() {
-        sessionManager.setSessionCallback(this);
+        sessionManager.openSheet(owner, this, button);
         refreshUiFromSession();
+        updateRecipient();
         dialog.show();
     }
 
+    private void updateRecipient() {
+        etPrompt.setHint(configManager.connection() != null ? "Send a prompt to Google AI Studio" : "Set up cloud chat in Agent settings");
+    }
+
+    private void closeSheet() {
+        dismissCleanupConfirmation();
+        sessionManager.closeSheet(owner, this);
+    }
+
     public void dismiss() {
-        if (dialog != null && dialog.isShowing()) {
-            dialog.dismiss();
-        }
+        closeSheet();
+        if (dialog.isShowing()) dialog.dismiss();
+    }
+
+    public void dispose() {
+        dismiss();
+        sessionManager.detachActivity(owner, this);
     }
 
     private void refreshUiFromSession() {
@@ -506,7 +494,7 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
     private void stopAndExitAgent() {
         sessionManager.stopActiveSession();
         Toast.makeText(context, "Agent stopped", Toast.LENGTH_SHORT).show();
-        dialog.dismiss();
+        dismiss();
     }
 
     private void updateProcessingUI(int state) {
@@ -533,72 +521,27 @@ public class AgentBottomSheet implements AgentSessionManager.SessionCallback {
     // AgentSessionManager.SessionCallback Implementation
     // -------------------------------------------------------------------------
 
-    @Override
-    public void onMessageAdded(final AiChatAdapter.ChatMessage message) {
-        rvMessages.post(new Runnable() {
-            @Override
-            public void run() {
-                llEmptyState.setVisibility(View.GONE);
-                rvMessages.setVisibility(View.VISIBLE);
-                chatAdapter.addMessage(message);
-                rvMessages.smoothScrollToPosition(chatAdapter.getItemCount() - 1);
-            }
-        });
+    @Override public void onMessageAdded(AiChatAdapter.ChatMessage message) {
+        if (!isShowing()) return;
+        llEmptyState.setVisibility(View.GONE);
+        rvMessages.setVisibility(View.VISIBLE);
+        chatAdapter.addMessage(message);
+        rvMessages.smoothScrollToPosition(chatAdapter.getItemCount() - 1);
     }
 
-    @Override
-    public void onToolStatusUpdated(final String text, final boolean inProgress) {
-        rvMessages.post(new Runnable() {
-            @Override
-            public void run() {
-                chatAdapter.updateLastToolStatus(text, inProgress);
-            }
-        });
+    @Override public boolean canReview() { return isShowing(); }
+
+    @Override public void onThinkingState(boolean isThinking, String text) {
+        if (!isShowing()) return;
+        if (isThinking) {
+            chatAdapter.showThinking(text != null ? text : "Agent is thinking…");
+            rvMessages.smoothScrollToPosition(chatAdapter.getItemCount() - 1);
+        } else chatAdapter.hideThinking();
     }
 
-    @Override
-    public void onThinkingState(final boolean isThinking, final String text) {
-        rvMessages.post(new Runnable() {
-            @Override
-            public void run() {
-                if (isThinking) {
-                    chatAdapter.showThinking(text != null ? text : "Agent is thinking...");
-                    rvMessages.smoothScrollToPosition(chatAdapter.getItemCount() - 1);
-                } else {
-                    chatAdapter.hideThinking();
-                }
-            }
-        });
+    @Override public void onSessionLoaded(String sessionId, String title, List<AiChatAdapter.ChatMessage> messages) {
+        if (isShowing()) refreshUiFromSession();
     }
 
-    @Override
-    public void onSessionLoaded(final String sessionId, final String title, final List<AiChatAdapter.ChatMessage> messages) {
-        rvMessages.post(new Runnable() {
-            @Override
-            public void run() {
-                chatAdapter.setMessages(messages);
-                if (messages.isEmpty()) {
-                    llEmptyState.setVisibility(View.VISIBLE);
-                    rvMessages.setVisibility(View.GONE);
-                } else {
-                    llEmptyState.setVisibility(View.GONE);
-                    rvMessages.setVisibility(View.VISIBLE);
-                    rvMessages.scrollToPosition(messages.size() - 1);
-                }
-                tvHeaderTitle.setText("Agent");
-            }
-        });
-    }
-
-    @Override
-    public void onSessionStateChanged(final int state) {
-        if (rvMessages != null) {
-            rvMessages.post(new Runnable() {
-                @Override
-                public void run() {
-                    updateProcessingUI(state);
-                }
-            });
-        }
-    }
+    @Override public void onSessionStateChanged(int state) { updateProcessingUI(state); }
 }

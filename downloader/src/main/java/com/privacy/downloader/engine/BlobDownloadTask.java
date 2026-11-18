@@ -2,164 +2,138 @@ package com.privacy.downloader.engine;
 
 import com.privacy.downloader.db.DownloadDbHelper;
 import com.privacy.downloader.model.DownloadItem;
-import com.privacy.downloader.model.DownloadStatus;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.StandardOpenOption;
+import java.util.Base64;
 
+/** Writes only the frames delivered to this worker's one-shot, confirmed source. */
 public class BlobDownloadTask extends DownloadTask {
+    private final BlobIntake intake;
 
-    private final CountDownLatch completionLatch = new CountDownLatch(1);
-    private FileOutputStream outputStream;
-    private File activeTempFile;
-    private volatile String errorReason = null;
-    private long lastSpeedCheckTime = 0;
-    private long lastTransferredBytes = 0;
-
-    public BlobDownloadTask(DownloadItem item, DownloadDbHelper dbHelper, TaskListener listener, SpeedLimiter globalLimiter) {
+    BlobDownloadTask(DownloadItem item, DownloadDbHelper dbHelper, TaskListener listener, SpeedLimiter globalLimiter,
+                     BlobIntake intake) {
         super(item, dbHelper, listener, globalLimiter);
-    }
-
-    public synchronized void setInitialMetadata(long totalSize) {
-        if (totalSize > 0) {
-            item.setTotalBytes(totalSize);
-            dbHelper.insertOrUpdate(item);
-            if (listener != null) {
-                listener.onTaskUpdated(item);
-            }
-        }
-    }
-
-    public synchronized void appendChunk(byte[] chunkData, long offset, long totalSize) {
-        if (isCancelled || isPaused) return;
-        try {
-            if (outputStream == null) {
-                activeTempFile = new File(item.getTempPath());
-                File parent = activeTempFile.getParentFile();
-                if (parent != null && !parent.exists()) {
-                    parent.mkdirs();
-                }
-                outputStream = new FileOutputStream(activeTempFile, true);
-            }
-
-            outputStream.write(chunkData);
-            outputStream.flush();
-
-            long downloaded = offset + chunkData.length;
-            item.setDownloadedBytes(downloaded);
-            if (totalSize > 0) {
-                item.setTotalBytes(totalSize);
-            }
-
-            long now = System.currentTimeMillis();
-            if (lastSpeedCheckTime == 0) {
-                lastSpeedCheckTime = now;
-                lastTransferredBytes = downloaded;
-            } else {
-                long timeDiff = now - lastSpeedCheckTime;
-                if (timeDiff >= 500) {
-                    long bytesDiff = downloaded - lastTransferredBytes;
-                    long speed = (bytesDiff * 1000) / timeDiff;
-                    item.setSpeedBytesPerSec(speed);
-                    lastSpeedCheckTime = now;
-                    lastTransferredBytes = downloaded;
-                }
-            }
-
-            if (listener != null) {
-                listener.onTaskUpdated(item);
-            }
-        } catch (Exception e) {
-            errorReason = "Failed writing blob data: " + e.getMessage();
-            completionLatch.countDown();
-        }
-    }
-
-    public synchronized void onStreamComplete() {
-        closeStreamQuietly();
-        completionLatch.countDown();
-    }
-
-    public synchronized void onStreamFailed(String error) {
-        this.errorReason = error;
-        closeStreamQuietly();
-        completionLatch.countDown();
-    }
-
-    private void closeStreamQuietly() {
-        if (outputStream != null) {
-            try {
-                outputStream.flush();
-                outputStream.close();
-            } catch (Exception ignored) {}
-            outputStream = null;
-        }
+        this.intake = intake;
     }
 
     @Override
-    public synchronized void pause() {
-        isPaused = true;
-        closeStreamQuietly();
-        completionLatch.countDown();
-    }
-
-    @Override
-    public synchronized void cancel() {
-        isCancelled = true;
-        closeStreamQuietly();
-        if (activeTempFile != null && activeTempFile.exists()) {
-            activeTempFile.delete();
-        }
-        completionLatch.countDown();
+    protected void onStopRequested() {
+        if (intake != null) intake.close();
     }
 
     @Override
     public void run() {
+        String failure = null;
+        File staged = null;
+        boolean published = false;
         try {
-            updateStatus(DownloadStatus.RUNNING, null);
+            if (isStopRequested()) return;
+            if (intake == null) throw new IOException(BlobIntake.SOURCE_GONE);
+            markRunning(null);
+            intake.start();
+            String first = nextFrame();
+            if (!first.startsWith("begin:")) throw invalidStream();
+            String length = first.substring(6);
+            long reported = "-1".equals(length) ? -1 : parsePosition(length);
+            if (reported > BlobIntake.MAX_BYTES) throw tooLarge();
+            long expected = intake.knownLength >= 0 ? intake.knownLength : reported;
+            if (reported >= 0 && expected != reported) throw new IOException("The blob length does not match the confirmed download.");
+            item.setTotalBytes(expected);
+            item.setDownloadedBytes(0);
 
-            // Wait for JavaScript chunks to finish streaming (max 10 minutes)
-            completionLatch.await(10, TimeUnit.MINUTES);
-
-            closeStreamQuietly();
-
-            if (isCancelled) {
-                updateStatus(DownloadStatus.CANCELLED, null);
-                if (activeTempFile != null && activeTempFile.exists()) activeTempFile.delete();
-                return;
+            staged = File.createTempFile("download-", ".blob.part", outputDirectory());
+            bindStagingFile(staged);
+            long received;
+            try (OutputStream out = Files.newOutputStream(staged.toPath(), StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+                received = writeFrames(out, expected);
             }
-
-            if (isPaused) {
-                updateStatus(DownloadStatus.PAUSED, null);
-                return;
-            }
-
-            if (errorReason != null) {
-                updateStatus(DownloadStatus.FAILED, errorReason);
-                if (activeTempFile != null && activeTempFile.exists()) activeTempFile.delete();
-                if (listener != null) listener.onTaskFailed(item, errorReason);
-                return;
-            }
-
-            // Move temp file to destination
-            File dest = new File(item.getDestinationPath());
-            if (activeTempFile != null && activeTempFile.exists()) {
-                if (dest.exists()) dest.delete();
-                activeTempFile.renameTo(dest);
-            }
-
-            item.setDownloadedBytes(dest.exists() ? dest.length() : item.getTotalBytes());
-            item.setSpeedBytesPerSec(0);
-            updateStatus(DownloadStatus.COMPLETED, null);
-
-            if (listener != null) {
-                listener.onTaskCompleted(item);
-            }
-        } catch (Exception e) {
-            updateStatus(DownloadStatus.FAILED, e.getMessage());
-            if (listener != null) listener.onTaskFailed(item, e.getMessage());
+            intake.seal();
+            published = publishOutput(staged, received, item.getMimeType());
+        } catch (IOException | RuntimeException | InterruptedException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            failure = e.getMessage() == null ? "Blob transfer failed." : e.getMessage();
+        } finally {
+            if (intake != null) intake.close();
+            if (!published && staged != null) staged.delete();
         }
+        if (published) {
+            if (listener != null) listener.onTaskCompleted(item);
+        } else {
+            fail(failure);
+        }
+    }
+
+    private long writeFrames(OutputStream out, long expected) throws IOException, InterruptedException {
+        long received = 0;
+        long previousBytes = 0;
+        long previousTime = System.nanoTime();
+        for (;;) {
+            // The previous frame was checked (and any bytes written) before granting another.
+            intake.acknowledge();
+            String frame = nextFrame();
+            if (frame.startsWith("end:")) {
+                if (parsePosition(frame.substring(4)) != received) throw invalidStream();
+                if (expected >= 0 && received != expected) {
+                    throw new IOException("The blob transfer ended before all expected bytes arrived.");
+                }
+                if (expected < 0 && received == 0) throw new IOException("The blob transfer returned no bytes.");
+                return received;
+            }
+            int separator = frame.indexOf(':', 5);
+            if (!frame.startsWith("data:") || separator < 0 || parsePosition(frame.substring(5, separator)) != received) {
+                throw invalidStream();
+            }
+            byte[] bytes;
+            try {
+                bytes = Base64.getDecoder().decode(frame.substring(separator + 1));
+            } catch (IllegalArgumentException e) {
+                throw invalidStream();
+            }
+            if (bytes.length == 0 || bytes.length > BlobIntake.MAX_CHUNK_BYTES) throw invalidStream();
+            if (bytes.length > BlobIntake.MAX_BYTES - received) throw tooLarge();
+            if (expected >= 0 && bytes.length > expected - received) throw invalidStream();
+            out.write(bytes);
+            received += bytes.length;
+            item.setDownloadedBytes(received);
+            long now = System.nanoTime();
+            if (now - previousTime >= 500_000_000L) {
+                item.setSpeedBytesPerSec((received - previousBytes) * 1_000_000_000L / (now - previousTime));
+                previousBytes = received;
+                previousTime = now;
+                if (listener != null) listener.onTaskUpdated(item);
+            }
+        }
+    }
+
+    private String nextFrame() throws IOException, InterruptedException {
+        String frame = intake.next();
+        if (isStopRequested()) throw new InterruptedIOException("Blob download stopped.");
+        if ("error".equals(frame)) throw new IOException("The page could not read the blob. It may have expired.");
+        return frame;
+    }
+
+    private static long parsePosition(String value) throws IOException {
+        if (value.isEmpty() || value.length() > 10) throw invalidStream();
+        long position = 0;
+        for (int i = 0; i < value.length(); i++) {
+            int digit = value.charAt(i) - '0';
+            if (digit < 0 || digit > 9) throw invalidStream();
+            position = position * 10 + digit;
+        }
+        return position;
+    }
+
+    private static IOException invalidStream() {
+        return new IOException("The blob stream did not contain the expected bytes.");
+    }
+
+    private static IOException tooLarge() {
+        return new IOException("This blob exceeds the 512 MiB download limit.");
     }
 }

@@ -45,6 +45,7 @@
             android:layout_width="28dp"
             android:layout_height="28dp"
             android:src="@drawable/ic_close"
+            android:contentDescription="@string/tab_close"
             android:scaleType="centerInside"
             android:tint="?attr/iconTintSecondary"
             android:background="?android:attr/selectableItemBackgroundBorderless"
@@ -64,38 +65,19 @@
         android:background="?attr/surfaceCard">
 
         <ImageView
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_search"
+            android:importantForAccessibility="no"
+            android:tint="?attr/iconTintSecondary" />
+
+        <ImageView
             android:id="@+id/tab_card_preview"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:scaleType="centerCrop" />
-
-        <!-- Placeholder when no preview exists -->
-        <LinearLayout
-            android:id="@+id/tab_card_placeholder"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:gravity="center"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <ImageView
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:src="@drawable/ic_search"
-                android:tint="?attr/iconTintSecondary"
-                android:scaleType="centerInside" />
-
-            <TextView
-                android:id="@+id/tab_card_url"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="duckduckgo.com"
-                android:textColor="?attr/textSecondary"
-                android:textSize="10sp"
-                android:layout_marginTop="6dp"
-                android:singleLine="true"
-                android:ellipsize="end" />
-        </LinearLayout>
+            android:importantForAccessibility="no"
+            android:scaleType="fitXY" />
 
         <!-- Active Border Overlay Indicator -->
         <View
@@ -105,5 +87,32 @@
             android:background="?attr/bgTabCardActive"
             android:visibility="gone" />
     </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="24dp"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tab_card_url"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="?attr/textSecondary"
+            android:textSize="10sp"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/tab_card_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:textColor="?attr/accentColor"
+            android:textSize="10sp"
+            android:visibility="gone" />
+    </LinearLayout>
 
 </LinearLayout>

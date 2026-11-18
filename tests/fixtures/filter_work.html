@@ -1,0 +1,108 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PERF-05/06 fixture</title>
+<style>
+  body {font:16px sans-serif; background:#fff; color:#111; padding:12px;}
+  #cascade {display:block !important;}
+  button {padding:8px; margin:2px;}
+  #results {white-space:pre-wrap;}
+  .curtain {position:fixed; inset:0; width:85vw; height:85vh; z-index:1024; background:transparent; pointer-events:none;}
+  .small {width:32px; height:32px;}
+  .fixture-placeholder {min-height:60px; background:#ffc34d;}
+</style>
+<h1>PERF-05/06 fixture</h1>
+<p id="script-status">No page script ran</p>
+<button id="state">Check layout</button><button id="mutate">Add fixed DOM batches</button>
+<button id="burst">Request burst</button><button id="assets">Font / media probes</button>
+<p id="results"></p>
+<main><article><h2>Keep this article visible</h2><p>Legitimate content below the toolbar.</p></article></main>
+<div id="ordinary" class="advertisement fixture-placeholder">Stock cosmetic block</div>
+<div id="inline" class="adsbygoogle" style="display:block !important">Inline-priority recovery</div>
+<div id="cascade" class="advertisement">Stylesheet-priority recovery</div>
+<div id="custom" class="perf17-custom fixture-placeholder">Custom cosmetic block</div>
+<iframe id="adframe" title="Advertisement fixture" srcdoc="&lt;p&gt;Synthetic ad frame&lt;/p&gt;"></iframe>
+<div id="initial-curtain" class="curtain"></div>
+<div id="consent" role="dialog" class="curtain"></div>
+<span id="small" class="curtain small"></span>
+<div id="content"></div>
+<script>
+  'use strict';
+  const get = id => document.getElementById(id);
+  get('script-status').textContent = 'Page script ran: ' + location.pathname;
+  let stats;
+  if (new URLSearchParams(location.search).has('diagnostic')) {
+    stats = {documentQueries:0, styleReads:0, rectReads:0};
+    function count(owner, method, key) {
+      const before = owner[method];
+      owner[method] = function(...args) { stats[key]++; return before.apply(this, args); };
+    }
+    count(Document.prototype, 'querySelectorAll', 'documentQueries');
+    count(window, 'getComputedStyle', 'styleReads');
+    count(Element.prototype, 'getBoundingClientRect', 'rectReads');
+  }
+  const tracker = 'http://tracker.perf17.invalid/deny/';
+  const nonce = Date.now();
+  const mark = () => get('results');
+  get('state').onclick = () => {
+    const diagnostics = stats ? '\nCounts before this sample: ' + JSON.stringify(stats) : '';
+    mark().textContent = ['ordinary','inline','cascade','custom','adframe','initial-curtain','consent','small','late-ad','late-curtain']
+      .map(id => id + ': ' + (!get(id) ? 'absent' : getComputedStyle(get(id)).display === 'none' ? 'hidden' : 'visible'))
+      .join('\n') + diagnostics;
+  };
+  const article = get('content');
+  function paragraphs(n, parent) {
+    for (let i = 0; i < n; i++) {
+      const item = document.createElement('div');
+      item.textContent = 'Deterministic fixture text ' + i;
+      parent.appendChild(item);
+    }
+  }
+  paragraphs(location.pathname === '/mutations' ? 2000 : 50, article);
+  get('mutate').onclick = () => {
+    get('mutate').disabled = true;
+    let batch = 0;
+    const timer = setInterval(() => {
+      const branch = document.createElement('div');
+      if (++batch === 20) {
+        const ad = document.createElement('div'); ad.id = 'late-ad'; ad.className = 'adsbygoogle';
+        ad.textContent = 'Inserted stock ad';
+        branch.appendChild(ad);
+        const overlay = document.createElement('div'); overlay.id = 'late-curtain'; overlay.className = 'curtain';
+        branch.appendChild(overlay);
+        clearInterval(timer);
+      }
+      paragraphs(20, branch);
+      article.appendChild(branch);
+    }, 60);
+  };
+  get('burst').onclick = async () => {
+    get('burst').disabled = true;
+    const start = performance.now();
+    const counts = {blocked:0, server:0, failed:0};
+    const probes = [];
+    for (let batch = 0; batch < 15; batch++) {
+      if (batch) await new Promise(resolve => setTimeout(resolve, 70));
+      for (let i = 0; i < 20; i++) {
+        probes.push(fetch(tracker + 'item-' + (batch * 20 + i) + '.json?run=' + nonce, {cache:'no-store'})
+          .then(r => r.json()).then(v => { counts[v.fixture === 'server' ? 'server' : 'blocked']++; })
+          .catch(() => { counts.failed++; }));
+      }
+    }
+    const allowed = fetch(tracker + 'allowed.json?run=' + nonce, {cache:'no-store'})
+      .then(r => r.json()).then(v => v.fixture).catch(() => 'failed');
+    await Promise.all(probes);
+    mark().textContent = '300 probes: ' + JSON.stringify(counts) + ', allowed=' + await allowed
+      + '\nElapsed: ' + Math.round(performance.now() - start) + ' ms';
+  };
+  get('assets').onclick = async () => {
+    const results = await Promise.all(['/fonts/sample.woff2','/media/poster.png'].map(async path => {
+      const response = await fetch(path + '?run=' + nonce, {cache:'no-store'});
+      return path + ': ' + response.status + ' ' + response.headers.get('Content-Type') + ', ' + (await response.text()).length + ' characters';
+    }));
+    mark().textContent = results.join('\n');
+  };
+  if (location.pathname !== '/strict' && location.host !== '127.0.0.1:8015') {
+    const img = document.createElement('img'); img.alt = 'Network image probe'; img.src = tracker + 'logo.svg';
+    const frame = document.createElement('iframe'); frame.title = 'Network frame probe'; frame.src = tracker + 'frame';
+    article.appendChild(img); article.appendChild(frame);
+  }
+</script>

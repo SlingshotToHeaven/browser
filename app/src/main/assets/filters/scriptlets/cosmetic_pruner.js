@@ -1,4 +1,4 @@
-// Cosmetic elements filter and pruner scriptlet
+// Stock cosmetic filter: stylesheet first, bounded inline recovery
 (function() {
   try {
     if (window.PrivacyAntiAdblockBridge && typeof window.PrivacyAntiAdblockBridge.isCosmeticEnabled === 'function') {
@@ -7,9 +7,6 @@
       if (!window.PrivacyAntiAdblockBridge.isAdBlockActive(window.location.href)) return;
     }
   } catch(e) {}
-  if (document.getElementById('__privacy_shield_css')) return;
-  var style = document.createElement('style');
-  style.id = '__privacy_shield_css';
   var selectors = 
     '.advertisement, .adsbygoogle, ins.adsbygoogle, amp-ad, [id*="google_ads"], [name*="google_ads"], [id*="aswift"], [name*="aswift"], ' +
     'div[id^="div-gpt-ad"], div[id*="-gpt-ad-"], div[id*="_gpt_ad_"], ' +
@@ -34,67 +31,82 @@
     'a[href*="/adclick"], a[href*="/pagead/"], a[href*="doubleclick.net"], ' +
     'a[href*="exoclick.com"], a[href*="popads.net"], a[href*="propellerads.com"], ' +
     'a[href*="adcash.com"], a[href*="adsterra.com"], a[href*="syndication.exoclick"]';
-  style.textContent = selectors + ' { display: none !important; visibility: hidden !important; height: 0 !important; max-height: 0 !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; border: none !important; pointer-events: none !important; opacity: 0 !important; }';
-  var target = document.head || document.documentElement;
-  if (target) { target.appendChild(style); }
-  else { document.addEventListener('DOMContentLoaded', function() { (document.head || document.documentElement).appendChild(style); }); }
+  // The old frame pass matched src, id, class, name and title case-insensitively.
+  var srcTokens = 'googleads|doubleclick|googlesyndication|adservice|2mdn.net|adnxs|smartadserver|criteo|rubicon|pubmatic|amazon-adsystem|openx|taboola|outbrain|revcontent|mgid|connatix';
+  var adSource = new RegExp(srcTokens.replace('.', '\\.'), 'i');
+  var frameRules = [];
+  ['iframe', 'embed', 'object'].forEach(function(tag) {
+    function add(attribute, tokens) {
+      tokens.split('|').forEach(function(token) { frameRules.push(tag + '[' + attribute + '*="' + token + '" i]'); });
+    }
+    add('src', srcTokens);
+    ['id', 'class', 'name'].forEach(function(attribute) { add(attribute, 'google_ads|aswift|adHolder|dmg-ads|connatix'); });
+    add('title', 'advertisement|ad frame');
+  });
+  var frameSelectors = frameRules.join(',');
 
-  function pruneAds(root) {
-    try {
-      var doc = root || document;
-      var nodes = doc.querySelectorAll(selectors);
-      for (var i = 0; i < nodes.length; i++) {
-        var node = nodes[i];
-        if (node && node.id !== '__privacy_shield_css' && node.tagName !== 'BODY' && node.tagName !== 'HTML') {
-          if (node.tagName === 'ARTICLE' || node.tagName === 'MAIN' || node.tagName === 'SECTION') continue;
-          if (node.querySelector && node.querySelector('p.mol-para-with-font, article, main')) continue;
-          node.style.setProperty('display', 'none', 'important');
-          node.style.setProperty('height', '0px', 'important');
-          node.style.setProperty('min-height', '0px', 'important');
-          node.style.setProperty('max-height', '0px', 'important');
-          node.style.setProperty('margin', '0px', 'important');
-          node.style.setProperty('padding', '0px', 'important');
-          node.style.setProperty('border', 'none', 'important');
+  function install() {
+    if (document.getElementById('__privacy_shield_css')) return;
+    var root = document.head || document.documentElement;
+    if (!root) return;
+    var style = document.createElement('style');
+    style.id = '__privacy_shield_css';
+    style.textContent = selectors + ' { display: none !important; visibility: hidden !important; height: 0 !important; max-height: 0 !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; border: none !important; pointer-events: none !important; opacity: 0 !important; }'
+      + frameSelectors + ' { display: none !important; width: 0 !important; height: 0 !important; visibility: hidden !important; }';
+    root.appendChild(style);
+
+    // Retain bounded inline recovery if CSS cannot win the cascade or a frame's src only matches when resolved.
+    // Most matches (including later attribute changes) need no inline writes.
+    var inline = new WeakSet(), checkedCss = new WeakSet();
+    var attributes = style.sheet ? ['style', 'src'] :
+      ['style', 'src', 'id', 'class', 'name', 'title', 'href', 'data-ad-slot', 'data-adunit', 'data-ad-client'];
+    function frame(el) { return /^(IFRAME|EMBED|OBJECT)$/.test(el.tagName); }
+    function important(el) { return /!\s*important/i.test(el.getAttribute('style') || ''); }
+    function hide(el, properties) {
+      inline.add(el);
+      for (var property in properties) el.style.setProperty(property, properties[property], 'important');
+    }
+    var collapse = {display: 'none', height: '0px', 'min-height': '0px', 'max-height': '0px', margin: '0px', padding: '0px', border: 'none'};
+    var collapseFrame = {display: 'none', width: '0px', height: '0px', visibility: 'hidden'};
+    __privacyObserveElements(document.documentElement, attributes, function(el) {
+      return !inline.has(el) && (!style.sheet || frame(el) || important(el));
+    }, function(nodes) {
+      var checks = 128, fixes = []; // bound content checks across the whole slice
+      nodes.forEach(function(el) {
+        if (!el.style || inline.has(el) || el === style || el.tagName === 'BODY' || el.tagName === 'HTML') return;
+        var embedded = frame(el);
+        var cssFrame = embedded && el.matches(frameSelectors);
+        var resolvedOnly = embedded && !cssFrame && adSource.test(el.src || '');
+        // amp-ad is the only stock selector that can match an element with no attributes.
+        var ordinary = !cssFrame && !resolvedOnly && (el.tagName === 'AMP-AD' || el.hasAttributes())
+            && !/^(ARTICLE|MAIN|SECTION)$/.test(el.tagName) && el.matches(selectors);
+        if (!cssFrame && !resolvedOnly && !ordinary) return;
+        var override = !style.sheet || important(el) || resolvedOnly;
+        if (!override) {
+          if (checkedCss.has(el)) return;
+          checkedCss.add(el);
+          // A more specific author !important may beat the injected stylesheet. Only check matches;
+          // never measure geometry or re-probe unchanged content on each mutation.
+          override = window.getComputedStyle(el).display !== 'none';
         }
-      }
-      var iframes = doc.querySelectorAll('iframe, embed, object');
-      for (var j = 0; j < iframes.length; j++) {
-        var f = iframes[j];
-        var s = f.src || f.getAttribute('src') || '';
-        var idClass = (f.id || '') + ' ' + (f.className || '') + ' ' + (f.name || '');
-        if (/googleads|doubleclick|googlesyndication|adservice|2mdn\.net|adnxs|smartadserver|criteo|rubicon|pubmatic|amazon-adsystem|openx|taboola|outbrain|revcontent|mgid|connatix/i.test(s)
-            || /google_ads|aswift|adHolder|dmg-ads|connatix/i.test(idClass)
-            || /advertisement|ad frame/i.test(f.getAttribute('title') || '')) {
-          f.style.setProperty('display', 'none', 'important');
-          f.style.setProperty('width', '0px', 'important');
-          f.style.setProperty('height', '0px', 'important');
-          f.style.setProperty('visibility', 'hidden', 'important');
+        if (!override) return;
+        if (cssFrame || resolvedOnly) {
+          fixes.push([el, collapseFrame]);
+          return;
         }
-      }
-    } catch(e) {}
-  }
-
-  pruneAds(document);
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { pruneAds(document); });
-  } else {
-    pruneAds(document);
-  }
-  setTimeout(function() { pruneAds(document); }, 500);
-  setTimeout(function() { pruneAds(document); }, 1500);
-  setTimeout(function() { pruneAds(document); }, 3000);
-
-  if (window.MutationObserver && !window.__privacy_ad_observer_active) {
-    window.__privacy_ad_observer_active = true;
-    var pending = false;
-    var observer = new window.MutationObserver(function() {
-      if (pending) return;
-      pending = true;
-      (window.requestAnimationFrame || window.setTimeout)(function() {
-        pending = false;
-        pruneAds(document);
-      }, 32);
+        // Keep the old inline-prune content guard. If we cannot verify a large subtree, leave it alone.
+        var walk = document.createTreeWalker(el, 1);
+        while (checks > 0) {
+          checks--;
+          var child = walk.nextNode();
+          if (!child) { fixes.push([el, collapse]); break; }
+          if (child.matches('p.mol-para-with-font, article, main')) break;
+        }
+      });
+      fixes.forEach(function(fix) { hide(fix[0], fix[1]); });
     });
-    observer.observe(document.documentElement || document, { childList: true, subtree: true });
   }
+
+  if (document.documentElement) install();
+  else document.addEventListener('DOMContentLoaded', install, {once: true});
 })();

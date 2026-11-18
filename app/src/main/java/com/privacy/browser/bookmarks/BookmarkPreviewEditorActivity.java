@@ -35,6 +35,8 @@ public class BookmarkPreviewEditorActivity extends Activity {
     public static final String EXTRA_BOOKMARK_URL = "com.privacy.browser.EXTRA_BOOKMARK_URL";
     public static final String EXTRA_BOOKMARK_TITLE = "com.privacy.browser.EXTRA_BOOKMARK_TITLE";
 
+    private static final int COVER_SIZE = 480;
+
     private long bookmarkId = -1;
     private String bookmarkUrl = "";
     private CropStageContainer stageContainer;
@@ -43,6 +45,7 @@ public class BookmarkPreviewEditorActivity extends Activity {
     private CropOverlayView cropOverlayView;
     private ProgressBar progressBar;
     private View guideCaption;
+    private int viewRevision;
     private boolean isCapturing = false;
 
     private float exactCardWidth = 0f;
@@ -98,6 +101,7 @@ public class BookmarkPreviewEditorActivity extends Activity {
         stageContainer.bindViews(cropOverlayView, webViewWrapper, webView);
 
         stageContainer.post(() -> {
+            if (webView == null) return;
             int stageWidth = stageContainer.getWidth();
             int stageHeight = stageContainer.getHeight();
             if (stageWidth <= 0 || stageHeight <= 0) return;
@@ -134,7 +138,7 @@ public class BookmarkPreviewEditorActivity extends Activity {
         cookieManager.setAcceptThirdPartyCookies(webView, true);
 
         WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
+        settings.setJavaScriptEnabled(com.privacy.browser.adblock.WebScriptPolicy.javaScriptEnabled(this));
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setLoadWithOverviewMode(true);
@@ -156,6 +160,7 @@ public class BookmarkPreviewEditorActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
+                if (view != webView) return;
                 if (newProgress < 100) {
                     progressBar.setVisibility(View.VISIBLE);
                     progressBar.setProgress(newProgress);
@@ -169,7 +174,17 @@ public class BookmarkPreviewEditorActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                view.scrollTo(0, 0);
+                if (view == webView) view.scrollTo(0, 0);
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+                if (view == webView) {
+                    disposePreview();
+                    Toast.makeText(BookmarkPreviewEditorActivity.this, "Preview stopped. Reopen the preview to try again.", Toast.LENGTH_LONG).show();
+                    finish();
+                }
+                return true;
             }
         });
     }
@@ -200,12 +215,11 @@ public class BookmarkPreviewEditorActivity extends Activity {
                 cropTop = Math.max(0, (int) cropRect.top);
                 cropSize = (int) cropRect.width();
 
-                if (cropLeft + cropSize > stageWidth) {
-                    cropSize = stageWidth - cropLeft;
-                }
-                if (cropTop + cropSize > stageHeight) {
-                    cropSize = stageHeight - cropTop;
-                }
+            }
+            cropSize = Math.min(cropSize, Math.min(stageWidth - cropLeft, stageHeight - cropTop));
+            if (cropSize <= 0) {
+                restoreEditor("No visible area to capture");
+                return;
             }
 
             final int finalCropLeft = cropLeft;
@@ -213,6 +227,7 @@ public class BookmarkPreviewEditorActivity extends Activity {
             final int finalCropSize = cropSize;
 
             isCapturing = true;
+            int revision = viewRevision;
 
             // Hide the crop overlay and floating guide caption so borders and L-bends do not appear in the window composited frame
             if (cropOverlayView != null) {
@@ -224,6 +239,7 @@ public class BookmarkPreviewEditorActivity extends Activity {
 
             // Schedule capture on the next frame after the view tree renders without the overlay decorations
             stageContainer.post(() -> stageContainer.postOnAnimation(() -> {
+                if (revision != viewRevision || isFinishing()) return;
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     int[] stageLocation = new int[2];
                     stageContainer.getLocationInWindow(stageLocation);
@@ -231,24 +247,17 @@ public class BookmarkPreviewEditorActivity extends Activity {
                     int screenCropTop = stageLocation[1] + finalCropTop;
 
                     Rect srcRect = new Rect(screenCropLeft, screenCropTop, screenCropLeft + finalCropSize, screenCropTop + finalCropSize);
-                    Bitmap destBitmap = Bitmap.createBitmap(finalCropSize, finalCropSize, Bitmap.Config.ARGB_8888);
-
                     Window window = getWindow();
                     if (window != null) {
+                        Bitmap destBitmap = Bitmap.createBitmap(COVER_SIZE, COVER_SIZE, Bitmap.Config.ARGB_8888);
                         try {
                             PixelCopy.request(window, srcRect, destBitmap, copyResult -> {
+                                if (revision != viewRevision || isFinishing()) { destBitmap.recycle(); return; }
                                 if (copyResult == PixelCopy.SUCCESS) {
-                                    int targetDimension = 480;
-                                    Bitmap finalSquareSnapshot = Bitmap.createScaledBitmap(destBitmap, targetDimension, targetDimension, true);
-                                    if (destBitmap != finalSquareSnapshot) {
-                                        destBitmap.recycle();
-                                    }
-                                    BookmarkPreviewManager.getInstance(BookmarkPreviewEditorActivity.this).savePreviewBitmap(bookmarkId, finalSquareSnapshot);
-                                    Toast.makeText(BookmarkPreviewEditorActivity.this, "Preview snapshot saved", Toast.LENGTH_SHORT).show();
-                                    finish();
+                                    saveSnapshot(destBitmap);
                                 } else {
                                     destBitmap.recycle();
-                                    captureWithCanvasFallback(stageWidth, stageHeight, finalCropLeft, finalCropTop, finalCropSize);
+                                    captureWithCanvasFallback(finalCropLeft, finalCropTop, finalCropSize);
                                 }
                             }, new Handler(Looper.getMainLooper()));
                             return;
@@ -259,61 +268,61 @@ public class BookmarkPreviewEditorActivity extends Activity {
                 }
 
                 // Fallback for older API or off-window states
-                captureWithCanvasFallback(stageWidth, stageHeight, finalCropLeft, finalCropTop, finalCropSize);
+                captureWithCanvasFallback(finalCropLeft, finalCropTop, finalCropSize);
             }));
         } catch (Throwable t) {
-            isCapturing = false;
-            if (cropOverlayView != null) {
-                cropOverlayView.setVisibility(View.VISIBLE);
-            }
-            if (guideCaption != null) {
-                guideCaption.setVisibility(View.VISIBLE);
-            }
-            Toast.makeText(this, "Failed to capture preview", Toast.LENGTH_SHORT).show();
+            restoreEditor("Failed to capture preview");
         }
     }
 
-    private void captureWithCanvasFallback(int stageWidth, int stageHeight, int cropLeft, int cropTop, int cropSize) {
+    private void captureWithCanvasFallback(int cropLeft, int cropTop, int cropSize) {
         try {
-            Bitmap stageBitmap = Bitmap.createBitmap(stageWidth, stageHeight, Bitmap.Config.RGB_565);
-            Canvas stageCanvas = new Canvas(stageBitmap);
-
-            stageCanvas.drawColor(Color.BLACK);
-            stageCanvas.save();
-            stageCanvas.translate(webViewWrapper.getTranslationX(), webViewWrapper.getTranslationY());
-            stageCanvas.scale(webViewWrapper.getScaleX(), webViewWrapper.getScaleY(), webViewWrapper.getPivotX(), webViewWrapper.getPivotY());
-            webViewWrapper.draw(stageCanvas);
-            stageCanvas.restore();
-
-            Bitmap croppedSquare = Bitmap.createBitmap(stageBitmap, cropLeft, cropTop, cropSize, cropSize);
-            stageBitmap.recycle();
-
-            int targetDimension = 480;
-            Bitmap finalSquareSnapshot = Bitmap.createScaledBitmap(croppedSquare, targetDimension, targetDimension, true);
-            if (croppedSquare != finalSquareSnapshot) {
-                croppedSquare.recycle();
-            }
-
-            BookmarkPreviewManager.getInstance(this).savePreviewBitmap(bookmarkId, finalSquareSnapshot);
-            Toast.makeText(this, "Preview snapshot saved", Toast.LENGTH_SHORT).show();
-            finish();
+            // Draw the chosen stage rectangle directly into the bounded cover buffer.
+            Bitmap snapshot = Bitmap.createBitmap(COVER_SIZE, COVER_SIZE, Bitmap.Config.RGB_565);
+            Canvas canvas = new Canvas(snapshot);
+            canvas.drawColor(Color.BLACK);
+            float scale = COVER_SIZE / (float) cropSize;
+            canvas.scale(scale, scale);
+            canvas.translate(-cropLeft, -cropTop);
+            canvas.translate(webViewWrapper.getTranslationX(), webViewWrapper.getTranslationY());
+            canvas.scale(webViewWrapper.getScaleX(), webViewWrapper.getScaleY(), webViewWrapper.getPivotX(), webViewWrapper.getPivotY());
+            webViewWrapper.draw(canvas);
+            saveSnapshot(snapshot);
         } catch (Throwable t) {
-            isCapturing = false;
-            if (cropOverlayView != null) {
-                cropOverlayView.setVisibility(View.VISIBLE);
-            }
-            if (guideCaption != null) {
-                guideCaption.setVisibility(View.VISIBLE);
-            }
-            Toast.makeText(this, "Failed to capture preview", Toast.LENGTH_SHORT).show();
+            restoreEditor("Failed to capture preview");
         }
+    }
+
+    private void saveSnapshot(Bitmap snapshot) {
+        BookmarkPreviewManager.getInstance(this).savePreviewBitmap(bookmarkId, snapshot, saved -> {
+            snapshot.recycle();
+            if (webView == null || isFinishing() || isDestroyed()) return;
+            if (saved) {
+                Toast.makeText(this, "Preview snapshot saved", Toast.LENGTH_SHORT).show();
+                finish();
+            } else {
+                restoreEditor("Could not save preview");
+            }
+        });
+    }
+
+    private void restoreEditor(String message) {
+        isCapturing = false;
+        if (cropOverlayView != null) cropOverlayView.setVisibility(View.VISIBLE);
+        if (guideCaption != null) guideCaption.setVisibility(View.VISIBLE);
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    }
+
+    private void disposePreview() {
+        WebView view = webView;
+        webView = null;
+        viewRevision++;
+        if (view != null) com.privacy.browser.WebViewDisposal.detachAndDestroy(view);
     }
 
     @Override
     protected void onDestroy() {
-        if (webView != null) {
-            webView.destroy();
-        }
+        disposePreview();
         super.onDestroy();
     }
 }

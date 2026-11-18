@@ -1,0 +1,713 @@
+diff --git a/app/src/main/java/com/privacy/browser/MainActivity.java b/app/src/main/java/com/privacy/browser/MainActivity.java
+--- a/app/src/main/java/com/privacy/browser/MainActivity.java
++++ b/app/src/main/java/com/privacy/browser/MainActivity.java
+@@ -57,10 +57,6 @@
+ import org.json.JSONObject;
+ import java.util.List;
+ import java.util.ArrayList;
+-import java.util.Collections;
+-import java.util.concurrent.ArrayBlockingQueue;
+-import java.util.concurrent.ThreadPoolExecutor;
+-import java.util.concurrent.TimeUnit;
+ 
+ import android.content.ClipData;
+ import android.content.ClipboardManager;
+@@ -135,11 +131,6 @@
+     private View omniboxContainer;
+     private ListView omniboxList;
+     private OmniboxSuggestionsAdapter omniboxAdapter;
+-    private OmniboxRequests omniboxRequests;
+-    private OmniboxRequests.Request visibleOmniboxRequest;
+-    private final OmniboxClipboard omniboxClipboard = new OmniboxClipboard();
+-    private final ThreadPoolExecutor omniboxWorker = new ThreadPoolExecutor(0, 1, 30, TimeUnit.SECONDS,
+-            new ArrayBlockingQueue<>(1), task -> new Thread(task, "Browser-omnibox"));
+ 
+     // Find in Page UI
+     private LinearLayout findBar;
+@@ -294,21 +285,14 @@
+             viewAddressScrim.setOnClickListener(v -> dismissKeyboard());
+         }
+ 
+-        Handler omniboxUi = new Handler(Looper.getMainLooper());
+-        OmniboxStore store = new OmniboxStore(bookmarkDbHelper, historyDbHelper);
+-        omniboxRequests = new OmniboxRequests(new OmniboxRequests.Ui() {
+-            @Override public void later(Runnable action, long ms) { omniboxUi.postDelayed(action, ms); }
+-            @Override public void remove(Runnable action) { omniboxUi.removeCallbacks(action); }
+-            @Override public void post(Runnable action) { omniboxUi.post(action); }
+-        }, omniboxWorker, store::find, this::canShowOmniboxRequest, this::publishLocalOmnibox);
++        // Omnibox suggestions initialization
+         omniboxContainer = findViewById(R.id.omnibox_suggestions_container);
+         omniboxList = findViewById(R.id.omnibox_suggestions_list);
+         if (omniboxList != null) {
+             omniboxAdapter = new OmniboxSuggestionsAdapter(this);
+             omniboxList.setAdapter(omniboxAdapter);
+             omniboxList.setOnItemClickListener((parent, view, position, id) -> {
+-                if (!omniboxRequests.isCurrent(visibleOmniboxRequest) || omniboxContainer.getVisibility() != View.VISIBLE) return;
+-                OmniboxSuggestion item = omniboxAdapter.clickedItem(view, position, id);
++                OmniboxSuggestion item = omniboxAdapter.getItem(position);
+                 if (item != null) {
+                     navigateToInput(item.getTargetUrl());
+                     dismissKeyboard();
+@@ -342,10 +326,11 @@
+                     viewAddressScrim.setVisibility(View.VISIBLE);
+                 }
+                 editUrl.post(() -> editUrl.selectAll());
++                String text = editUrl.getText() != null ? editUrl.getText().toString() : "";
+                 if (btnClearUrl != null) {
+-                    btnClearUrl.setVisibility(editUrl.length() == 0 ? View.GONE : View.VISIBLE);
+-                }
+-                updateOmniboxSuggestions(editUrl.getText());
++                    btnClearUrl.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
++                }
++                updateOmniboxSuggestions(text);
+             } else {
+                 isAddressBarFirstTap = false;
+                 if (viewAddressScrim != null) {
+@@ -386,9 +371,6 @@
+             if (!editUrl.hasFocus()) {
+                 editUrl.requestFocus();
+                 editUrl.selectAll();
+-            } else if (visibleOmniboxRequest == null) {
+-                // A dialog or pause may have ended the last edit without clearing view focus.
+-                updateOmniboxSuggestions(editUrl.getText());
+             }
+         });
+ 
+@@ -402,7 +384,7 @@
+                     btnClearUrl.setVisibility(s != null && s.length() > 0 ? View.VISIBLE : View.GONE);
+                 }
+                 if (editUrl.hasFocus()) {
+-                    updateOmniboxSuggestions(s);
++                    updateOmniboxSuggestions(s != null ? s.toString() : "");
+                 }
+             }
+ 
+@@ -1092,10 +1074,7 @@
+     @Override
+     public void onWindowFocusChanged(boolean hasFocus) {
+         super.onWindowFocusChanged(hasFocus);
+-        if (!hasFocus) {
+-            hideOmniboxSuggestions();
+-            tabPreviews.cancel();
+-        }
++        if (!hasFocus) tabPreviews.cancel();
+     }
+ 
+     @Override
+@@ -1253,7 +1232,6 @@
+ 
+     private void displayTab(TabModel tab) {
+         if (displayedTab != tab) {
+-            if (editUrl.hasFocus()) dismissKeyboard();
+             tabPreviews.cancel();
+             assistantForegroundEpoch++;
+             dismissPageContextMenu();
+@@ -1916,115 +1894,139 @@
+         return false;
+     }
+ 
+-    private boolean canEditOmnibox() {
+-        return startupReady && resumed && !disposing && !isFinishing() && hasWindowFocus()
+-                && editUrl.hasFocus() && tabGrid == null && customVideoView == null && !BrowserDataCleaner.inProgress()
+-                && SearchEngineManager.isAutocompleteEnabled(this);
+-    }
+-
+-    private boolean canShowOmniboxRequest(OmniboxRequests.Request request) {
+-        TabModel active = activeTab();
+-        return active != null && canEditOmnibox() && request.matches(active.getId(), active.isIncognito(), editUrl.getText());
+-    }
+-
+-    private void updateOmniboxSuggestions(CharSequence input) {
+-        Trace.beginSection("Browser.omnibox.edit");
++    private void updateOmniboxSuggestions(String input) {
++        if (!SearchEngineManager.isAutocompleteEnabled(this)) {
++            hideOmniboxSuggestions();
++            return;
++        }
++
++        if (input == null || input.trim().isEmpty()) {
++            hideOmniboxSuggestions();
++            return;
++        }
++
++        String query = input.trim();
++        List<OmniboxSuggestion> suggestions = new ArrayList<>();
++
++        // 0. Check Clipboard for URL or text to paste
+         try {
+-            TabModel active = activeTab();
+-            if (active == null || !canEditOmnibox()) {
+-                hideOmniboxSuggestions();
+-                return;
+-            }
+-            OmniboxRequests.Request request = omniboxRequests.submit(active.getId(), active.isIncognito(), input);
+-            if (request == null) clearOmniboxRows();
+-            else renderOmnibox(request, Collections.emptyList()); // immediate fallback, no local lookup or clipboard read
+-        } finally {
+-            Trace.endSection();
+-        }
+-    }
+-
+-    private void publishLocalOmnibox(OmniboxRequests.Request request, List<OmniboxSuggestion> local) {
+-        Trace.beginSection("Browser.omnibox.localRows");
+-        try {
+-            boolean alreadyOffered = omniboxClipboard.offer(request.incognito, request.query) != null;
+-            omniboxClipboard.inspect(request.incognito, this::readOmniboxClipboard);
+-            if (!local.isEmpty() || (!alreadyOffered && omniboxClipboard.offer(request.incognito, request.query) != null)) {
+-                renderOmnibox(request, local);
+-            }
+-        } finally {
+-            Trace.endSection();
+-        }
+-    }
+-
+-    private CharSequence readOmniboxClipboard() {
+-        Trace.beginSection("Browser.omnibox.clipboard");
+-        try {
+-            ClipboardManager manager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+-            ClipData clip = manager == null ? null : manager.getPrimaryClip();
+-            return clip != null && clip.getItemCount() > 0 ? clip.getItemAt(0).getText() : null;
+-        } catch (RuntimeException unavailable) {
+-            return null;
+-        } finally {
+-            Trace.endSection();
+-        }
+-    }
+-
+-    private void renderOmnibox(OmniboxRequests.Request request, List<OmniboxSuggestion> local) {
+-        if (omniboxAdapter == null || !omniboxRequests.isCurrent(request)) return;
+-        String query = request.query;
+-        List<OmniboxSuggestion> suggestions = new ArrayList<>(10);
+-        String clip = omniboxClipboard.offer(request.incognito, query);
+-        if (clip != null) {
+-            boolean localAddress = isLocalHostOrIp(clip);
+-            boolean webAddress = clip.startsWith("http://") || clip.startsWith("https://");
+-            boolean link = webAddress || localAddress || (clip.contains(".") && !clip.contains(" "));
+-            String target = !link ? SearchEngineManager.buildSearchUrl(this, clip)
+-                    : webAddress ? clip : (localAddress ? "http://" : "https://") + clip;
+-            suggestions.add(new OmniboxSuggestion(OmniboxSuggestion.Type.CLIPBOARD,
+-                    link ? "Link you copied" : "Text you copied", clip, target, R.drawable.ic_find));
+-        }
+-
++            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
++            if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip() != null && cm.getPrimaryClip().getItemCount() > 0) {
++                CharSequence clipText = cm.getPrimaryClip().getItemAt(0).getText();
++                if (clipText != null) {
++                    String clipStr = clipText.toString().trim();
++                    if (!clipStr.isEmpty() && !clipStr.equalsIgnoreCase(query)) {
++                        boolean isUrl = clipStr.startsWith("http://") || clipStr.startsWith("https://") || (clipStr.contains(".") && !clipStr.contains(" ")) || isLocalHostOrIp(clipStr);
++                        String target = isUrl ? (clipStr.startsWith("http") ? clipStr : (isLocalHostOrIp(clipStr) ? "http://" + clipStr : "https://" + clipStr)) : SearchEngineManager.buildSearchUrl(this, clipStr);
++                        suggestions.add(new OmniboxSuggestion(
++                                OmniboxSuggestion.Type.CLIPBOARD,
++                                isUrl ? "Link you copied" : "Text you copied",
++                                clipStr,
++                                target,
++                                R.drawable.ic_find
++                        ));
++                    }
++                }
++            }
++        } catch (Exception ignored) {}
++
++        // 0.5. Check direct Localhost or IP navigation
+         if (isLocalHostOrIp(query)) {
+             String target = query.startsWith("http://") || query.startsWith("https://") ? query : "http://" + query;
+-            suggestions.add(new OmniboxSuggestion(OmniboxSuggestion.Type.SEARCH, query,
+-                    "Open " + target, target, R.drawable.ic_find));
+-        }
+-        SearchEngineManager.BangResult bang = SearchEngineManager.isBangsEnabled(this)
+-                ? SearchEngineManager.detectBang(query) : null;
+-        if (bang != null) {
+-            String title = bang.getServiceName() + " Search (" + bang.getTag() + ")";
+-            String subtitle = bang.getCleanQuery().isEmpty() ? "Search on " + bang.getServiceName() : bang.getCleanQuery();
+-            suggestions.add(new OmniboxSuggestion(OmniboxSuggestion.Type.BANG, title, subtitle,
+-                    bang.getTargetUrl(), R.drawable.ic_search));
+-        }
+-
+-        for (OmniboxSuggestion row : local) {
+-            if (row.getType() == OmniboxSuggestion.Type.HISTORY) {
+-                if (request.incognito || suggestions.stream().anyMatch(s -> s.getTargetUrl().equalsIgnoreCase(row.getTargetUrl()))) {
+-                    continue;
+-                }
+-            }
+-            suggestions.add(row);
+-        }
++            suggestions.add(new OmniboxSuggestion(
++                    OmniboxSuggestion.Type.SEARCH,
++                    query,
++                    "Open " + target,
++                    target,
++                    R.drawable.ic_find
++            ));
++        }
++
++        // 1. Check Bang Command match
++        if (SearchEngineManager.isBangsEnabled(this)) {
++            SearchEngineManager.BangResult bang = SearchEngineManager.detectBang(query);
++            if (bang != null) {
++                String bangTitle = bang.getServiceName() + " Search (" + bang.getTag() + ")";
++                String bangSub = bang.getCleanQuery().isEmpty() ? "Search on " + bang.getServiceName() : bang.getCleanQuery();
++                suggestions.add(new OmniboxSuggestion(
++                        OmniboxSuggestion.Type.BANG,
++                        bangTitle,
++                        bangSub,
++                        bang.getTargetUrl(),
++                        R.drawable.ic_search
++                ));
++            }
++        }
++
++        // 2. Query Bookmarks
++        if (bookmarkDbHelper != null) {
++            List<BookmarkModel> bookmarks = bookmarkDbHelper.searchBookmarks(query, 3);
++            for (BookmarkModel bm : bookmarks) {
++                suggestions.add(new OmniboxSuggestion(
++                        OmniboxSuggestion.Type.BOOKMARK,
++                        bm.getTitle(),
++                        bm.getUrl(),
++                        bm.getUrl(),
++                        R.drawable.ic_bookmark
++                ));
++            }
++        }
++
++        // 3. Query History (suppressed on incognito tabs)
++        TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
++        boolean isIncognito = active != null && active.isIncognito();
++        if (!isIncognito && historyDbHelper != null) {
++            List<HistoryModel> historyItems = historyDbHelper.searchHistory(query, 3);
++            for (HistoryModel hm : historyItems) {
++                boolean duplicate = false;
++                for (OmniboxSuggestion s : suggestions) {
++                    if (s.getTargetUrl().equalsIgnoreCase(hm.getUrl())) {
++                        duplicate = true;
++                        break;
++                    }
++                }
++                if (!duplicate) {
++                    suggestions.add(new OmniboxSuggestion(
++                            OmniboxSuggestion.Type.HISTORY,
++                            hm.getTitle(),
++                            hm.getUrl(),
++                            hm.getUrl(),
++                            R.drawable.ic_history
++                    ));
++                }
++            }
++        }
++
++        // 4. Search Engine fallback suggestion
+         SearchEngineManager.SearchEngine engine = SearchEngineManager.getSelectedEngine(this);
+-        String searchTarget = bang != null ? bang.getTargetUrl() : SearchEngineManager.buildSearchUrl(this, query);
+-        suggestions.add(new OmniboxSuggestion(OmniboxSuggestion.Type.SEARCH, query,
+-                "Search with " + engine.getName(), searchTarget, R.drawable.ic_search));
+-        visibleOmniboxRequest = request;
+-        omniboxAdapter.updateItems(suggestions);
+-        omniboxContainer.setVisibility(View.VISIBLE);
+-    }
+-
+-    private void clearOmniboxRows() {
+-        visibleOmniboxRequest = null;
+-        if (omniboxContainer != null) omniboxContainer.setVisibility(View.GONE);
+-        if (omniboxAdapter != null && omniboxAdapter.getCount() != 0) omniboxAdapter.clear();
++        String searchTargetUrl = SearchEngineManager.buildSearchUrl(this, query);
++        suggestions.add(new OmniboxSuggestion(
++                OmniboxSuggestion.Type.SEARCH,
++                query,
++                "Search with " + engine.getName(),
++                searchTargetUrl,
++                R.drawable.ic_search
++        ));
++
++        if (suggestions.isEmpty()) {
++            hideOmniboxSuggestions();
++        } else {
++            if (omniboxAdapter != null) {
++                omniboxAdapter.updateItems(suggestions);
++            }
++            if (omniboxContainer != null && omniboxContainer.getVisibility() != View.VISIBLE) {
++                omniboxContainer.setVisibility(View.VISIBLE);
++            }
++        }
+     }
+ 
+     private void hideOmniboxSuggestions() {
+-        if (omniboxRequests != null) omniboxRequests.invalidate();
+-        omniboxClipboard.reset();
+-        clearOmniboxRows();
++        if (omniboxContainer != null && omniboxContainer.getVisibility() == View.VISIBLE) {
++            omniboxContainer.setVisibility(View.GONE);
++            if (omniboxAdapter != null) {
++                omniboxAdapter.clear();
++            }
++        }
+     }
+ 
+     // =========================================================================
+@@ -2033,7 +2035,6 @@
+ 
+     private void showTabsDialog() {
+         if (!resumed || !sessionWritable() || isFinishing() || tabGrid != null) return;
+-        if (editUrl.hasFocus()) dismissKeyboard();
+         tabPreviews.cancel(); // only existing previews or placeholders enter the grid
+         Trace.beginSection("Browser.tabs.openGrid");
+         try {
+@@ -3220,7 +3221,6 @@
+     }
+ 
+     private void performBrowserDataClear(BrowserDataPolicy.Plan plan, java.util.function.Consumer<String> result) {
+-        hideOmniboxSuggestions();
+         dismissTabGrid();
+         tabPreviews.clear();
+         BrowserDataCleaner.clear(this, plan, this::clearLocalHistoryAndTabs, report -> {
+@@ -3298,7 +3298,6 @@
+     @Override
+     protected void onPause() {
+         resumed = false;
+-        hideOmniboxSuggestions();
+         shieldRefresh.show(null);
+         if (lazyRestore != null) lazyRestore.cancel();
+         tabPreviews.cancel();
+@@ -3322,7 +3321,6 @@
+             return;
+         }
+ 
+-        if (editUrl.hasFocus()) dismissKeyboard();
+         tabPreviews.cancel();
+         customVideoView = view;
+         customViewCallback = callback;
+@@ -3522,7 +3520,6 @@
+     }
+ 
+     private void dismissKeyboard() {
+-        hideOmniboxSuggestions();
+         InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+         if (imm != null && getCurrentFocus() != null) {
+             imm.hideSoftInputFromWindow(getCurrentFocus().getWindowToken(), 0);
+@@ -3549,7 +3546,8 @@
+             return;
+         }
+ 
+-        if (editUrl.hasFocus() || visibleOmniboxRequest != null) {
++        if (omniboxContainer != null && omniboxContainer.getVisibility() == View.VISIBLE) {
++            hideOmniboxSuggestions();
+             dismissKeyboard();
+             return;
+         }
+@@ -3593,9 +3591,6 @@
+         }
+         disposing = true;
+         resumed = false;
+-        hideOmniboxSuggestions();
+-        omniboxRequests.close();
+-        omniboxWorker.shutdownNow();
+         shieldRefresh.show(null);
+         cancelTabTrim();
+         dismissTabGrid();
+diff --git a/app/src/main/java/com/privacy/browser/OmniboxClipboard.java b/app/src/main/java/com/privacy/browser/OmniboxClipboard.java
+deleted file mode 100644
+--- a/app/src/main/java/com/privacy/browser/OmniboxClipboard.java
++++ /dev/null
+@@ -1,26 +0,0 @@
+-package com.privacy.browser;
+-
+-import java.util.function.Supplier;
+-
+-/** One plain-text snapshot per foreground address-bar editing session. */
+-final class OmniboxClipboard {
+-    private boolean inspected;
+-    private String text;
+-
+-    // Only call after a quiet, nonblank request is still eligible to show rows.
+-    void inspect(boolean incognito, Supplier<CharSequence> clipboard) {
+-        if (incognito || inspected) return;
+-        inspected = true;
+-        CharSequence value = clipboard.get();
+-        if (value != null && value.length() <= OmniboxRequests.MAX_TEXT_CHARS) text = value.toString().trim();
+-    }
+-
+-    String offer(boolean incognito, String query) {
+-        return incognito || text == null || text.isEmpty() || text.equalsIgnoreCase(query) ? null : text;
+-    }
+-
+-    void reset() {
+-        inspected = false;
+-        text = null;
+-    }
+-}
+diff --git a/app/src/main/java/com/privacy/browser/OmniboxRequests.java b/app/src/main/java/com/privacy/browser/OmniboxRequests.java
+deleted file mode 100644
+--- a/app/src/main/java/com/privacy/browser/OmniboxRequests.java
++++ /dev/null
+@@ -1,124 +0,0 @@
+-package com.privacy.browser;
+-
+-import com.privacy.browser.search.OmniboxSuggestion;
+-
+-import java.util.Collections;
+-import java.util.List;
+-import java.util.concurrent.Executor;
+-import java.util.function.BiConsumer;
+-import java.util.function.BooleanSupplier;
+-import java.util.function.Predicate;
+-
+-/** UI-thread request owner. There is one debounce timer and at most one lookup in flight. */
+-final class OmniboxRequests {
+-    static final long QUIET_MS = 100;
+-    static final int MAX_TEXT_CHARS = 8192;
+-
+-    interface Ui {
+-        void later(Runnable action, long delayMs);
+-        void remove(Runnable action);
+-        void post(Runnable action); // callable from the worker
+-    }
+-
+-    interface Lookup {
+-        List<OmniboxSuggestion> find(String query, boolean includeHistory, BooleanSupplier canceled);
+-    }
+-
+-    static final class Request {
+-        final String tabId;
+-        final boolean incognito;
+-        final String text, query;
+-
+-        Request(String tabId, boolean incognito, String text, String query) {
+-            this.tabId = tabId;
+-            this.incognito = incognito;
+-            this.text = text;
+-            this.query = query;
+-        }
+-
+-        boolean matches(String activeId, boolean privateMode, CharSequence input) {
+-            return tabId.equals(activeId) && incognito == privateMode && input != null && text.contentEquals(input);
+-        }
+-    }
+-
+-    private static final class Work {
+-        final Request request;
+-        volatile boolean canceled;
+-
+-        Work(Request request) { this.request = request; }
+-    }
+-
+-    private final Ui ui;
+-    private final Executor worker;
+-    private final Lookup lookup;
+-    private final Predicate<Request> eligible;
+-    private final BiConsumer<Request, List<OmniboxSuggestion>> publish;
+-    private final Runnable quiet = () -> {
+-        due = true;
+-        startIfDue();
+-    };
+-    private Request current;
+-    private Work running;
+-    private boolean due, closed;
+-
+-    OmniboxRequests(Ui ui, Executor worker, Lookup lookup, Predicate<Request> eligible,
+-                    BiConsumer<Request, List<OmniboxSuggestion>> publish) {
+-        this.ui = ui;
+-        this.worker = worker;
+-        this.lookup = lookup;
+-        this.eligible = eligible;
+-        this.publish = publish;
+-    }
+-
+-    Request submit(String tabId, boolean incognito, CharSequence input) {
+-        invalidate();
+-        if (closed || tabId == null || input == null || input.length() > MAX_TEXT_CHARS) return null;
+-        String text = input.toString();
+-        String query = text.trim();
+-        if (query.isEmpty()) return null;
+-        current = new Request(tabId, incognito, text, query);
+-        ui.later(quiet, QUIET_MS);
+-        return current;
+-    }
+-
+-    boolean isCurrent(Request request) {
+-        return !closed && request != null && request == current && eligible.test(request);
+-    }
+-
+-    void invalidate() {
+-        current = null;
+-        due = false;
+-        ui.remove(quiet);
+-        // No helper monitor, Future.get(), or native DB operation on the editing thread.
+-        if (running != null) running.canceled = true;
+-    }
+-
+-    void close() {
+-        closed = true;
+-        invalidate();
+-    }
+-
+-    private void startIfDue() {
+-        if (!due || running != null) return;
+-        due = false;
+-        if (!isCurrent(current)) return;
+-        Work job = new Work(current);
+-        running = job;
+-        worker.execute(() -> {
+-            List<OmniboxSuggestion> rows = Collections.emptyList();
+-            try {
+-                if (!job.canceled) rows = lookup.find(job.request.query, !job.request.incognito, () -> job.canceled);
+-            } finally {
+-                List<OmniboxSuggestion> result = rows;
+-                ui.post(() -> completed(job, result));
+-            }
+-        });
+-    }
+-
+-    private void completed(Work job, List<OmniboxSuggestion> rows) {
+-        running = null;
+-        if (!job.canceled && isCurrent(job.request)) publish.accept(job.request, rows);
+-        // Edits while busy replaced the pending request; never queue a lookup for each edit.
+-        startIfDue();
+-    }
+-}
+diff --git a/app/src/main/java/com/privacy/browser/OmniboxStore.java b/app/src/main/java/com/privacy/browser/OmniboxStore.java
+deleted file mode 100644
+--- a/app/src/main/java/com/privacy/browser/OmniboxStore.java
++++ /dev/null
+@@ -1,77 +0,0 @@
+-package com.privacy.browser;
+-
+-import android.database.Cursor;
+-import android.database.sqlite.SQLiteDatabase;
+-import android.database.sqlite.SQLiteOpenHelper;
+-import android.os.Trace;
+-import android.util.Log;
+-
+-import com.privacy.browser.bookmarks.BookmarkDbHelper;
+-import com.privacy.browser.history.HistoryDbHelper;
+-import com.privacy.browser.search.OmniboxSuggestion;
+-
+-import java.util.ArrayList;
+-import java.util.List;
+-import java.util.function.BooleanSupplier;
+-
+-/** Worker-only suggestion queries. The full history/bookmark searches keep their own semantics. */
+-final class OmniboxStore {
+-    private static final int WINDOW_ROWS = 1024;
+-    private static final String MATCH = " AND length(url) BETWEEN 1 AND 8192"
+-            + " AND (title LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\')";
+-    // LIMIT inside the ordered subquery caps candidates *before* matching/sorting. Keep the
+-    // history index and bookmark rowid order usable even when no row can match.
+-    private static final String HISTORY_SQL = "SELECT substr(title,1,512), url FROM ("
+-            + "SELECT id, title, url, visited_at FROM history ORDER BY visited_at DESC, id LIMIT " + WINDOW_ROWS
+-            + ") WHERE 1=1" + MATCH + " ORDER BY visited_at DESC, id LIMIT 3";
+-    private static final String BOOKMARK_SQL = "SELECT substr(title,1,512), url FROM ("
+-            + "SELECT id, title, url, is_folder, created_at FROM bookmarks ORDER BY id DESC LIMIT " + WINDOW_ROWS
+-            + ") WHERE is_folder = 0" + MATCH + " ORDER BY created_at DESC, id LIMIT 3";
+-
+-    private final BookmarkDbHelper bookmarks;
+-    private final HistoryDbHelper history;
+-
+-    OmniboxStore(BookmarkDbHelper bookmarks, HistoryDbHelper history) {
+-        this.bookmarks = bookmarks;
+-        this.history = history;
+-    }
+-
+-    List<OmniboxSuggestion> find(String query, boolean includeHistory, BooleanSupplier canceled) {
+-        Trace.beginSection("Browser.omnibox.lookup");
+-        try {
+-            List<OmniboxSuggestion> rows = new ArrayList<>(6);
+-            String pattern = literalSubstring(query);
+-            String[] args = {pattern, pattern};
+-            append(rows, bookmarks, BOOKMARK_SQL, args, OmniboxSuggestion.Type.BOOKMARK, R.drawable.ic_bookmark, canceled);
+-            if (includeHistory) append(rows, history, HISTORY_SQL, args, OmniboxSuggestion.Type.HISTORY, R.drawable.ic_history, canceled);
+-            return rows;
+-        } finally {
+-            Trace.endSection();
+-        }
+-    }
+-
+-    static String literalSubstring(String query) {
+-        return "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+-    }
+-
+-    private static void append(List<OmniboxSuggestion> rows, SQLiteOpenHelper helper, String sql, String[] args,
+-                               OmniboxSuggestion.Type type, int icon, BooleanSupplier canceled) {
+-        if (canceled.getAsBoolean()) return;
+-        try {
+-            // Opening may wait for the helper. Do not hold its monitor across a cursor scan or
+-            // reopen a separate database; the next lookup reads from the same live database.
+-            SQLiteDatabase db = helper.getReadableDatabase();
+-            if (canceled.getAsBoolean()) return;
+-            try (Cursor cursor = db.rawQuery(sql, args)) {
+-                while (!canceled.getAsBoolean() && cursor.moveToNext()) {
+-                    String url = cursor.getString(1);
+-                    if (!url.trim().isEmpty()) rows.add(new OmniboxSuggestion(type, cursor.getString(0), url, url, icon));
+-                }
+-            }
+-        } catch (RuntimeException unavailable) {
+-            // Best-effort: leave fallback and any results from the other store. Do not log input,
+-            // URLs, or exception messages (which may include query data).
+-            if (!canceled.getAsBoolean()) Log.w("OmniboxStore", "Local suggestions are unavailable for one store");
+-        }
+-    }
+-}
+diff --git a/app/src/main/java/com/privacy/browser/search/OmniboxSuggestionsAdapter.java b/app/src/main/java/com/privacy/browser/search/OmniboxSuggestionsAdapter.java
+--- a/app/src/main/java/com/privacy/browser/search/OmniboxSuggestionsAdapter.java
++++ b/app/src/main/java/com/privacy/browser/search/OmniboxSuggestionsAdapter.java
+@@ -18,14 +18,12 @@
+ 
+     private final Context context;
+     private final List<OmniboxSuggestion> items = new ArrayList<>();
+-    private long firstRowId;
+ 
+     public OmniboxSuggestionsAdapter(Context context) {
+         this.context = context;
+     }
+ 
+     public void updateItems(List<OmniboxSuggestion> newItems) {
+-        firstRowId += items.size();
+         items.clear();
+         if (newItems != null) {
+             items.addAll(newItems);
+@@ -34,17 +32,8 @@
+     }
+ 
+     public void clear() {
+-        updateItems(null);
+-    }
+-
+-    /** A queued click must refer to the same list publication and the view bound to that row. */
+-    public OmniboxSuggestion clickedItem(View view, int position, long id) {
+-        if (position < 0 || position >= items.size() || id != getItemId(position) || view == null) return null;
+-        Object tag = view.getTag();
+-        if (!(tag instanceof ViewHolder)) return null;
+-        ViewHolder holder = (ViewHolder) tag;
+-        OmniboxSuggestion item = getItem(position);
+-        return holder.id == id && holder.item == item ? item : null;
++        items.clear();
++        notifyDataSetChanged();
+     }
+ 
+     @Override
+@@ -59,7 +48,7 @@
+ 
+     @Override
+     public long getItemId(int position) {
+-        return firstRowId + position;
++        return position;
+     }
+ 
+     @Override
+@@ -78,8 +67,6 @@
+         }
+ 
+         OmniboxSuggestion item = getItem(position);
+-        holder.id = getItemId(position);
+-        holder.item = item;
+         holder.title.setText(item.getTitle());
+         holder.subtitle.setText(item.getSubtitle());
+ 
+@@ -120,8 +107,6 @@
+     }
+ 
+     private static class ViewHolder {
+-        long id;
+-        OmniboxSuggestion item;
+         ImageView icon;
+         TextView title;
+         TextView subtitle;

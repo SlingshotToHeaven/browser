@@ -13,18 +13,17 @@ import java.util.concurrent.ConcurrentHashMap;
  * Tracks detected comic page streams across active tabs.
  */
 public class ComicManager {
+    public static final int MAX_PAGES = 150;
 
     public static class ComicItem {
         public final String tabId;
         public final String title;
         public final List<String> imageUrls;
-        public final String referer;
 
-        public ComicItem(String tabId, String title, List<String> imageUrls, String referer) {
+        public ComicItem(String tabId, String title, List<String> imageUrls) {
             this.tabId = tabId;
             this.title = title;
             this.imageUrls = Collections.unmodifiableList(new ArrayList<>(imageUrls));
-            this.referer = referer;
         }
 
         public int getPageCount() {
@@ -34,12 +33,16 @@ public class ComicManager {
 
     private static final Map<String, ComicItem> detectedComics = new ConcurrentHashMap<>();
 
-    public static void setDetectedComic(@NonNull String tabId,
+    public static boolean setDetectedComic(@NonNull String tabId,
                                        @NonNull String title,
-                                       @NonNull List<String> imageUrls,
-                                       @Nullable String referer) {
-        if (imageUrls.isEmpty()) return;
-        detectedComics.put(tabId, new ComicItem(tabId, title, imageUrls, referer));
+                                       @NonNull List<String> imageUrls) {
+        if (imageUrls.isEmpty() || imageUrls.size() > MAX_PAGES) {
+            return detectedComics.remove(tabId) != null;
+        }
+        ComicItem previous = detectedComics.get(tabId);
+        if (previous != null && previous.imageUrls.equals(imageUrls)) return false;
+        detectedComics.put(tabId, new ComicItem(tabId, title, imageUrls));
+        return true;
     }
 
     @Nullable

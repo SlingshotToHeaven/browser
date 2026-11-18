@@ -1,12 +1,12 @@
 package com.privacy.browser.adblock.rules;
 
+import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.Button;
 import android.widget.EditText;
@@ -19,9 +19,7 @@ import androidx.annotation.Nullable;
 
 import com.privacy.browser.R;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import com.privacy.browser.adblock.rules.FilterSnapshot.Part;
 
 /**
  * Full-screen/modal editor for uBlock Origin "My Filters" rule configuration.
@@ -51,28 +49,39 @@ public class MyFiltersDialog {
         Button btnReset = view.findViewById(R.id.btn_reset_filters);
         Button btnSave = view.findViewById(R.id.btn_save_filters);
 
-        List<String> currentRules = manager.getRawRules();
-        StringBuilder sb = new StringBuilder();
-        for (String r : currentRules) {
-            sb.append(r).append("\n");
-        }
-        editContent.setText(sb.toString());
-        tvCount.setText(manager.getRuleCount() + " custom rules active");
+        FilterSnapshot before = manager.snapshot();
+        editContent.setText(before.text(Part.USER_FILTERS));
+        int unsupported = before.unsupported(Part.USER_FILTERS);
+        String warning = manager.ruleWarning();
+        tvCount.setText(warning != null ? warning : before.ruleCount(Part.USER_FILTERS) + " supported rules"
+                + (unsupported == 0 ? "" : "; " + unsupported + " unsupported legacy lines are inactive"));
+        btnSave.setEnabled(warning == null);
+        btnReset.setEnabled(warning == null);
 
         btnSave.setOnClickListener(v -> {
-            String text = editContent.getText().toString();
-            String[] lines = text.split("\n");
-            manager.setAllRules(new ArrayList<>(Arrays.asList(lines)));
-            Toast.makeText(context, "Saved " + manager.getRuleCount() + " custom filter rules", Toast.LENGTH_SHORT).show();
-            dialog.dismiss();
-            if (onFiltersSaved != null) {
-                onFiltersSaved.run();
-            }
+            String draft = editContent.getText().toString();
+            btnSave.setEnabled(false);
+            btnReset.setEnabled(false);
+            editContent.setEnabled(false);
+            RuleWork.run(() -> manager.setAllRules(before, draft), (saved, error) -> {
+                if (context instanceof Activity && (((Activity) context).isFinishing() || ((Activity) context).isDestroyed())) return;
+                if (error == null && saved != before && onFiltersSaved != null) onFiltersSaved.run();
+                if (!dialog.isShowing()) return;
+                if (error == null) {
+                    Toast.makeText(context, "Saved " + saved.ruleCount(Part.USER_FILTERS) + " custom filter rules", Toast.LENGTH_SHORT).show();
+                    dialog.dismiss();
+                } else {
+                    tvCount.setText("Not saved: " + RuleWork.message(error));
+                    editContent.setEnabled(true);
+                    btnSave.setEnabled(true);
+                    btnReset.setEnabled(true);
+                }
+            });
         });
 
         btnReset.setOnClickListener(v -> {
-            editContent.setText("! *** User-defined filters (uBlock Origin format) ***\n");
-            tvCount.setText("0 rules active");
+            editContent.setText("! Custom filters: ||host^, @@||host^, and [host]##selector\n");
+            tvCount.setText("Reset draft. Save to replace the current rules.");
         });
 
         btnClose.setOnClickListener(v -> dialog.dismiss());

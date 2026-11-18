@@ -30,7 +30,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Comic / CBR Downloader"
+                android:text="@string/comic_archive_title"
                 android:textColor="?attr/textPrimary"
                 android:textSize="18sp"
                 android:fontFamily="sans-serif-medium" />
@@ -39,7 +39,7 @@
                 android:id="@+id/tv_comic_page_summary"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Sequential image stream detected"
+                android:text="@string/comic_archive_format"
                 android:textColor="?attr/textSecondary"
                 android:textSize="13sp" />
         </LinearLayout>
@@ -49,6 +49,7 @@
             android:layout_width="36dp"
             android:layout_height="36dp"
             android:src="@drawable/ic_close"
+            android:contentDescription="@string/comic_close_cancel"
             android:background="?android:attr/selectableItemBackgroundBorderless"
             android:tint="#888888"
             android:scaleType="centerInside" />
@@ -73,6 +74,7 @@
         android:paddingStart="14dp"
         android:paddingEnd="14dp"
         android:singleLine="true"
+        android:maxLength="128"
         android:layout_marginBottom="14dp" />
 
     <!-- Info Card -->
@@ -109,65 +111,14 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <LinearLayout
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Resolution"
-                android:textColor="?attr/textPrimary"
-                android:textSize="13sp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Full-Res Extracted"
-                android:textColor="#4CAF50"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-        </LinearLayout>
+            android:layout_marginTop="4dp"
+            android:text="@string/comic_archive_scope"
+            android:textColor="?attr/textSecondary"
+            android:textSize="12sp" />
     </LinearLayout>
-
-    <!-- Format Chooser (CBR / CBZ) -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Archive Format"
-        android:textColor="?attr/textSecondary"
-        android:textSize="12sp"
-        android:layout_marginBottom="6dp" />
-
-    <RadioGroup
-        android:id="@+id/rg_comic_format"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="16dp">
-
-        <RadioButton
-            android:id="@+id/rb_format_cbr"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text=".CBR (Comic Book)"
-            android:textColor="?attr/textPrimary"
-            android:checked="true"
-            android:textSize="13sp" />
-
-        <RadioButton
-            android:id="@+id/rb_format_cbz"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text=".CBZ (ZIP Archive)"
-            android:textColor="?attr/textPrimary"
-            android:textSize="13sp" />
-    </RadioGroup>
 
     <!-- Progress Container (Shown while downloading) -->
     <LinearLayout
@@ -182,7 +133,6 @@
             android:id="@+id/tv_comic_download_status"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Downloading page 1 of ..."
             android:textColor="?attr/textSecondary"
             android:textSize="12sp"
             android:layout_marginBottom="6dp" />
@@ -201,7 +151,7 @@
         android:id="@+id/btn_start_comic_download"
         android:layout_width="match_parent"
         android:layout_height="46dp"
-        android:text="Download .CBR Archive"
+        android:text="@string/comic_download_cbz"
         android:textColor="#000000"
         android:background="@drawable/bg_download_btn_accent"
         android:textSize="14sp"

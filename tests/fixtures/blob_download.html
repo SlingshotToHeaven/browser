@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blob download device fixture</title>
+<h1>Blob download device fixture</h1>
+<p>All bytes are synthetic. A new page creates a new object URL.</p>
+<label>Read behavior
+    <select id="mode">
+        <option value="normal">Normal</option>
+        <option value="slow">One chunk every 4 seconds</option>
+        <option value="stall">First chunk, then stall</option>
+        <option value="short">One byte short</option>
+    </select>
+</label>
+<p><a id="download" download="blob-fixture.bin">Request download (262,147 bytes)</a></p>
+<output id="status">Downloader fetches: 0</output>
+<script>
+(() => {
+    const bytes = new Uint8Array(262147).fill(0xa5);
+    const url = URL.createObjectURL(new Blob([bytes], {type: 'application/octet-stream'}));
+    document.querySelector('#download').href = url;
+    const nativeFetch = window.fetch.bind(window);
+    const status = document.querySelector('#status');
+    let requests = 0;
+    window.fetch = (input, options) => {
+        if (input !== url) return nativeFetch(input, options);
+        const mode = document.querySelector('#mode').value;
+        status.textContent = `Downloader fetches: ${++requests}`;
+        if (mode === 'normal') return nativeFetch(input, options);
+        const end = bytes.length - (mode === 'short' ? 1 : 0);
+        let offset = 0;
+        const body = new ReadableStream({
+            start(controller) {
+                options.signal.addEventListener('abort', () => controller.error(new Error('Fixture aborted')), {once: true});
+            },
+            async pull(controller) {
+                if (offset) {
+                    if (mode === 'stall') return new Promise(resolve => options.signal.addEventListener('abort', resolve, {once: true}));
+                    if (mode === 'slow') await new Promise(resolve => setTimeout(resolve, 4000));
+                }
+                if (options.signal.aborted) return;
+                if (offset === end) {
+                    controller.close();
+                } else {
+                    const next = Math.min(offset + 65536, end);
+                    controller.enqueue(bytes.subarray(offset, next));
+                    offset = next;
+                }
+            },
+        }, {highWaterMark: 0});
+        return Promise.resolve(new Response(body, {headers: {'Content-Length': String(bytes.length)}}));
+    };
+})();
+</script>
+</html>

@@ -1,7 +1,14 @@
 name = "adblock-state-sync"
 main = "worker.js"
-compatibility_date = "2026-11-01"
+compatibility_date = "2026-07-30"
 
-[[kv_namespaces]]
-binding = "ADBLOCK_STATES"
-id = "0f146e78a71f4ac5822027bb22ee2615"
+[vars]
+ALLOW_RULE_PUBLISH = "false"
+
+[[durable_objects.bindings]]
+name = "RULE_STATES"
+class_name = "RuleStateCatalog"
+
+[[migrations]]
+tag = "v2-rule-catalog"
+new_sqlite_classes = ["RuleStateCatalog"]

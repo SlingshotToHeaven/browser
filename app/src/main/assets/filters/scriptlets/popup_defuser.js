@@ -35,21 +35,10 @@
     return false;
   }
 
-  var lastUserGestureTime = 0;
-  function noteUserGesture() {
-    lastUserGestureTime = Date.now();
-  }
-
-  window.addEventListener('click', noteUserGesture, true);
-  window.addEventListener('keydown', noteUserGesture, true);
-  window.addEventListener('touchend', noteUserGesture, true);
-
   try {
     var origOpen = window.open;
     window.open = function(url, target, features) {
-      var isAd = isAdUrl(url);
-      var recentGesture = (Date.now() - lastUserGestureTime) < 1500;
-      if (isAd || (!recentGesture && isAdUrl(url))) {
+      if (isAdUrl(url)) {
         report('Popup Blocker', 'Neutralized window.open ad popup: ' + (url || 'blank'));
         return { closed: true, close: function(){}, focus: function(){}, postMessage: function(){} };
       }
@@ -57,30 +46,34 @@
     };
   } catch(e) {}
 
-  function defuseClickjackOverlays() {
-    try {
-      var all = document.querySelectorAll('div, a, section, span');
-      var vw = window.innerWidth || document.documentElement.clientWidth;
-      var vh = window.innerHeight || document.documentElement.clientHeight;
-      for (var i = 0; i < all.length; i++) {
-        var el = all[i];
-        if (el.id && el.id.startsWith('__ublock_')) continue;
-        var idClass = ((el.id || '') + ' ' + (el.className || '') + ' ' + (el.getAttribute('role') || '') + ' ' + (el.getAttribute('aria-modal') || '')).toLowerCase();
-        if (idClass.indexOf('cookie') !== -1 || idClass.indexOf('consent') !== -1 || idClass.indexOf('modal') !== -1 || idClass.indexOf('dialog') !== -1 || idClass.indexOf('privacy') !== -1) continue;
-        var style = window.getComputedStyle(el);
-        if (style.position === 'fixed' || style.position === 'absolute') {
-          var zIndex = parseInt(style.zIndex, 10);
-          var opacity = parseFloat(style.opacity);
-          var rect = el.getBoundingClientRect();
-          if (zIndex >= 1000 && (opacity <= 0.05 || style.backgroundColor === 'transparent' || style.backgroundColor === 'rgba(0, 0, 0, 0)')) {
-            if (rect.width >= vw * 0.5 && rect.height >= vh * 0.5) {
-              el.remove();
-              report('Click-Jack Defuser', 'Removed invisible full-screen ad overlay');
-            }
-          }
-        }
+  function eligible(el) {
+    if (!/^(DIV|A|SECTION|SPAN)$/.test(el.tagName) || (el.id || '').startsWith('__ublock_')) return false;
+    var identity = (el.id || '') + ' ' + (el.getAttribute('class') || '') + ' ' +
+      (el.getAttribute('role') || '') + ' ' + (el.getAttribute('aria-modal') || '');
+    return !/cookie|consent|modal|dialog|privacy/i.test(identity);
+  }
+
+  function inspectOverlays(nodes) {
+    var remove = [], vw, vh;
+    nodes.forEach(function(el) {
+      if (!eligible(el)) return;
+      var style = window.getComputedStyle(el);
+      if ((style.position !== 'fixed' && style.position !== 'absolute') || !(parseInt(style.zIndex, 10) >= 1000)) return;
+      if (!(parseFloat(style.opacity) <= 0.05) && style.backgroundColor !== 'transparent'
+          && style.backgroundColor !== 'rgba(0, 0, 0, 0)') return;
+      if (vw === undefined) {
+        vw = window.innerWidth || document.documentElement.clientWidth;
+        vh = window.innerHeight || document.documentElement.clientHeight;
       }
-    } catch(e) {}
+      var rect = el.getBoundingClientRect();
+      if (rect.width >= vw * 0.5 && rect.height >= vh * 0.5) remove.push(el);
+    });
+    // Batch reads before DOM writes so removing a match does not force layout for the next probe.
+    remove.forEach(function(el) {
+      if (!el.isConnected) return;
+      el.remove();
+      report('Click-Jack Defuser', 'Removed invisible full-screen ad overlay');
+    });
   }
 
   try {
@@ -97,11 +90,10 @@
     }, true);
   } catch(e) {}
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', defuseClickjackOverlays);
-  } else {
-    defuseClickjackOverlays();
+  function observeOverlays() {
+    __privacyObserveElements(document.documentElement, ['class', 'id', 'style', 'role', 'aria-modal'],
+      eligible, inspectOverlays);
   }
-  setTimeout(defuseClickjackOverlays, 1000);
-  setTimeout(defuseClickjackOverlays, 2500);
+  if (document.documentElement) observeOverlays();
+  else document.addEventListener('DOMContentLoaded', observeOverlays, {once: true});
 })();

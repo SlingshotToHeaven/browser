@@ -3,6 +3,7 @@ package com.privacy.browser;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Color;
+import android.os.Trace;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
@@ -31,6 +32,21 @@ public class PrivacyWebView extends WebView {
 
     public interface OnScrollListener {
         void onScroll(PrivacyWebView view, int scrollX, int scrollY, int oldScrollX, int oldScrollY);
+    }
+
+    private String appliedWebTheme;
+    private int appliedPageZoom;
+
+    static PrivacyWebView createTabView(Context context) {
+        Trace.beginSection("Browser.tabs.createView");
+        try { return new PrivacyWebView(context); }
+        finally { Trace.endSection(); }
+    }
+
+    boolean changeWebTheme(String theme) {
+        if (theme.equals(appliedWebTheme)) return false;
+        appliedWebTheme = theme;
+        return true;
     }
 
     private ToolbarCoordinator toolbarCoordinator;
@@ -139,7 +155,7 @@ public class PrivacyWebView extends WebView {
         WebSettings settings = getSettings();
 
         // Core Rendering & Scripting
-        settings.setJavaScriptEnabled(true);
+        // The tab's script policy enables scripting, if allowed, before the first load.
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
 
@@ -201,6 +217,8 @@ public class PrivacyWebView extends WebView {
 
     public void applyPageZoom() {
         int zoom = com.privacy.browser.settings.SettingsActivity.getPageZoom(getContext());
+        if (zoom == appliedPageZoom) return;
         getSettings().setTextZoom(zoom);
+        appliedPageZoom = zoom;
     }
 }

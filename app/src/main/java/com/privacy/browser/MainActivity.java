@@ -3,28 +3,24 @@ package com.privacy.browser;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.graphics.Bitmap;
-import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Handler;
 import android.os.Looper;
-import android.view.PixelCopy;
 import android.Manifest;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Parcel;
+import android.os.Trace;
 import android.view.WindowManager;
 import android.text.Editable;
-import android.text.SpannableStringBuilder;
-import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.TextWatcher;
-import android.text.style.ForegroundColorSpan;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -32,23 +28,16 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
-import android.webkit.CookieManager;
-import android.webkit.WebBackForwardList;
-import android.webkit.WebHistoryItem;
 import android.webkit.WebChromeClient;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebResourceResponse;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
-import android.webkit.WebStorage;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.ArrayAdapter;
-import android.widget.BaseAdapter;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
@@ -60,28 +49,38 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.recyclerview.widget.GridLayoutManager;
+import androidx.recyclerview.widget.ItemTouchHelper;
+import androidx.recyclerview.widget.RecyclerView;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import org.json.JSONArray;
-import org.json.JSONException;
 import org.json.JSONObject;
 import java.util.List;
 import java.util.ArrayList;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
+import java.util.Collections;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.ComponentCallbacks2;
 import android.content.Context;
+import com.privacy.browser.ai.AssistantApproval;
+import com.privacy.browser.adblock.WebScriptPolicy;
 import com.privacy.browser.bookmarks.BookmarkDbHelper;
 import com.privacy.browser.bookmarks.BookmarkModel;
+import com.privacy.browser.comic.ComicDetector;
+import com.privacy.browser.comic.ComicDownloadDialog;
+import com.privacy.browser.comic.ComicManager;
 import com.privacy.browser.history.HistoryDbHelper;
 import com.privacy.browser.history.HistoryModel;
+import com.privacy.downloader.interceptor.BlobDownloadManager;
 import com.privacy.downloader.interceptor.BrowserDownloadListener;
+import com.privacy.downloader.net.RequestContext;
 import com.privacy.downloader.ui.DownloadPromptDialog;
 import com.privacy.downloader.ui.DownloadsActivity;
-import com.privacy.downloader.ui.DownloadsDialog;
 import com.privacy.downloader.ui.LinkGrabberActivity;
 import com.privacy.browser.bookmarks.BookmarksActivity;
 import com.privacy.browser.history.HistoryActivity;
@@ -89,12 +88,14 @@ import com.privacy.browser.search.OmniboxSuggestion;
 import com.privacy.browser.search.OmniboxSuggestionsAdapter;
 import com.privacy.browser.search.SearchEngineManager;
 import com.privacy.browser.settings.SettingsActivity;
+import com.privacy.browser.media.MediaPageScripts;
 import com.privacy.browser.media.MediaSniffer;
-import com.privacy.browser.media.PrivacyVideoSnifferBridge;
 import com.privacy.browser.ui.VideoQualityDialog;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -119,6 +120,7 @@ public class MainActivity extends Activity {
     private com.privacy.browser.ai.AiFloatingButtonView aiFloatingButton;
     private com.privacy.browser.ai.AgentBottomSheet agentBottomSheet;
     private TextView fabComicBadge;
+    private ComicDownloadDialog comicDownloadDialog;
 
     // Fullscreen HTML5 Video Support
     private LinearLayout topAppBar;
@@ -136,6 +138,11 @@ public class MainActivity extends Activity {
     private View omniboxContainer;
     private ListView omniboxList;
     private OmniboxSuggestionsAdapter omniboxAdapter;
+    private OmniboxRequests omniboxRequests;
+    private OmniboxRequests.Request visibleOmniboxRequest;
+    private final OmniboxClipboard omniboxClipboard = new OmniboxClipboard();
+    private final ThreadPoolExecutor omniboxWorker = new ThreadPoolExecutor(0, 1, 30, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(1), task -> new Thread(task, "Browser-omnibox"));
 
     // Find in Page UI
     private LinearLayout findBar;
@@ -149,22 +156,71 @@ public class MainActivity extends Activity {
     private TabsManager tabsManager;
     private BookmarkDbHelper bookmarkDbHelper;
     private HistoryDbHelper historyDbHelper;
-    private boolean isLoading = false;
-    private int blockedTrackerCount = 0;
+    private boolean resumed;
+    private long assistantForegroundEpoch;
+    private final Object assistantActivityIdentity = new Object();
+    private boolean disposing;
+    private TabModel displayedTab;
+    private TabNavigation.Page discoveryPage;
+    private TabModel discoveryOwner;
+    private boolean videoDiscoveryEnabled, comicDiscoveryEnabled;
+    private String comicObservation, comicScanToken;
+    private boolean comicFinalChecked;
+    private MediaOptions mediaOptions;
+    private AlertDialog videoQualityDialog, mediaDownloadPrompt;
+    private final SharedPreferences.OnSharedPreferenceChangeListener discoverySettings = (prefs, key) -> {
+        if (key == null || SettingsActivity.KEY_FLOATING_DOWNLOAD_BUTTON.equals(key)
+                || SettingsActivity.KEY_COMIC_DOWNLOADER_ENABLED.equals(key)) refreshDiscoverySettings();
+    };
+    private PrivacyWebView fullscreenOwner;
+    private TabNavigation.Page fullscreenPage;
+    private android.app.Dialog pagePickerDialog;
+    private AlertDialog pageContextMenu;
     private boolean isAddressBarFirstTap = false;
 
     public static final String EXTRA_LOAD_URL = "com.privacy.browser.EXTRA_LOAD_URL";
     public static final String EXTRA_OPEN_IN_NEW_TAB = "com.privacy.browser.EXTRA_OPEN_IN_NEW_TAB";
     public static final String EXTRA_OPEN_IN_INCOGNITO = "com.privacy.browser.EXTRA_OPEN_IN_INCOGNITO";
 
-    public static final String DEFAULT_HOME_URL = "file:///android_asset/home.html";
+    public static final String DEFAULT_HOME_URL = InternalHome.URL;
     private static final String DESKTOP_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
 
-    private static final String PREFS_NAME = "browser_session";
-    private static final String KEY_SAVED_TABS = "saved_tabs";
-    private static final String KEY_ACTIVE_TAB = "active_tab_idx";
+    private TabSessionWriter sessionWriter;
+    private Object sessionOwner;
+    private TabSessionCheckpoint<TabModel> session;
     private String currentAppTheme;
-    private boolean isRestoringSession = false;
+    private boolean replacingSession;
+    private boolean startupReady;
+    private Intent pendingLaunch;
+    private static final String STARTUP_PENDING = "browser.startup.pending";
+    private static final long TAB_TRIM_DELAY_MS = 120;
+    private LazyTabRestore<TabModel> lazyRestore;
+    private long checkedScriptRevision = -1;
+    private final TabPreviews tabPreviews = new TabPreviews();
+    private AlertDialog tabGrid;
+    private AlertDialog closeTabsConfirmation;
+    private RecyclerView.Adapter<?> tabGridAdapter;
+    private TextView tabGridTitle;
+    private final Handler tabResourceWork = new Handler(Looper.getMainLooper());
+    private final ShieldRefresh shieldRefresh = new ShieldRefresh(new ShieldRefresh.Scheduler() {
+        @Override public void later(Runnable action, long delayMs) { tabResourceWork.postDelayed(action, delayMs); }
+        @Override public void cancel(Runnable action) { tabResourceWork.removeCallbacks(action); }
+    }, this::renderVisibleShieldCount);
+    private final ShieldRefresh mediaBadgeRefresh = new ShieldRefresh(new ShieldRefresh.Scheduler() {
+        @Override public void later(Runnable action, long delayMs) { tabResourceWork.postDelayed(action, delayMs); }
+        @Override public void cancel(Runnable action) { tabResourceWork.removeCallbacks(action); }
+    }, this::renderMediaBadge);
+    private int shieldIcon, shieldCount = -1;
+    private final Runnable trimTabs = this::trimNextInactiveTab;
+    private boolean trimPosted;
+    private int inactiveTarget = TabViewBudget.INACTIVE;
+    private final Handler resumeWork = new Handler(Looper.getMainLooper());
+    private final Runnable deferredResumeWork = () -> {
+        if (resumed && startupReady && !disposing) {
+            BrowserStartup.resumeMaintenance(this);
+            if (sessionWritable()) sessionWriter.maintainWhenIdle(sessionOwner);
+        }
+    };
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -175,34 +231,12 @@ public class MainActivity extends Activity {
 
         bookmarkDbHelper = BookmarkDbHelper.getInstance(this);
         historyDbHelper = HistoryDbHelper.getInstance(this);
-        initTrackerEngine();
+        tabsManager = new TabsManager(this::allocateTabView);
         initViews();
-        initServiceWorkerSniffer();
-        initTabs();
+        if (savedInstanceState == null || savedInstanceState.getBoolean(STARTUP_PENDING)) pendingLaunch = getIntent();
+        setBrowserControlsReady(false);
+        beginStartup();
         checkNotificationPermission();
-    }
-
-    private void initServiceWorkerSniffer() {
-        try {
-            if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.SERVICE_WORKER_BASIC_USAGE)) {
-                androidx.webkit.ServiceWorkerControllerCompat controller = androidx.webkit.ServiceWorkerControllerCompat.getInstance();
-                controller.setServiceWorkerClient(new androidx.webkit.ServiceWorkerClientCompat() {
-                    @Nullable
-                    @Override
-                    public WebResourceResponse shouldInterceptRequest(@NonNull WebResourceRequest request) {
-                        try {
-                            TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-                            String tabId = active != null ? active.getId() : null;
-                            String pageTitle = active != null ? active.getTitle() : null;
-                            if (tabId != null && request.getUrl() != null) {
-                                MediaSniffer.inspectRequest(tabId, request.getUrl(), pageTitle);
-                            }
-                        } catch (Throwable ignored) {}
-                        return null;
-                    }
-                });
-            }
-        } catch (Throwable ignored) {}
     }
 
     private void checkNotificationPermission() {
@@ -213,9 +247,45 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void initTrackerEngine() {
-        trackerBlocker = new TrackerBlocker();
-        trackerBlocker.initialize(this);
+    private void beginStartup() {
+        showTabStatus(getString(R.string.browser_preparing), 0, null);
+        BrowserStartup.request(this, ready -> {
+            if (disposing || isFinishing() || startupReady) return;
+            if (ready == null) {
+                showTabStatus(getString(R.string.browser_prepare_failed), R.string.browser_prepare_retry, this::beginStartup);
+                return;
+            }
+            trackerBlocker = ready.protection;
+            initTabs(ready.journal);
+        });
+    }
+
+    private void setBrowserControlsReady(boolean ready) {
+        for (View control : new View[]{editUrl, btnReload, btnTabs, btnMenu, btnShield, aiFloatingButton}) {
+            if (control != null) control.setEnabled(ready);
+        }
+    }
+
+    private void showTabStatus(String message, int actionLabel, @Nullable Runnable retry) {
+        webViewContainer.removeAllViews();
+        LinearLayout state = new LinearLayout(this);
+        state.setOrientation(LinearLayout.VERTICAL);
+        state.setGravity(Gravity.CENTER);
+        TextView status = new TextView(this);
+        status.setText(message);
+        state.addView(status);
+        if (retry != null) {
+            android.widget.Button button = new android.widget.Button(this);
+            button.setText(actionLabel);
+            button.setOnClickListener(v -> retry.run());
+            state.addView(button);
+        }
+        webViewContainer.addView(state, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        super.onSaveInstanceState(state);
+        state.putBoolean(STARTUP_PENDING, !startupReady && pendingLaunch != null);
     }
 
     private void initViews() {
@@ -241,14 +311,21 @@ public class MainActivity extends Activity {
             viewAddressScrim.setOnClickListener(v -> dismissKeyboard());
         }
 
-        // Omnibox suggestions initialization
+        Handler omniboxUi = new Handler(Looper.getMainLooper());
+        OmniboxStore store = new OmniboxStore(bookmarkDbHelper, historyDbHelper);
+        omniboxRequests = new OmniboxRequests(new OmniboxRequests.Ui() {
+            @Override public void later(Runnable action, long ms) { omniboxUi.postDelayed(action, ms); }
+            @Override public void remove(Runnable action) { omniboxUi.removeCallbacks(action); }
+            @Override public void post(Runnable action) { omniboxUi.post(action); }
+        }, omniboxWorker, store::find, this::canShowOmniboxRequest, this::publishLocalOmnibox);
         omniboxContainer = findViewById(R.id.omnibox_suggestions_container);
         omniboxList = findViewById(R.id.omnibox_suggestions_list);
         if (omniboxList != null) {
             omniboxAdapter = new OmniboxSuggestionsAdapter(this);
             omniboxList.setAdapter(omniboxAdapter);
             omniboxList.setOnItemClickListener((parent, view, position, id) -> {
-                OmniboxSuggestion item = omniboxAdapter.getItem(position);
+                if (!omniboxRequests.isCurrent(visibleOmniboxRequest) || omniboxContainer.getVisibility() != View.VISIBLE) return;
+                OmniboxSuggestion item = omniboxAdapter.clickedItem(view, position, id);
                 if (item != null) {
                     navigateToInput(item.getTargetUrl());
                     dismissKeyboard();
@@ -282,11 +359,10 @@ public class MainActivity extends Activity {
                     viewAddressScrim.setVisibility(View.VISIBLE);
                 }
                 editUrl.post(() -> editUrl.selectAll());
-                String text = editUrl.getText() != null ? editUrl.getText().toString() : "";
                 if (btnClearUrl != null) {
-                    btnClearUrl.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
+                    btnClearUrl.setVisibility(editUrl.length() == 0 ? View.GONE : View.VISIBLE);
                 }
-                updateOmniboxSuggestions(text);
+                updateOmniboxSuggestions(editUrl.getText());
             } else {
                 isAddressBarFirstTap = false;
                 if (viewAddressScrim != null) {
@@ -327,6 +403,9 @@ public class MainActivity extends Activity {
             if (!editUrl.hasFocus()) {
                 editUrl.requestFocus();
                 editUrl.selectAll();
+            } else if (visibleOmniboxRequest == null) {
+                // A dialog or pause may have ended the last edit without clearing view focus.
+                updateOmniboxSuggestions(editUrl.getText());
             }
         });
 
@@ -340,7 +419,7 @@ public class MainActivity extends Activity {
                     btnClearUrl.setVisibility(s != null && s.length() > 0 ? View.VISIBLE : View.GONE);
                 }
                 if (editUrl.hasFocus()) {
-                    updateOmniboxSuggestions(s != null ? s.toString() : "");
+                    updateOmniboxSuggestions(s);
                 }
             }
 
@@ -350,12 +429,16 @@ public class MainActivity extends Activity {
 
         btnReload.setOnClickListener(v -> {
             TabModel active = tabsManager.getActiveTab();
-            if (active != null) {
-                if (isLoading) {
-                    active.getWebView().stopLoading();
-                } else {
-                    active.getWebView().reload();
-                }
+            if (active == null) return;
+            PrivacyWebView view = active.getWebView();
+            if (view == null) {
+                restoreLostTab(active);
+            } else if (active.navigation.progress() < 100) {
+                view.stopLoading();
+                invalidatePage(active);
+                renderChrome(active);
+            } else {
+                reloadTab(active);
             }
         });
 
@@ -384,25 +467,13 @@ public class MainActivity extends Activity {
     private void setupAiFloatingButton() {
         aiFloatingButton = findViewById(R.id.ai_floating_button);
         if (aiFloatingButton != null) {
-            com.privacy.browser.ai.AgentSessionManager sessionManager =
-                    com.privacy.browser.ai.AgentSessionManager.getInstance(this);
-            sessionManager.setFloatingButton(aiFloatingButton);
-            sessionManager.initialize();
-
             aiFloatingButton.setOnAiButtonClickListener(() -> {
-                TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-                android.webkit.WebView activeWv = active != null ? active.getWebView() : null;
-
                 if (agentBottomSheet == null) {
-                    agentBottomSheet = new com.privacy.browser.ai.AgentBottomSheet(
-                            MainActivity.this, activeWv, MainActivity.this, tabsManager);
-                } else {
-                    agentBottomSheet.updateActiveContext(activeWv, MainActivity.this, tabsManager);
+                    agentBottomSheet = new com.privacy.browser.ai.AgentBottomSheet(this, aiFloatingButton);
                 }
-
-                if (agentBottomSheet.isShowing()) {
-                    agentBottomSheet.dismiss();
-                } else {
+                if (agentBottomSheet.isShowing()) agentBottomSheet.dismiss();
+                else {
+                    markAssistantDocument(activeTab());
                     agentBottomSheet.show();
                 }
             });
@@ -428,21 +499,31 @@ public class MainActivity extends Activity {
     }
 
     private void onComicDownloadFabClicked() {
-        TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-        if (active != null) {
-            com.privacy.browser.comic.ComicManager.ComicItem item =
-                    com.privacy.browser.comic.ComicManager.getDetectedComic(active.getId());
-            if (item != null) {
-                String ua = active.getWebView() != null && active.getWebView().getSettings() != null ?
-                        active.getWebView().getSettings().getUserAgentString() : null;
-                com.privacy.browser.comic.ComicDownloadDialog.show(MainActivity.this, item, ua);
-            }
-        }
+        TabModel active = activeTab();
+        if (!canScanComic(active)) return;
+        PrivacyWebView view = active.getWebView();
+        TabNavigation.Page page = active.navigation.page();
+        ComicManager.ComicItem item = ComicManager.getDetectedComic(page.key);
+        if (item == null) return;
+        dismissComicDownload();
+        ComicDownloadDialog shown = ComicDownloadDialog.show(this, item, downloadContext(active),
+                () -> canScanComic(active) && currentPage(active, view, page, true)
+                        && ComicManager.getDetectedComic(page.key) == item);
+        comicDownloadDialog = shown;
+        if (shown != null) shown.setOnDismissListener(d -> {
+            if (comicDownloadDialog == shown) comicDownloadDialog = null;
+        });
+    }
+
+    private void dismissComicDownload() {
+        ComicDownloadDialog dialog = comicDownloadDialog;
+        comicDownloadDialog = null;
+        if (dialog != null) dialog.dismiss();
     }
 
     private void updateFabComicDownload(int count) {
         if (fabComicDownload == null) return;
-        if (!com.privacy.browser.settings.SettingsActivity.isComicDownloaderEnabled(this) || isCurrentTabOnHomePage()) {
+        if (!comicDiscoveryEnabled || comicObservation == null || customVideoView != null || isCurrentTabOnHomePage()) {
             fabComicDownload.setVisibility(View.GONE);
             return;
         }
@@ -465,17 +546,10 @@ public class MainActivity extends Activity {
             setupMovableFabTouchListener(fabVideoDownload, this::onFloatingDownloadFabClicked);
         }
 
-        MediaSniffer.setMediaDetectionListener((tabId, count) -> {
-            runOnUiThread(() -> {
-                TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-                if (active != null && active.getId().equals(tabId)) {
-                    updateFabVideoDownload(count);
-                }
-            });
-        });
     }
 
     private void setupMovableFabTouchListener(View fab, Runnable onClickAction) {
+        fab.setOnClickListener(view -> onClickAction.run());
         fab.setOnTouchListener(new View.OnTouchListener() {
             private float dX, dY;
             private float startX, startY;
@@ -531,9 +605,7 @@ public class MainActivity extends Activity {
                         float diffX = Math.abs(event.getRawX() - startX);
                         float diffY = Math.abs(event.getRawY() - startY);
                         if (diffX < CLICK_THRESHOLD && diffY < CLICK_THRESHOLD) {
-                            if (onClickAction != null) {
-                                onClickAction.run();
-                            }
+                            view.performClick();
                         }
                         return true;
 
@@ -544,77 +616,270 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void onFloatingDownloadFabClicked() {
-        TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-        if (active == null) return;
-        List<MediaSniffer.SniffedMedia> mediaList = MediaSniffer.getMediaForTab(active.getId());
-        String ua = active.getWebView() != null && active.getWebView().getSettings() != null
-                ? active.getWebView().getSettings().getUserAgentString()
-                : null;
+    private static RequestContext downloadContext(TabModel tab) {
+        if (tab.isIncognito()) return RequestContext.fromBrowser(null, null, true);
+        PrivacyWebView view = tab.getWebView();
+        if (view != null && view.getWebViewClient() instanceof PrivacyWebViewClient) {
+            return ((PrivacyWebViewClient) view.getWebViewClient()).downloadContext(view);
+        }
+        return RequestContext.anonymous();
+    }
 
-        if (!mediaList.isEmpty()) {
-            VideoQualityDialog.show(MainActivity.this, mediaList, active.getUrl(), ua,
-                    () -> extractAndGrabPageLinks(active),
-                    () -> refreshMediaForActiveTab(active));
-        } else {
-            // Idle state tap: check for any link or prompt link grabber
-            extractAndGrabPageLinks(active);
+    private boolean rejectPrivateDownloads(TabModel tab) {
+        if (!tab.isIncognito()) return false;
+        Toast.makeText(this, RequestContext.PRIVATE_UNAVAILABLE, Toast.LENGTH_LONG).show();
+        return true;
+    }
+
+    private void onFloatingDownloadFabClicked() {
+        openMediaOptions(activeTab());
+    }
+
+    private static final class MediaOptions {
+        final TabModel tab;
+        final PrivacyWebView view;
+        final TabNavigation.Page page;
+        boolean collecting = true;
+        Runnable timeout;
+        AlertDialog progress;
+
+        MediaOptions(TabModel tab) {
+            this.tab = tab;
+            view = tab.getWebView();
+            page = tab.navigation.page();
         }
     }
 
-    private void refreshMediaForActiveTab(TabModel active) {
-        if (active == null) return;
-        Toast.makeText(this, "Refreshing media streams...", Toast.LENGTH_SHORT).show();
-        MediaSniffer.clearTab(active.getId());
-        updateFabVideoDownload(0);
+    private boolean mediaOptionsCurrent(MediaOptions q) {
+        return videoDiscoveryEnabled && q.page != null && discoveryPage == q.page && tabGrid == null
+                && customVideoView == null && !q.tab.isIncognito() && currentPage(q.tab, q.view, q.page, true);
+    }
 
-        PrivacyWebView webView = active.getWebView();
-        String currentUrl = (webView != null && webView.getUrl() != null && !webView.getUrl().isEmpty())
-                ? webView.getUrl()
-                : active.getUrl();
-        String currentTitle = (webView != null && webView.getTitle() != null && !webView.getTitle().isEmpty())
-                ? webView.getTitle()
-                : active.getTitle();
-
-        active.setUrl(currentUrl);
-        active.setTitle(currentTitle);
-
-        // 1. Re-evaluate DOM video sniffer
-        if (webView != null) {
-            webView.evaluateJavascript(PrivacyWebViewClient.VIDEO_SNIFFER_JS, null);
+    private void openMediaOptions(TabModel tab) {
+        if (tab == null || rejectPrivateDownloads(tab) || mediaOptions != null
+                || videoQualityDialog != null || mediaDownloadPrompt != null) return;
+        MediaOptions q = new MediaOptions(tab);
+        if (!mediaOptionsCurrent(q) || !q.page.media.isObserving()) return;
+        mediaOptions = q;
+        if (allowsPageScripts(tab, q.view)) {
+            q.timeout = () -> collectMediaOptions(q, null);
+            tabResourceWork.postDelayed(q.timeout, 800);
+            evaluateMediaSnapshot(tab, q.view, MediaPageScripts.OPTIONS_JS, value -> collectMediaOptions(q, value));
+        } else {
+            collectMediaOptions(q, null);
         }
+    }
 
-        // 2. Re-trigger platform resolvers
-        if (currentUrl != null) {
-            if (MediaSniffer.isVimeoUrl(currentUrl)) {
-                MediaSniffer.resolveVimeoFromUrl(active.getId(), currentUrl, currentTitle, () -> {
-                    runOnUiThread(() -> {
-                        int c = MediaSniffer.getMediaForTab(active.getId()).size();
-                        updateFabVideoDownload(c);
-                        if (c > 0) onFloatingDownloadFabClicked();
-                        else Toast.makeText(MainActivity.this, "No video streams detected", Toast.LENGTH_SHORT).show();
-                    });
+    private void collectMediaOptions(MediaOptions q, String value) {
+        if (mediaOptions != q || !q.collecting) return;
+        if (!mediaOptionsCurrent(q)) { dismissVideoOptions(); return; }
+        q.collecting = false;
+        if (q.timeout != null) tabResourceWork.removeCallbacks(q.timeout);
+        q.timeout = null;
+        Predicate<String> allowed = mediaOptionsPolicy(q.view);
+        List<String> embeds = new ArrayList<>();
+        JSONArray items = mediaSnapshot(value);
+        for (int i = 0; items != null && i < Math.min(items.length(), 64); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) continue;
+            String url = boundedWebUrl(item.optString("url"));
+            if (url == null || !allowed.test(url)) continue;
+            String type = item.optString("type");
+            if ("embed".equals(type)) {
+                if (embeds.size() < 16) embeds.add(url);
+            } else q.page.media.elementHint(url, type, q.tab.getTitle());
+        }
+        String player = allowsPageScripts(q.tab, q.view) ? q.tab.getUrl() : null;
+        boolean started = q.page.media.enrich(player, q.tab.getTitle(), embeds, allowed,
+                () -> tabResourceWork.post(() -> presentMediaOptions(q)));
+        if (!started) { presentMediaOptions(q); return; }
+        q.progress = new AlertDialog.Builder(this, ThemeManager.getDialogTheme(this))
+                .setMessage(R.string.media_options_loading)
+                .setNegativeButton(android.R.string.cancel, (dialog, which) -> {
+                    if (mediaOptions == q) dismissVideoOptions();
+                }).create();
+        q.progress.setOnDismissListener(dialog -> { if (mediaOptions == q) dismissVideoOptions(); });
+        q.progress.show();
+        // A queued job or a provider's blocking I/O must not keep the UI waiting indefinitely.
+        q.timeout = () -> {
+            if (mediaOptions != q) return;
+            q.page.media.cancelEnrichment();
+            presentMediaOptions(q);
+        };
+        tabResourceWork.postDelayed(q.timeout, 8000);
+    }
+
+    private void presentMediaOptions(MediaOptions q) {
+        if (mediaOptions != q) return;
+        mediaOptions = null;
+        if (q.timeout != null) tabResourceWork.removeCallbacks(q.timeout);
+        if (q.progress != null) q.progress.dismiss();
+        if (!mediaOptionsCurrent(q)) return;
+        List<MediaSniffer.SniffedMedia> options = q.page.media.snapshot();
+        Predicate<String> allowed = mediaOptionsPolicy(q.view);
+        options.removeIf(row -> !allowed.test(row.getUrl()));
+        if (options.isEmpty()) {
+            if (allowsPageScripts(q.tab, q.view)) extractAndGrabPageLinks(q.tab);
+            else Toast.makeText(this, R.string.media_no_links, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        AlertDialog dialog = VideoQualityDialog.show(this, options, () -> mediaOptionsCurrent(q),
+                (url, mime, name, bytes, audio, audioSize) -> confirmMediaOption(q, url, mime, name, bytes, audio, audioSize),
+                allowsPageScripts(q.tab, q.view) ? () -> extractAndGrabPageLinks(q.tab) : null, () -> {
+                    videoQualityDialog = null;
+                    openMediaOptions(q.tab);
                 });
-            } else if (MediaSniffer.isYouTubeUrl(currentUrl)) {
-                MediaSniffer.resolveYouTubeFromUrl(active.getId(), currentUrl, currentTitle, () -> {
-                    runOnUiThread(() -> {
-                        int c = MediaSniffer.getMediaForTab(active.getId()).size();
-                        updateFabVideoDownload(c);
-                        if (c > 0) onFloatingDownloadFabClicked();
-                        else Toast.makeText(MainActivity.this, "No video streams detected", Toast.LENGTH_SHORT).show();
-                    });
-                });
-            } else {
-                // Generic page re-probe
-                extractAndGrabPageLinks(active);
+        videoQualityDialog = dialog;
+        if (dialog != null) dialog.setOnDismissListener(d -> { if (videoQualityDialog == dialog) videoQualityDialog = null; });
+    }
+
+    private void confirmMediaOption(MediaOptions q, String url, String mime, String name,
+                                    long size, String audio, long audioSize) {
+        java.util.function.BooleanSupplier current = () -> {
+            if (!mediaOptionsCurrent(q)) return false;
+            Predicate<String> allowed = mediaOptionsPolicy(q.view);
+            return allowed.test(url) && (audio == null || allowed.test(audio));
+        };
+        if (!current.getAsBoolean()) return;
+        AlertDialog prompt = DownloadPromptDialog.showForPage(this, url, downloadContext(q.tab),
+                mime, name, size, audio, audioSize, current);
+        mediaDownloadPrompt = prompt;
+        if (prompt != null) prompt.setOnDismissListener(d -> { if (mediaDownloadPrompt == prompt) mediaDownloadPrompt = null; });
+    }
+
+    private void dismissVideoOptions() {
+        MediaOptions q = mediaOptions;
+        mediaOptions = null;
+        if (q != null) {
+            if (q.timeout != null) tabResourceWork.removeCallbacks(q.timeout);
+            q.page.media.cancelEnrichment();
+            if (q.progress != null) q.progress.dismiss();
+        }
+        AlertDialog dialog = videoQualityDialog;
+        videoQualityDialog = null;
+        if (dialog != null) dialog.dismiss();
+        AlertDialog prompt = mediaDownloadPrompt;
+        mediaDownloadPrompt = null;
+        if (prompt != null) prompt.dismiss();
+    }
+
+    private void renderMediaBadge(String key) {
+        TabModel tab = activeTab();
+        if (resumed && !disposing && customVideoView == null && tab != null && tab.navigation.ready()
+                && discoveryPage != null && discoveryPage == tab.navigation.page() && key.equals(discoveryPage.key)) {
+            updateFabVideoDownload(discoveryPage.media.count());
+        }
+    }
+
+    private void syncMediaDiscovery(TabModel tab, String nativeUrl, boolean finalCheck) {
+        syncMediaDiscovery(tab, nativeUrl, finalCheck, false);
+    }
+
+    private void syncMediaDiscovery(TabModel tab, String nativeUrl, boolean finalCheck, boolean settleRoute) {
+        if (tab != activeTab()) return;
+        PrivacyWebView view = tab == null ? null : tab.getWebView();
+        TabNavigation.Page page = tab == null ? null : tab.navigation.page();
+        if ((!videoDiscoveryEnabled && !comicDiscoveryEnabled) || page == null || view == null
+                || !foreground(tab, view) || tab.isIncognito() || InternalHome.ownsHost(nativeUrl) || RequestContext.origin(nativeUrl) == null) {
+            stopMediaDiscovery();
+            return;
+        }
+        if (discoveryPage != page) {
+            stopMediaDiscovery();
+            discoveryPage = page;
+            discoveryOwner = tab;
+        }
+        if (videoDiscoveryEnabled && !page.media.isObserving()) {
+            mediaBadgeRefresh.show(page.key);
+            page.media.observe(() -> mediaBadgeRefresh.changed(page.key));
+        }
+        if (comicDiscoveryEnabled && tab.messages != null && tab.messages.hasPageEndpoint()
+                && currentPage(tab, view, page, true) && allowsPageScripts(tab, view)) {
+            if (comicObservation == null) {
+                comicObservation = java.util.UUID.randomUUID().toString();
+                comicFinalChecked = finalCheck;
+                evaluateComic(tab, ComicDetector.start(comicObservation, finalCheck, settleRoute));
+            } else if (finalCheck && !comicFinalChecked) {
+                comicFinalChecked = true;
+                evaluateComic(tab, ComicDetector.recheck(comicObservation));
             }
         }
     }
 
+    private void evaluateComic(TabModel tab, String script) {
+        // This slice measures native dispatch, not the asynchronous renderer work.
+        Trace.beginSection("Browser.comic.dispatch");
+        try { tab.messages.evaluate(script); } finally { Trace.endSection(); }
+    }
+
+    private void stopComicDiscovery() {
+        String previous = comicObservation;
+        comicObservation = comicScanToken = null;
+        comicFinalChecked = false;
+        if (previous == null) return;
+        dismissComicDownload();
+        ComicManager.clearTab(discoveryPage.key);
+        if (discoveryOwner.navigation.page() == discoveryPage && discoveryOwner.messages != null) {
+            discoveryOwner.messages.evaluate(ComicDetector.stop(previous));
+        }
+    }
+
+    private void stopMediaDiscovery() {
+        dismissVideoOptions();
+        mediaBadgeRefresh.show(null);
+        stopComicDiscovery();
+        if (discoveryPage != null) discoveryPage.media.suspend();
+        discoveryPage = null;
+        discoveryOwner = null;
+    }
+
+    private void refreshDiscoverySettings() {
+        videoDiscoveryEnabled = SettingsActivity.isFloatingDownloadButtonEnabled(this);
+        comicDiscoveryEnabled = SettingsActivity.isComicDownloaderEnabled(this);
+        if (!resumed || !startupReady || disposing) return;
+        if (!videoDiscoveryEnabled) {
+            dismissVideoOptions();
+            mediaBadgeRefresh.show(null);
+            if (discoveryPage != null) discoveryPage.media.suspend();
+        }
+        if (!comicDiscoveryEnabled) stopComicDiscovery();
+        TabModel tab = activeTab();
+        if (tab != null) syncMediaDiscovery(tab, tab.navigation.target(), tab.navigation.finished());
+        updateFloatingActionButtonsForActiveTab();
+    }
+
+    private void scanComicPages(TabModel tab) {
+        if (!canScanComic(tab)) return;
+        comicScanToken = java.util.UUID.randomUUID().toString();
+        evaluateComic(tab, ComicDetector.manual(comicObservation, comicScanToken));
+    }
+
+    private boolean canScanComic(TabModel tab) {
+        if (!comicDiscoveryEnabled || tab == null || tab.isIncognito() || tab.messages == null
+                || discoveryOwner != tab || comicObservation == null || !tab.messages.hasPageEndpoint()) return false;
+        PrivacyWebView view = tab.getWebView();
+        return view != null && currentPage(tab, view, discoveryPage, true) && allowsPageScripts(tab, view);
+    }
+
+    private static Predicate<String> mediaOptionsPolicy(PrivacyWebView view) {
+        WebViewClient client = view.getWebViewClient();
+        return client instanceof PrivacyWebViewClient ? ((PrivacyWebViewClient) client).mediaOptionsPolicy() : url -> false;
+    }
+
+    private static void evaluateMediaSnapshot(TabModel tab, PrivacyWebView view, String script, Consumer<String> result) {
+        view.evaluateJavascript("(function(){if(location.href!==" + JSONObject.quote(tab.getUrl()) + ")return [];return "
+                + script + ";})()", result::accept);
+    }
+
+    private static JSONArray mediaSnapshot(String value) {
+        if (value == null || value.length() > PageMessageGate.MAX_MESSAGE || !value.startsWith("[")
+                || !PageMessageGate.shallowObject("{\"items\":" + value + "}")) return null;
+        try { return new JSONArray(value); } catch (org.json.JSONException ignored) { return null; }
+    }
+
     private void updateFabVideoDownload(int count) {
         if (fabVideoDownload == null) return;
-        boolean enabled = SettingsActivity.isFloatingDownloadButtonEnabled(this);
-        if (!enabled || isCurrentTabOnHomePage()) {
+        if (!videoDiscoveryEnabled || discoveryPage == null || customVideoView != null || isCurrentTabOnHomePage()) {
             fabVideoDownload.setVisibility(View.GONE);
             return;
         }
@@ -661,19 +926,19 @@ public class MainActivity extends Activity {
 
         btnFindPrev.setOnClickListener(v -> {
             TabModel active = tabsManager.getActiveTab();
-            if (active != null) active.getWebView().findNext(false);
+            if (active != null && active.getWebView() != null) active.getWebView().findNext(false);
         });
 
         btnFindNext.setOnClickListener(v -> {
             TabModel active = tabsManager.getActiveTab();
-            if (active != null) active.getWebView().findNext(true);
+            if (active != null && active.getWebView() != null) active.getWebView().findNext(true);
         });
 
         btnFindClose.setOnClickListener(v -> {
             findBar.setVisibility(View.GONE);
             showTopBar(true);
             TabModel active = tabsManager.getActiveTab();
-            if (active != null) active.getWebView().clearMatches();
+            if (active != null && active.getWebView() != null) active.getWebView().clearMatches();
             dismissKeyboard();
         });
     }
@@ -832,34 +1097,235 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void initTabs() {
-        tabsManager = new TabsManager();
-        tabsManager.setListener(new TabsManager.TabChangeListener() {
-            @Override
-            public void onTabSwitched(TabModel tab) {
-                if (customVideoView != null) {
-                    hideFullscreenVideo();
-                }
-                showTopBar(false);
-                attachTabToView(tab);
-                saveSession();
+    private void initTabs(TabSessionWriter journal) {
+        sessionWriter = journal;
+        TabSessionWriter.Restore saved = sessionWriter.open();
+        sessionOwner = saved.owner;
+        session = new TabSessionCheckpoint<>(NativeTabSession.scheduler(), new TabSessionCheckpoint.Source<TabModel>() {
+            @Override public TabSession.Row metadata(TabModel tab) {
+                return TabSession.regular(tab.getId(), tab.sessionUrl(), tab.getTitle(), tab.isDesktopMode(),
+                        tab.navigation.rendererLost(), tab.isIncognito());
             }
 
-            @Override
-            public void onTabCountChanged(int count) {
+            @Override public TabSessionCheckpoint.History history(TabModel tab, TabSession.Row row) {
+                PrivacyWebView view = tab.getWebView();
+                if (!sessionWritable() || tab.isIncognito() || !row.url.equals(tab.getUrl())
+                        || !tab.navigation.canSaveHistory() || !currentPage(tab, view, tab.navigation.page(), false)) return null;
+                return NativeTabSession.history(view, row.url);
+            }
+
+            @Override public byte[] save(TabModel tab, TabSession.Row row, TabSessionCheckpoint.History expected) {
+                return NativeTabSession.capture(tab.getWebView(), row.url, expected);
+            }
+        }, frame -> sessionWriter.submit(sessionOwner, frame));
+
+        lazyRestore = new LazyTabRestore<>((row, done) -> NativeTabSession.readState(sessionWriter, sessionOwner, row, done),
+                this::materializeRestoredTab);
+        tabsManager.setListener(new TabsManager.TabChangeListener() {
+            @Override public void onTabSwitched(TabModel tab) {
+                Trace.beginSection("Browser.tabs.switch");
+                try {
+                    if (sessionWritable()) session.select(regularTabId(tab));
+                    if (customVideoView != null) hideFullscreenVideo();
+                    showTopBar(false);
+                    attachTabToView(tab);
+                    refreshTabGrid();
+                    tabResourcesChanged();
+                } finally {
+                    Trace.endSection();
+                }
+            }
+
+            @Override public void onTabCountChanged(int count) {
                 btnTabs.setText(String.valueOf(count));
-                saveSession();
+                sessionTabsChanged();
+                refreshTabGrid();
+                tabResourcesChanged();
+            }
+
+            @Override public void onTabClosed(TabModel tab) {
+                tabPreviews.remove(tab);
+                if (discoveryOwner == tab) stopMediaDiscovery();
+                if (fullscreenOwner != null && fullscreenOwner == tab.getWebView()) hideFullscreenVideo();
+                if (displayedTab == tab) {
+                    lazyRestore.cancel();
+                    dismissPageContextMenu();
+                    dismissComicDownload();
+                    cancelPicker(tab);
+                }
             }
         });
 
-        restoreSessionOrInit();
+        tabsManager.restoreIndex(saved.index);
+        for (int i = 0; i < saved.index.tabs.size(); i++) {
+            session.restore(tabsManager.getTabs().get(i), saved.index.tabs.get(i), null);
+        }
+        startupReady = true;
+        setBrowserControlsReady(true);
+        // Resolve any launch link before touching the previous selection's WebView or history blob.
+        Intent launch = pendingLaunch;
+        pendingLaunch = null;
+        handleIncomingIntent(launch);
+        if (tabsManager.getTabCount() == 0) {
+            String home = getDefaultHomeUrl();
+            loadInTab(tabsManager.createTab(this, home), home);
+        } else if (displayedTab != activeTab()) {
+            attachTabToView(activeTab());
+        }
+        btnTabs.setText(String.valueOf(tabsManager.getTabCount()));
+        sessionTabsChanged();
+        scheduleResumeWork();
+    }
+
+    private static String regularTabId(TabModel tab) {
+        return tab == null || tab.isIncognito() ? null : tab.getId();
+    }
+
+    private boolean sessionWritable() {
+        return !disposing && !replacingSession && session != null && sessionWriter.owns(sessionOwner);
+    }
+
+    private void sessionTabsChanged() {
+        if (sessionWritable()) session.tabsChanged(tabsManager.getTabs(), regularTabId(activeTab()));
+    }
+
+    private void sessionMetadataChanged(TabModel tab) {
+        if (sessionWritable()) session.metadataChanged(tab);
+    }
+
+    private void sessionHistoryChanged(TabModel tab, PrivacyWebView view, String eventUrl) {
+        if (sessionWritable() && !tab.isIncognito() && eventUrl != null && eventUrl.equals(tab.getUrl())
+                && currentPage(tab, view, tab.navigation.page(), false)) session.historyChanged(tab);
+    }
+
+    private void checkpointSession() {
+        if (sessionWritable()) session.checkpointNow();
+    }
+
+    private boolean isLivePinned(TabModel tab) {
+        // Fullscreen belongs to the selected view; switching exits it, not background-pins it.
+        return tab.keepLive || tab.hasPageTransfer();
+    }
+
+    private PrivacyWebView allocateTabView(Context context) {
+        // Normal excess is drained outside the switch. If a burst consumes the one-view
+        // headroom before then, make room for this allocation first.
+        if (sessionWritable()) {
+            TabModel selected = activeTab();
+            boolean selectedCounts = selected != null && selected.getWebView() != null && !isLivePinned(selected);
+            int limit = TabViewBudget.inactiveBeforeAllocation(selectedCounts);
+            TabModel victim;
+            while ((victim = tabsManager.evictionTarget(limit, this::isLivePinned)) != null) {
+                if (!parkInactiveTab(victim, true)) break;
+            }
+        }
+        return PrivacyWebView.createTabView(context);
+    }
+
+    private boolean parkInactiveTab(TabModel tab, boolean preserveHistory) {
+        PrivacyWebView view = tab.getWebView();
+        if (tab == activeTab() || view == null || !sessionWritable() || (preserveHistory && isLivePinned(tab))) return false;
+        Trace.beginSection("Browser.tabs.evict");
+        try {
+            if (preserveHistory) {
+                tabPreviews.cancel(tab); // a previous snapshot can represent the parked row
+            } else {
+                // A rule change must retire the old page and history even if pinned.
+                tabPreviews.remove(tab);
+                session.forgetHistory(tab);
+            }
+            TabSession.Row row = session.checkpointForEviction(tab);
+            if (row == null || tab == activeTab()) return false;
+            if (!row.url.equals(tab.getUrl())) tabPreviews.remove(tab);
+            if (!tab.park(view, row)) return false;
+            traceTabResources();
+            refreshTabGrid();
+            return true;
+        } finally { Trace.endSection(); }
+    }
+
+    private void traceTabResources() {
+        if (tabsManager != null && Build.VERSION.SDK_INT >= 29 && Trace.isEnabled()) {
+            Trace.setCounter("Browser.tabs.liveViews", TabViewBudget.count(tabsManager.getTabs(), tab -> tab.getWebView() != null));
+        }
+    }
+
+    private void tabResourcesChanged() {
+        traceTabResources();
+        scheduleTabTrim();
+    }
+
+    private void scheduleTabTrim() {
+        if (trimPosted || !sessionWritable() || isFinishing()) return;
+        if (tabsManager.evictionTarget(inactiveTarget, this::isLivePinned) == null) {
+            inactiveTarget = TabViewBudget.INACTIVE;
+            return;
+        }
+        trimPosted = tabResourceWork.postDelayed(trimTabs, TAB_TRIM_DELAY_MS);
+    }
+
+    private void trimNextInactiveTab() {
+        trimPosted = false;
+        if (!sessionWritable() || isFinishing()) return;
+        TabModel victim = tabsManager.evictionTarget(inactiveTarget, this::isLivePinned);
+        if (victim != null && parkInactiveTab(victim, true)) scheduleTabTrim();
+        else inactiveTarget = TabViewBudget.INACTIVE;
+    }
+
+    private void cancelTabTrim() {
+        tabResourceWork.removeCallbacks(trimTabs);
+        trimPosted = false;
+        inactiveTarget = TabViewBudget.INACTIVE;
+    }
+
+    private void trimTabMemory() {
+        tabPreviews.clear();
+        refreshTabGrid();
+        cancelTabTrim();
+        inactiveTarget = 0;
+        scheduleTabTrim();
+    }
+
+    @Override public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW && !disposing) trimTabMemory();
+    }
+
+    @Override public void onLowMemory() {
+        super.onLowMemory();
+        if (!disposing) trimTabMemory();
+    }
+
+    private void scheduleTabPreview(TabModel tab) {
+        if (tab == null || tab != activeTab() || !resumed || disposing || tabGrid != null
+                || tab.isIncognito() || !tab.navigation.canPreview() || InternalHome.ownsHost(tab.getUrl())
+                || RequestContext.origin(tab.getUrl()) == null) return;
+        PrivacyWebView view = tab.getWebView();
+        TabNavigation.Page page = tab.navigation.page();
+        tabPreviews.schedule(tab, view, page, getWindow(), () -> tabGrid == null && customVideoView == null
+                && hasWindowFocus() && !editUrl.hasFocus() && !viewAddressScrim.isShown()
+                && !omniboxContainer.isShown() && !findBar.isShown()
+                && (toolbarSnapAnimator == null || !toolbarSnapAnimator.isRunning())
+                && !BrowserDataCleaner.inProgress() && sessionWritable() && tab.navigation.canPreview()
+                && view.getParent() == webViewContainer && currentPage(tab, view, page, true));
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus) {
+            hideOmniboxSuggestions();
+            tabPreviews.cancel();
+        }
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        handleIncomingIntent(intent);
+        if (disposing || isFinishing()) return;
+        if (!startupReady) pendingLaunch = intent;
+        else if (sessionWritable()) handleIncomingIntent(intent);
     }
 
     private String extractUrlFromIntent(Intent intent) {
@@ -910,428 +1376,436 @@ public class MainActivity extends Activity {
 
     private void handleIncomingIntent(Intent intent) {
         if (intent == null) return;
+        if (intent.getBooleanExtra(EXTRA_OPEN_IN_INCOGNITO, false)) {
+            setIntent(new Intent(this, MainActivity.class));
+            explainPrivateUnavailable();
+            return;
+        }
 
-        // Check for AI Automation Recipe execution
-        String recipeJson = intent.getStringExtra("automation_recipe_json");
-        if (recipeJson != null && !recipeJson.trim().isEmpty()) {
-            String autoTitle = intent.getStringExtra("automation_title");
-            android.widget.Toast.makeText(this, "Executing Automation: " + (autoTitle != null ? autoTitle : "Routine"), android.widget.Toast.LENGTH_SHORT).show();
-            TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-            android.webkit.WebView wv = active != null ? active.getWebView() : null;
-            com.privacy.browser.ai.ToolDispatcher dispatcher = new com.privacy.browser.ai.ToolDispatcher(this);
-            dispatcher.setCurrentWebView(wv);
-            dispatcher.setActivityAndTabs(this, tabsManager);
-            com.privacy.browser.ai.AutomationRecipeRunner runner = new com.privacy.browser.ai.AutomationRecipeRunner(this, dispatcher, wv);
-            runner.runRecipe(recipeJson, null);
+        if (rejectExternalRecipe(intent)) {
+            setIntent(new Intent(this, MainActivity.class));
             return;
         }
 
         String directUrl = intent.getStringExtra(EXTRA_LOAD_URL);
-        if (directUrl != null && !directUrl.trim().isEmpty()) {
-            boolean openInNewTab = intent.getBooleanExtra(EXTRA_OPEN_IN_NEW_TAB, false);
-            boolean openInIncognito = intent.getBooleanExtra(EXTRA_OPEN_IN_INCOGNITO, false);
-            if (openInIncognito) {
-                TabModel tab = tabsManager.createTab(this, directUrl, true);
-                setupClientsForTab(tab);
-                tab.getWebView().loadUrl(directUrl);
-            } else if (openInNewTab || tabsManager.getTabCount() == 0) {
-                TabModel tab = tabsManager.createTab(this, directUrl);
-                setupClientsForTab(tab);
-                tab.getWebView().loadUrl(directUrl);
-            } else {
-                TabModel active = tabsManager.getActiveTab();
-                if (active != null) {
-                    active.setUrl(directUrl);
-                    active.getWebView().loadUrl(directUrl);
-                } else {
-                    TabModel tab = tabsManager.createTab(this, directUrl);
-                    setupClientsForTab(tab);
-                    tab.getWebView().loadUrl(directUrl);
-                }
-            }
-            saveSession();
+        boolean direct = directUrl != null && !directUrl.trim().isEmpty();
+        String url = navigationTarget(direct ? directUrl : extractUrlFromIntent(intent));
+        if (url == null) return;
+
+        if (!direct && isDownloadableUrl(url)) {
+            DownloadPromptDialog.show(this, url, RequestContext.anonymous(), null, null, -1);
             return;
         }
+        dismissTabGrid();
+        // Don't instantiate a view for an invalid link or restore the previous selection
+        // before an admitted link has decided which tab will be visible.
+        TabModel target = direct && !intent.getBooleanExtra(EXTRA_OPEN_IN_NEW_TAB, false) ? activeTab() : null;
+        if (target == null) target = tabsManager.createTab(this, url);
+        loadInTab(target, url);
+    }
 
-        String incomingUrl = extractUrlFromIntent(intent);
-        if (incomingUrl == null) return;
+    static String navigationTarget(String candidate) {
+        if (candidate == null) return null;
+        String url = InternalHome.migrate(candidate.trim());
+        return "about:blank".equals(url) || (RequestContext.origin(url) != null
+                && (!InternalHome.ownsHost(url) || InternalHome.isHome(url))) ? url : null;
+    }
 
-        if (isDownloadableUrl(incomingUrl)) {
-            String cookies = CookieManager.getInstance().getCookie(incomingUrl);
-            DownloadPromptDialog.show(this, incomingUrl, null, null, null, cookies, null, null);
+    private boolean rejectExternalRecipe(Intent intent) {
+        if (intent == null || !intent.hasExtra("automation_recipe_json")) return false;
+        Toast.makeText(this, "Recipe intent blocked. Review recipes manually in the Agent menu.", Toast.LENGTH_LONG).show();
+        return true;
+    }
+
+    private void materializeRestoredTab(TabModel tab, TabSession.Row row, TabSession.StateRead result) {
+        if (!resumed || isFinishing() || !sessionWritable() || activeTab() != tab
+                || tab.recovery() != row || tab.getWebView() != null) return;
+        tab.discardRecovery();
+        PrivacyWebView view = allocateTabView(this);
+        tab.navigation.replaceView(view);
+        tabResourcesChanged();
+        applyDesktopMode(tab);
+        setupClientsForTab(tab);
+        ThemeManager.applyWebTheme(view, row.url);
+        TabSessionCheckpoint.History history = null;
+        if (result.bytes != null) {
+            Trace.beginSection("Browser.tabs.nativeRestore");
+            try { history = NativeTabSession.restore(view, result.bytes, row.url); }
+            finally { Trace.endSection(); }
+            if (history == null) {
+                // A rejected provider bundle may have mutated its view. Do not load on top of it.
+                rebuildPolicyView(tab, view);
+                tab.navigation.seedRestoredUrl(row.url);
+                tab.setTitle(row.title);
+            }
+        }
+        if (history != null) {
+            session.restore(tab, row, history);
+            displayTab(tab);
         } else {
-            TabModel tab = tabsManager.createTab(this, incomingUrl);
-            setupClientsForTab(tab);
-            tab.getWebView().loadUrl(incomingUrl);
-            saveSession();
+            session.forgetHistory(tab);
+            if (tab.getWebView() == view) displayTab(tab); // rebuilt views are already attached
+            Trace.beginSection("Browser.tabs.urlFallback");
+            Trace.beginSection(result.status == TabSession.StateRead.Status.LOADED ? "Browser.tabs.stateRejected"
+                    : result.status == TabSession.StateRead.Status.MISSING ? "Browser.tabs.stateMissing"
+                    : result.status == TabSession.StateRead.Status.CORRUPT ? "Browser.tabs.stateCorrupt" : "Browser.tabs.urlOnly");
+            try { loadInTab(tab, row.url); }
+            finally { Trace.endSection(); Trace.endSection(); }
         }
     }
 
-    private void restoreSessionOrInit() {
-        Intent intent = getIntent();
+    private TabModel activeTab() {
+        return tabsManager == null ? null : tabsManager.getActiveTab();
+    }
 
-        // Check for AI Automation Recipe execution on cold launch
-        String recipeJson = intent != null ? intent.getStringExtra("automation_recipe_json") : null;
-        if (recipeJson != null && !recipeJson.trim().isEmpty()) {
-            String autoTitle = intent.getStringExtra("automation_title");
-            android.widget.Toast.makeText(this, "Executing Automation: " + (autoTitle != null ? autoTitle : "Routine"), android.widget.Toast.LENGTH_SHORT).show();
-            TabModel tab = tabsManager.createTab(this, DEFAULT_HOME_URL);
-            setupClientsForTab(tab);
-            android.webkit.WebView wv = tab.getWebView();
-            com.privacy.browser.ai.ToolDispatcher dispatcher = new com.privacy.browser.ai.ToolDispatcher(this);
-            dispatcher.setCurrentWebView(wv);
-            dispatcher.setActivityAndTabs(this, tabsManager);
-            com.privacy.browser.ai.AutomationRecipeRunner runner = new com.privacy.browser.ai.AutomationRecipeRunner(this, dispatcher, wv);
-            runner.runRecipe(recipeJson, null);
-            saveSession();
-            return;
-        }
+    private boolean foreground(TabModel tab, PrivacyWebView view) {
+        return resumed && !disposing && !isFinishing() && tab == activeTab() && tab.navigation.owns(view);
+    }
 
-        String directUrl = intent != null ? intent.getStringExtra(EXTRA_LOAD_URL) : null;
-        String incomingUrl = extractUrlFromIntent(intent);
-
-        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        String savedTabsJson = prefs.getString(KEY_SAVED_TABS, null);
-        int savedActiveIdx = prefs.getInt(KEY_ACTIVE_TAB, 0);
-
-        boolean restored = false;
-        if (savedTabsJson != null) {
-            try {
-                JSONArray array = new JSONArray(savedTabsJson);
-                if (array.length() > 0) {
-                    isRestoringSession = true;
-                    try {
-                        for (int i = 0; i < array.length(); i++) {
-                            JSONObject obj = array.getJSONObject(i);
-                            String url = obj.optString("url", DEFAULT_HOME_URL);
-                            if (url == null || url.trim().isEmpty() || "about:blank".equals(url)) {
-                                url = getDefaultHomeUrl();
-                            }
-                            String title = obj.optString("title", "New Tab");
-                            if (title == null || title.trim().isEmpty()) {
-                                title = "New Tab";
-                            }
-                            boolean desktop = obj.optBoolean("desktop", false);
-
-                            TabModel tab = tabsManager.createTab(this, url, false, true);
-                            tab.setTitle(title);
-                            tab.setDesktopMode(desktop);
-                            if (desktop) {
-                                tab.getWebView().getSettings().setUserAgentString(DESKTOP_UA);
-                                tab.getWebView().getSettings().setUseWideViewPort(true);
-                                tab.getWebView().getSettings().setLoadWithOverviewMode(true);
-                            }
-                            setupClientsForTab(tab);
-
-                            boolean stateRestored = false;
-                            String stateFileName = obj.optString("state_file", null);
-                            if (stateFileName != null) {
-                                File stateFile = new File(new File(getFilesDir(), "saved_tabs"), stateFileName);
-                                if (stateFile.exists()) {
-                                    try (FileInputStream fis = new FileInputStream(stateFile)) {
-                                        byte[] bytes = new byte[(int) stateFile.length()];
-                                        int read = fis.read(bytes);
-                                        if (read > 0) {
-                                            Parcel parcel = Parcel.obtain();
-                                            parcel.unmarshall(bytes, 0, bytes.length);
-                                            parcel.setDataPosition(0);
-                                            Bundle stateBundle = Bundle.CREATOR.createFromParcel(parcel);
-                                            parcel.recycle();
-
-                                            WebBackForwardList restoredList = tab.getWebView().restoreState(stateBundle);
-                                            if (restoredList != null && restoredList.getSize() > 0) {
-                                                WebHistoryItem cur = restoredList.getCurrentItem();
-                                                if (cur != null && cur.getUrl() != null && !cur.getUrl().isEmpty() && !"about:blank".equals(cur.getUrl())) {
-                                                    stateRestored = true;
-                                                }
-                                            }
-                                        }
-                                    } catch (Exception e) {
-                                        Log.w("MainActivity", "Failed restoring tab state: " + e.getMessage());
-                                    }
-                                }
-                            }
-
-                            if (!stateRestored) {
-                                tab.getWebView().loadUrl(url);
-                            }
-                        }
-
-                        if (tabsManager.getTabCount() > 0) {
-                            int targetIdx = Math.max(0, Math.min(savedActiveIdx, tabsManager.getTabCount() - 1));
-                            tabsManager.switchTab(targetIdx);
-                            restored = true;
-                        }
-                    } finally {
-                        isRestoringSession = false;
-                    }
-                }
-            } catch (JSONException ignored) {}
-        }
-
-        if (directUrl != null && !directUrl.trim().isEmpty()) {
-            boolean openInNewTab = intent != null && intent.getBooleanExtra(EXTRA_OPEN_IN_NEW_TAB, false);
-            boolean openInIncognito = intent != null && intent.getBooleanExtra(EXTRA_OPEN_IN_INCOGNITO, false);
-            if (openInIncognito) {
-                TabModel tab = tabsManager.createTab(this, directUrl, true);
-                setupClientsForTab(tab);
-                tab.getWebView().loadUrl(directUrl);
-            } else if (openInNewTab || !restored) {
-                TabModel tab = tabsManager.createTab(this, directUrl);
-                setupClientsForTab(tab);
-                tab.getWebView().loadUrl(directUrl);
-            } else {
-                TabModel active = tabsManager.getActiveTab();
-                if (active != null) {
-                    active.setUrl(directUrl);
-                    active.getWebView().loadUrl(directUrl);
-                } else {
-                    TabModel tab = tabsManager.createTab(this, directUrl);
-                    setupClientsForTab(tab);
-                    tab.getWebView().loadUrl(directUrl);
-                }
-            }
-            saveSession();
-            return;
-        }
-
-        if (incomingUrl != null) {
-            if (isDownloadableUrl(incomingUrl)) {
-                String cookies = CookieManager.getInstance().getCookie(incomingUrl);
-                DownloadPromptDialog.show(this, incomingUrl, null, null, null, cookies, null, null);
-            } else {
-                TabModel tab = tabsManager.createTab(this, incomingUrl);
-                setupClientsForTab(tab);
-                tab.getWebView().loadUrl(incomingUrl);
-            }
-            saveSession();
-            return;
-        }
-
-        if (!restored) {
-            // Fallback to fresh initial tab
-            String home = getDefaultHomeUrl();
-            TabModel tab = tabsManager.createTab(this, home);
-            setupClientsForTab(tab);
-            tab.getWebView().loadUrl(home);
-            saveSession();
-        } else {
-            saveSession();
-        }
-
-        if (incomingUrl != null && isDownloadableUrl(incomingUrl)) {
-            String cookies = CookieManager.getInstance().getCookie(incomingUrl);
-            DownloadPromptDialog.show(this, incomingUrl, null, null, null, cookies, null, null);
-        }
+    private boolean currentPage(TabModel tab, PrivacyWebView view, TabNavigation.Page page, boolean requireForeground) {
+        return !disposing && tab.navigation.owns(view) && (!requireForeground || foreground(tab, view))
+                && tab.navigation.current(view, page, view.getUrl());
     }
 
     private void attachTabToView(TabModel tab) {
+        if (needsScriptPolicyRefresh(tab)) restartPolicyTab(tab);
+        else displayTab(tab);
+    }
+
+    private void displayTab(TabModel tab) {
+        if (displayedTab != tab) {
+            stopMediaDiscovery();
+            if (editUrl.hasFocus()) dismissKeyboard();
+            tabPreviews.cancel();
+            assistantForegroundEpoch++;
+            dismissPageContextMenu();
+            dismissComicDownload();
+            cancelPicker(displayedTab);
+            hideFullscreenVideo();
+        }
+        displayedTab = tab;
         hideOmniboxSuggestions();
         webViewContainer.removeAllViews();
         PrivacyWebView webView = tab.getWebView();
+        TabSession.Row recovery = tab.recovery();
+        if (webView != null) {
+            tabsManager.touchView(tab);
+            setupClientsForTab(tab);
+            ThemeManager.applyWebTheme(webView, tab.getUrl());
+            webView.applyPageZoom();
+            webViewContainer.addView(webView, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            tab.messages.activateHome();
+        } else if (recovery != null) {
+            showTabStatus(getString(R.string.browser_restoring_tab), 0, null);
+        } else {
+            showTabStatus(getString(R.string.renderer_lost_message), R.string.renderer_restore_tab, () -> restoreLostTab(tab));
+        }
+        if (agentBottomSheet != null) {
+            agentBottomSheet.pageChanged();
+            markAssistantDocument(tab);
+        }
+        renderChrome(tab);
+        syncMediaDiscovery(tab, tab.navigation.target(), tab.navigation.finished());
+        updateFloatingActionButtonsForActiveTab();
+        requestSelectedRestore();
+        scheduleTabPreview(tab);
+    }
 
-        // Configure Clients & Protection Shims
+    private void requestSelectedRestore() {
+        TabModel selected = activeTab();
+        if (resumed && sessionWritable() && selected != null && selected.getWebView() == null) {
+            lazyRestore.select(selected, selected.recovery());
+        } else if (lazyRestore != null) {
+            lazyRestore.cancel();
+        }
+    }
+
+    /** Browser-owned scope. A cached URL or a restored-but-uncommitted page is not authority. */
+    @Nullable public AssistantApproval.Page assistantPage() {
+        TabModel tab = activeTab();
+        if (tab == null || tab.isIncognito()) return null;
+        PrivacyWebView view = tab.getWebView();
+        TabNavigation.Page page = tab.navigation.page();
+        String url = tab.getUrl();
+        if (!currentPage(tab, view, page, true) || RequestContext.origin(url) == null) return null;
+        return new AssistantApproval.Page(assistantActivityIdentity, tab.getId(), page.key, assistantForegroundEpoch, url);
+    }
+
+    private void markAssistantDocument(TabModel tab) {
+        if (agentBottomSheet == null || tab == null || tab != activeTab() || assistantPage() == null) return;
+        PrivacyWebView view = tab.getWebView();
+        if (!allowsPageScripts(tab, view) || InternalHome.ownsHost(tab.getUrl())) return;
+        // Defense in depth for asynchronous evaluation; native review and ownership do not trust this marker.
+        view.evaluateJavascript(InternalHome.guardExternalPage(tab.getUrl(), "document.__privacyAssistantDocument="
+                + JSONObject.quote(tab.navigation.page().key) + ";"), null);
+    }
+
+    public boolean evaluateApprovedAssistantScript(AssistantApproval.Page expected, String body, android.webkit.ValueCallback<String> callback) {
+        if (!expected.matches(assistantPage()) || InternalHome.ownsHost(expected.url)) return false;
+        TabModel tab = activeTab();
+        PrivacyWebView view = tab.getWebView();
+        if (!allowsPageScripts(tab, view)) return false;
+        view.evaluateJavascript(InternalHome.guardExternalPage(expected.url,
+                "if(document.__privacyAssistantDocument!==" + JSONObject.quote(tab.navigation.page().key) + ")return;\n" + body), callback);
+        return true;
+    }
+
+    public boolean openApprovedAssistantLink(AssistantApproval.Page expected, String url, boolean newTab) {
+        if (!expected.matches(assistantPage()) || RequestContext.origin(url) == null || InternalHome.ownsHost(url)) return false;
+        TabModel target = newTab ? tabsManager.createTab(this, url) : activeTab();
+        loadInTab(target, url);
+        return true;
+    }
+
+    public boolean reloadApprovedAssistantPage(AssistantApproval.Page expected) {
+        if (!expected.matches(assistantPage())) return false;
+        reloadTab(activeTab());
+        return true;
+    }
+
+    public String assistantTitle(AssistantApproval.Page expected) {
+        if (!expected.matches(assistantPage())) return "";
+        String title = activeTab().getTitle();
+        return title == null ? "" : title.substring(0, Math.min(256, title.length()));
+    }
+
+    public void refreshApprovedRules() { refreshScriptPolicies(null); }
+
+    private void restoreLostTab(TabModel tab) {
+        if (tab != activeTab() || !tab.navigation.rendererLost() || disposing) return;
+        loadInTab(tab, tab.getUrl() == null ? DEFAULT_HOME_URL : tab.getUrl());
+    }
+
+    private void loadInTab(TabModel tab, String url) {
+        if (!startupReady || isFinishing() || !sessionWritable() || tab == null) return;
+        url = navigationTarget(url);
+        if (url == null) return;
+        PrivacyWebView view = tab.getWebView();
+        if (needsScriptPolicyRefresh(tab)) view = rebuildPolicyView(tab, view);
+        if (view == null) {
+            if (tab != activeTab() || (tab.recovery() == null && !tab.navigation.rendererLost())) return;
+            lazyRestore.cancel();
+            if (tab.recovery() != null) {
+                // A direct navigation replaces dormant history instead of requesting the old page first.
+                tab.discardRecovery();
+                session.forgetHistory(tab);
+            }
+            view = allocateTabView(this);
+            tab.navigation.replaceView(view);
+            tabResourcesChanged();
+            applyDesktopMode(tab);
+            attachTabToView(tab);
+        }
         setupClientsForTab(tab);
+        startNavigation(tab, view, url);
+        Trace.beginSection("Browser.tabs.navigate");
+        try { view.loadUrl(url); } finally { Trace.endSection(); }
+    }
 
-        // Configure per-site JavaScript (NoScript)
-        boolean jsEnabled = com.privacy.browser.adblock.AdBlockManager.getInstance(this).isSiteJavaScriptEnabled(tab.getUrl());
-        webView.getSettings().setJavaScriptEnabled(jsEnabled);
+    private void reloadTab(TabModel tab) {
+        if (tab == null || !resumed || disposing || isFinishing() || refreshScriptPolicies(tab)) return;
+        PrivacyWebView view = tab.getWebView();
+        if (view == null) return;
+        startNavigation(tab, view, tab.getUrl());
+        view.reload();
+    }
 
-        webViewContainer.addView(webView, new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    private void navigateHistory(TabModel tab, int offset) {
+        if (tab == null || tab != activeTab()) return;
+        PrivacyWebView view = tab.getWebView();
+        if (view == null || !view.canGoBackOrForward(offset)) return;
+        android.webkit.WebBackForwardList history = view.copyBackForwardList();
+        android.webkit.WebHistoryItem target = history.getItemAtIndex(history.getCurrentIndex() + offset);
+        startNavigation(tab, view, target == null ? null : target.getUrl());
+        view.goBackOrForward(offset);
+    }
 
-        editUrl.clearFocus();
-        displayFormattedUrl(tab.getUrl());
+    private boolean allowsPageScripts(TabModel tab, PrivacyWebView view) {
+        return tab.navigation.owns(view) && tab.scriptPolicy != null && tab.scriptPolicy.allowsScripts(view);
+    }
 
-        int iconRes = tab.isIncognito() ? R.drawable.ic_incognito : R.drawable.ic_shield;
-        blockedTrackerCount = com.privacy.browser.adblock.AdBlockManager.getInstance(this).getPageBlockedCount(tab.getId());
-        btnShield.setCompoundDrawablesWithIntrinsicBounds(iconRes, 0, 0, 0);
-        btnShield.setText(String.valueOf(blockedTrackerCount));
+    private PrivacyWebView rebuildPolicyView(TabModel tab, PrivacyWebView oldView) {
+        if (fullscreenOwner == oldView) hideFullscreenVideo();
+        if (tab == activeTab()) {
+            dismissPageContextMenu();
+            dismissComicDownload();
+            cancelPicker(tab);
+        }
+        if (sessionWritable()) session.forgetHistory(tab);
+        tabPreviews.remove(tab);
+        tab.releaseView(oldView, false);
+        PrivacyWebView view = allocateTabView(this);
+        tab.navigation.replaceView(view);
+        tabResourcesChanged();
+        applyDesktopMode(tab);
+        setupClientsForTab(tab);
+        // A worker can publish a new rule revision here. Don't recurse through a policy
+        // refresh that could destroy the very view returned to this navigation.
+        if (tab == activeTab()) displayTab(tab);
+        return view;
+    }
 
-        int detectedCount = MediaSniffer.getMediaForTab(tab.getId()).size();
-        updateFabVideoDownload(detectedCount);
+    private boolean needsScriptPolicyRefresh(TabModel tab) {
+        return tab.getWebView() != null && tab.scriptPolicy != null && !tab.scriptPolicy.isCurrent();
+    }
 
-        com.privacy.browser.comic.ComicManager.ComicItem comicItem =
-                com.privacy.browser.comic.ComicManager.getDetectedComic(tab.getId());
-        updateFabComicDownload(comicItem != null ? comicItem.getPageCount() : 0);
+    private void restartPolicyTab(TabModel tab) {
+        if (tab != activeTab()) {
+            parkInactiveTab(tab, false); // no network or new view until this row is selected
+            return;
+        }
+        String url = InternalHome.migrate(tab.sessionUrl());
+        rebuildPolicyView(tab, tab.getWebView());
+        // Old closures, SPA state and the old back stack can retain injected code. Discard them
+        // and navigate with a GET instead of potentially resubmitting a previous form.
+        loadInTab(tab, RequestContext.origin(url) != null ? url : DEFAULT_HOME_URL);
+    }
+
+    private boolean refreshScriptPolicies(TabModel reloading) {
+        if (!startupReady || !sessionWritable()) return false;
+        long revision = WebScriptPolicy.revision();
+        if (revision == checkedScriptRevision) return false;
+        checkedScriptRevision = revision;
+        boolean alreadyReloaded = false;
+        for (TabModel tab : tabsManager.getTabs()) {
+            if (!needsScriptPolicyRefresh(tab)) continue;
+            restartPolicyTab(tab);
+            alreadyReloaded |= tab == reloading;
+        }
+        return alreadyReloaded;
+    }
+
+    private void cancelPicker(TabModel tab) {
+        if (tab != null && tab.messages != null) {
+            tab.messages.cancelPicker();
+            tab.messages.evaluate("if(window.__cleanupImageSearchPicker)window.__cleanupImageSearchPicker(true);"
+                    + com.privacy.browser.adblock.picker.ElementPickerEngine.getCleanupScript());
+        }
+        if (pagePickerDialog != null) {
+            pagePickerDialog.dismiss();
+            pagePickerDialog = null;
+        }
+    }
+
+    private void invalidatePage(TabModel tab) {
+        if (tab == discoveryOwner) stopMediaDiscovery();
+        TabNavigation.Page oldPage = tab.navigation.page();
+        tab.navigation.abort(tab.getWebView());
+        tab.updatePageScope(oldPage, tab.getWebView());
+        clearPageEndpoints(tab);
+    }
+
+    private void clearPageEndpoints(TabModel tab) {
+        if (tabPreviews.remove(tab)) refreshTabGrid();
+        if (tab.messages != null) tab.messages.invalidate();
+        if (tab.blobDownloads() != null) tab.blobDownloads().onNavigation();
+        if (tab == activeTab()) {
+            dismissVideoOptions();
+            dismissPageContextMenu();
+            dismissComicDownload();
+            cancelPicker(tab);
+            if (customVideoView != null) hideFullscreenVideo();
+            if (agentBottomSheet != null) agentBottomSheet.pageChanged();
+        }
+    }
+
+    private void startNavigation(TabModel tab, PrivacyWebView view, String url) {
+        if (disposing || !tab.navigation.owns(view)) return;
+        if (tab == discoveryOwner) stopMediaDiscovery();
+        TabNavigation.Page oldPage = tab.navigation.page();
+        if (!tab.navigation.start(view, url)) return;
+        WebViewClient client = view.getWebViewClient();
+        if (client instanceof PrivacyWebViewClient) ((PrivacyWebViewClient) client).setNavigationTarget(url);
+        ThemeManager.applyWebTheme(view, url);
+        view.applyPageZoom();
+        tab.updatePageScope(oldPage, view);
+        clearPageEndpoints(tab);
+        if (tab == activeTab()) {
+            if (!editUrl.hasFocus()) showTopBar(false);
+            renderChrome(tab);
+            syncMediaDiscovery(tab, url, false);
+            updateFloatingActionButtonsForActiveTab();
+        }
     }
 
     private void setupClientsForTab(TabModel tab) {
-        if (tab.isInitialized()) {
-            return;
-        }
-        tab.setInitialized(true);
-
         PrivacyWebView webView = tab.getWebView();
+        if (webView == null || tab.isInitialized()) return;
+        tab.setInitialized(true);
+        tab.scriptPolicy = new WebScriptPolicy(webView);
 
-        // 0. Attach Real-Time Video Sniffer JS Bridge
-        webView.addJavascriptInterface(new PrivacyVideoSnifferBridge(new PrivacyVideoSnifferBridge.VideoCallback() {
-            @Override
-            public void onVideoDetected(String pageUrl, String title, String videoSrc) {
-                MediaSniffer.inspectVideoElement(tab.getId(), pageUrl, title, videoSrc);
-            }
-
-            @Override
-            public void onPageUrlChanged(String pageUrl, String title) {
-                runOnUiThread(() -> {
-                    if (pageUrl == null || pageUrl.isEmpty()) return;
-                    String prevUrl = tab.getUrl();
-                    tab.setUrl(pageUrl);
-                    if (title != null && !title.isEmpty()) {
-                        tab.setTitle(title);
-                    }
-                    if (!editUrl.hasFocus()) {
-                        displayFormattedUrl(pageUrl);
-                    }
-                    saveSession();
-
-                    boolean isSameVideo = false;
-                    if (prevUrl != null) {
-                        String prevVid = MediaSniffer.extractVideoId(prevUrl);
-                        String newVid = MediaSniffer.extractVideoId(pageUrl);
-                        if (prevVid != null && prevVid.equals(newVid)) {
-                            isSameVideo = true;
-                        } else if (prevUrl.equals(pageUrl)) {
-                            isSameVideo = true;
-                        }
-                    }
-
-                    if (!isSameVideo) {
-                        MediaSniffer.clearTab(tab.getId());
-                        updateFabVideoDownload(0);
-                    }
-
-                    String newVid = MediaSniffer.extractVideoId(pageUrl);
-                    if (newVid != null) {
-                        if (MediaSniffer.isVimeoUrl(pageUrl)) {
-                            MediaSniffer.resolveVimeoFromUrl(tab.getId(), pageUrl, title, null);
-                        } else if (MediaSniffer.isYouTubeUrl(pageUrl)) {
-                            MediaSniffer.resolveYouTubeFromUrl(tab.getId(), pageUrl, title, null);
-                        }
-                    }
-                });
-            }
-
-            @Override
-            public void onYouTubePlayerResponse(String pageUrl, String title, String jsonResponse) {
-                MediaSniffer.parseYouTubeData(tab.getId(), pageUrl, title, jsonResponse);
-            }
-        }), "PrivacyVideoSniffer");
-
-        // 1. Attach Anti-Fingerprinting Suite (document_start shims & bridge)
         webView.setToolbarCoordinator(new PrivacyWebView.ToolbarCoordinator() {
-            @Override
-            public boolean isToolbarLocked() {
-                TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-                if (active == null || active.getWebView() != webView) return true;
-                return isTopBarLocked();
+            @Override public boolean isToolbarLocked() {
+                return !foreground(tab, webView) || isTopBarLocked();
             }
-
-            @Override
-            public int getToolbarHeight() {
-                return getToolbarHeightPx();
+            @Override public int getToolbarHeight() { return getToolbarHeightPx(); }
+            @Override public float onToolbarDrag(float deltaY) {
+                return foreground(tab, webView) ? handleToolbarDrag(deltaY) : 0f;
             }
-
-            @Override
-            public float onToolbarDrag(float deltaY) {
-                TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-                if (active == null || active.getWebView() != webView) return 0f;
-                return handleToolbarDrag(deltaY);
+            @Override public void onToolbarRelease() {
+                if (foreground(tab, webView)) handleToolbarRelease();
             }
-
-            @Override
-            public void onToolbarRelease() {
-                TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-                if (active == null || active.getWebView() != webView) return;
-                handleToolbarRelease();
-            }
-
-            @Override
-            public void cancelToolbarAnimation() {
-                cancelTopBarAnimation();
+            @Override public void cancelToolbarAnimation() {
+                if (foreground(tab, webView)) cancelTopBarAnimation();
             }
         });
-
         webView.setOnScrollListener((view, scrollX, scrollY, oldScrollX, oldScrollY) -> {
-            TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-            if (active != null && active.getWebView() == view) {
-                handlePageScroll(scrollY, oldScrollY);
-            }
+            if (foreground(tab, webView)) handlePageScroll(scrollY, oldScrollY);
         });
+        tab.messages = new TabPageMessages(webView, !tab.isIncognito() && allowsPageScripts(tab, webView),
+                page -> currentPage(tab, webView, page, false) && allowsPageScripts(tab, webView),
+                (page, kind, payload, reply) -> receivePageMessage(tab, webView, page, kind, payload, reply));
 
-        FingerprintDefenseManager.attach(this, webView, apiType -> {
-            updateBlockedCounter(1);
-        });
-
-        // 1b. Attach Document-Start Cosmetic Ad Pruner, Anti-Adblock Defuser, YouTube Defuser & Popup Defuser
-        com.privacy.browser.adblock.AntiAdblockDefuser.attachDocumentStart(this, webView);
-        com.privacy.browser.adblock.YouTubeAdDefuser.attachDocumentStart(this, webView);
-        com.privacy.browser.adblock.PopupClickDefuser.attachDocumentStart(this, webView);
-
-        // 2. Attach WebChromeClient for Progress & Popup Interception
         webView.getSettings().setSupportMultipleWindows(true);
         webView.getSettings().setJavaScriptCanOpenWindowsAutomatically(false);
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
-            public void onProgressChanged(WebView view, int newProgress) {
-                if (newProgress < 100) {
-                    progressBar.setVisibility(View.VISIBLE);
-                    progressBar.setProgress(newProgress);
-                } else {
-                    progressBar.setVisibility(View.GONE);
+            public void onProgressChanged(WebView view, int progress) {
+                if (disposing || !tab.navigation.owns(webView) || view != webView) return;
+                if (tab.navigation.updateProgress(webView, view.getUrl(), view.getProgress()) && tab == activeTab()) {
+                    renderLoadControls(tab);
                 }
             }
 
             @Override
             public void onReceivedTitle(WebView view, String title) {
-                tab.setTitle(title);
-            }
-
-            @Override
-            public void onReceivedIcon(WebView view, Bitmap icon) {
-                if (icon != null && tab.getUrl() != null) {
-                    String domain = com.privacy.browser.favicon.FaviconManager.extractDomain(tab.getUrl());
-                    if (!domain.isEmpty()) {
-                        com.privacy.browser.favicon.FaviconManager.getInstance(MainActivity.this).saveFavicon(domain, icon);
-                    }
+                if (view == webView && currentPage(tab, webView, tab.navigation.page(), false)
+                        && java.util.Objects.equals(title, view.getTitle())) {
+                    tab.setTitle(title);
+                    sessionMetadataChanged(tab);
+                    refreshTabGrid();
                 }
             }
 
             @Override
+            public void onReceivedIcon(WebView view, Bitmap icon) {
+                if (view != webView || tab.isIncognito() || icon == null || InternalHome.ownsHost(tab.getUrl())
+                        || !currentPage(tab, webView, tab.navigation.page(), false) || icon != view.getFavicon()) return;
+                String domain = com.privacy.browser.favicon.FaviconManager.extractDomain(tab.getUrl());
+                if (!domain.isEmpty()) com.privacy.browser.favicon.FaviconManager.getInstance(MainActivity.this).saveFavicon(domain, icon);
+            }
+
+            @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
+                TabNavigation.Page page = tab.navigation.page();
+                if (!currentPage(tab, webView, page, true) || customVideoView != null) {
+                    callback.onCustomViewHidden();
+                    return;
+                }
+                fullscreenOwner = webView;
+                fullscreenPage = page;
                 showFullscreenVideo(view, callback);
             }
 
             @Override
             public void onHideCustomView() {
-                hideFullscreenVideo();
+                if (fullscreenOwner == webView && currentPage(tab, webView, fullscreenPage, true)) hideFullscreenVideo();
             }
 
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, android.os.Message resultMsg) {
-                com.privacy.browser.adblock.AdBlockManager abm = com.privacy.browser.adblock.AdBlockManager.getInstance(MainActivity.this);
-
-                if (abm.isAdBlockActiveForSite(tab.getUrl())) {
-                    // If popup blocking is active for this site, strictly block unprompted background ad popups
-                    if (abm.isSitePopupsBlocked(tab.getUrl()) && !isUserGesture && !isDialog) {
-                        Log.i("AdBlock", "Blocked unprompted ad popup window on " + tab.getUrl());
-                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "Blocked ad popup", Toast.LENGTH_SHORT).show());
-                        return false;
-                    }
-
-                    WebView.HitTestResult result = view.getHitTestResult();
-                    String data = result != null ? result.getExtra() : null;
-                    if (data != null) {
-                        try {
-                            if (abm.isBlocked(android.net.Uri.parse(data), tab.getUrl())) {
-                                Log.i("AdBlock", "Blocked popup to ad target: " + data);
-                                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Blocked ad popup", Toast.LENGTH_SHORT).show());
-                                return false;
-                            }
-                        } catch (Exception ignored) {}
-                    }
-                }
-
+                if (view != webView || !isUserGesture || !currentPage(tab, webView, tab.navigation.page(), true)) return false;
                 TabModel newTab = tabsManager.createTab(MainActivity.this, "about:blank", tab.isIncognito());
                 setupClientsForTab(newTab);
                 WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
@@ -1341,320 +1815,283 @@ public class MainActivity extends Activity {
             }
         });
 
-        // 3. Attach PrivacyWebViewClient for Subresource Blocking & Cosmetic CSS
-        webView.setWebViewClient(new PrivacyWebViewClient(trackerBlocker, tab.getId(), tab.getUrl(), MainActivity.this, new PrivacyWebViewClient.ClientListener() {
-            @Override
-            public void onPageStarted(String url, Bitmap favicon) {
-                showTopBar(false);
-                hideOmniboxSuggestions();
-                isLoading = true;
-                btnReload.setImageResource(R.drawable.ic_close);
-                tab.setUrl(url);
-                com.privacy.browser.media.MediaSniffer.clearTab(tab.getId());
-                updateFabVideoDownload(0);
-                com.privacy.browser.comic.ComicManager.clearTab(tab.getId());
-                updateFabComicDownload(0);
-                updateFloatingActionButtonsForActiveTab();
-                com.privacy.browser.adblock.AdBlockManager.getInstance(MainActivity.this).resetPageStats(tab.getId());
-                blockedTrackerCount = 0;
-                btnShield.setText("0");
-                if (!editUrl.hasFocus()) {
-                    displayFormattedUrl(url);
-                }
-                saveSession();
+        BlobDownloadManager blob = tab.isIncognito() ? null : new BlobDownloadManager(webView,
+                () -> foreground(tab, webView) && sessionWritable()
+                        && TabViewBudget.count(tabsManager.getTabs(), TabModel::hasPageTransfer) < TabViewBudget.PAGE_TRANSFERS,
+                () -> {
+                    tabResourcesChanged();
+                    refreshTabGrid();
+                });
+        tab.setBlobDownloads(blob);
+        webView.setWebViewClient(new PrivacyWebViewClient(trackerBlocker, tab, this, new PrivacyWebViewClient.ClientListener() {
+            @Override public void onPageStarted(String url) {
+                startNavigation(tab, webView, url);
             }
 
-            @Override
-            public void onPageFinished(String url) {
-                isLoading = false;
-                btnReload.setImageResource(R.drawable.ic_reload);
-                tab.setUrl(url);
-                if (!editUrl.hasFocus()) {
-                    displayFormattedUrl(url);
+            @Override public void onPageCommitted(String url) {
+                if (disposing || !tab.navigation.owns(webView)) return;
+                TabNavigation.Page oldPage = tab.navigation.page();
+                if (!tab.navigation.commit(webView, url, webView.getUrl())) return;
+                tab.updatePageScope(oldPage, webView);
+                clearPageEndpoints(tab);
+                tab.navigation.updateProgress(webView, url, webView.getProgress());
+                tab.setTitle(webView.getTitle());
+                tab.messages.bind(tab.navigation.page(), url);
+                ThemeManager.applyWebTheme(webView, url);
+                if (RequestContext.origin(url) != null && !InternalHome.ownsHost(url) && allowsPageScripts(tab, webView)) {
+                    tab.scriptPolicy.onCommittedPage(url);
+                    if (blob != null) blob.onDocumentCommitted(url);
                 }
-                updateFloatingActionButtonsForActiveTab();
-                if (!tab.isIncognito() && historyDbHelper != null && url != null && !url.startsWith("about:") && !isHomePageUrl(url)) {
-                    String title = tab.getTitle();
-                    if (title == null || title.isEmpty() || title.equals("New Tab") || title.equals("Untitled")) {
-                        title = webView.getTitle();
-                    }
-                    historyDbHelper.addVisit(title, url);
+                if (!tab.isIncognito() && sessionWritable() && historyDbHelper != null
+                        && RequestContext.origin(url) != null && !InternalHome.ownsHost(url)) {
+                    historyDbHelper.addVisit(tab.getTitle(), url);
                 }
-                saveSession();
+                if (tab == activeTab()) {
+                    markAssistantDocument(tab);
+                    renderChrome(tab);
+                    boolean routeChanged = oldPage != null && oldPage != tab.navigation.page();
+                    syncMediaDiscovery(tab, url, tab.navigation.finished(), routeChanged);
+                    updateFloatingActionButtonsForActiveTab();
+                }
+                sessionMetadataChanged(tab);
+                refreshTabGrid();
+                scheduleTabPreview(tab);
             }
 
-            @Override
-            public void onTrackerBlocked(String host) {
-                updateBlockedCounter(1);
+            @Override public void onNativeHistoryChanged(String url) {
+                sessionHistoryChanged(tab, webView, url);
+            }
+
+            @Override public void onPageVisible(String url) {
+                if (!disposing && tab.navigation.markVisible(webView, url)) scheduleTabPreview(tab);
+            }
+
+            @Override public boolean onPageFinished(String url) {
+                if (disposing || !tab.navigation.owns(webView) || !tab.navigation.finish(webView, url, webView.getUrl())) return false;
+                if (tab == activeTab()) {
+                    renderLoadControls(tab);
+                    syncMediaDiscovery(tab, url, true);
+                }
+                sessionHistoryChanged(tab, webView, url);
+                scheduleTabPreview(tab);
+                return true;
+            }
+
+            @Override public void onPageFailed(String url) {
+                if (disposing || !tab.navigation.owns(webView) || !tab.navigation.canFail(url, webView.getUrl())) return;
+                invalidatePage(tab);
+                if (tab == activeTab()) {
+                    renderChrome(tab);
+                    updateFloatingActionButtonsForActiveTab();
+                }
+            }
+
+            @Override public void onTrackerBlocked(String pageKey) {
+                shieldRefresh.changed(pageKey);
+            }
+
+            @Override public boolean canPrompt() { return foreground(tab, webView); }
+
+            @Override public void onRendererLost() {
+                if (fullscreenOwner == webView) {
+                    customViewCallback = null;
+                    hideFullscreenVideo();
+                }
+                boolean active = tab == activeTab();
+                if (!tab.releaseView(webView, true) || disposing) return;
+                tabPreviews.remove(tab);
+                if (active) {
+                    dismissPageContextMenu();
+                    dismissComicDownload();
+                    cancelPicker(tab);
+                    attachTabToView(tab);
+                }
+                sessionMetadataChanged(tab);
+                refreshTabGrid();
+                tabResourcesChanged();
+                // Do not query sibling WebViews here: their renderer callbacks may still be queued.
             }
         }));
-
-        // 3.5. Attach BlobDownloadBridge for blob: object URL downloads
-        webView.addJavascriptInterface(com.privacy.downloader.interceptor.BlobDownloadManager.getInstance(this).getBridge(), "BlobDownloadBridge");
-
-        // 3.6. Attach AntiAdblockBridge for anti-adblock neutralization telemetry & state queries
-        webView.addJavascriptInterface(new com.privacy.browser.adblock.AntiAdblockBridge(
-                com.privacy.browser.adblock.AdBlockManager.getInstance(this),
-                tab.getId(),
-                () -> tab.getUrl(),
-                (tabId, detector, details) -> {
-                    Log.d("AntiAdblockBridge", "Defeated anti-adblock on tab " + tabId + ": " + detector + " - " + details);
-                }
-        ), "PrivacyAntiAdblockBridge");
-
-        // 3.7. Attach ComicDetectorBridge for sequential comic streams & CBR archiver
-        webView.addJavascriptInterface(new com.privacy.browser.comic.ComicDetectorBridge(tab.getId(), (tabId, title, imageUrls) -> {
-            if (!com.privacy.browser.settings.SettingsActivity.isComicDownloaderEnabled(MainActivity.this)) return;
-            com.privacy.browser.comic.ComicManager.setDetectedComic(tabId, title, imageUrls, tab.getUrl());
-            runOnUiThread(() -> {
-                TabModel current = tabsManager != null ? tabsManager.getActiveTab() : null;
-                if (current != null && current.getId().equals(tabId)) {
-                    updateFabComicDownload(imageUrls.size());
-                }
-            });
-        }), "ComicDetectorBridge");
-
-        // 3.8. Attach PrivacyElementPickerBridge for uBlock Origin element picker & zapper
-        webView.addJavascriptInterface(new com.privacy.browser.adblock.picker.ElementPickerBridge(
-                new com.privacy.browser.adblock.picker.ElementPickerBridge.ElementPickerCallback() {
-                    @Override
-                    public void onElementPicked(String nodesJson) {
-                        runOnUiThread(() -> {
-                            com.privacy.browser.adblock.picker.ElementPickerDialog.show(
-                                    MainActivity.this,
-                                    webView,
-                                    tab.getUrl(),
-                                    nodesJson,
-                                    () -> Log.i("AdBlock", "Custom filter applied to tab " + tab.getId())
-                            );
-                        });
-                    }
-
-                    @Override
-                    public void onElementZapped() {
-                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "Element zapped", Toast.LENGTH_SHORT).show());
-                    }
-                }
-        ), "PrivacyElementPickerBridge");
-
-        // 3.8.1. Attach ImageSearchBridge for Search by Image web element selection
-        webView.addJavascriptInterface(new com.privacy.imagesearch.bridge.ImageSearchBridge(
-                new com.privacy.imagesearch.bridge.ImageSearchBridge.BridgeCallback() {
-                    @Override
-                    public void onImageSelected(@NonNull String imageUrl) {
-                        runOnUiThread(() -> showImageSearchEngineChooser(tab, imageUrl));
-                    }
-
-                    @Override
-                    public void onPickerCancelled() {
-                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "Image selection cancelled", Toast.LENGTH_SHORT).show());
-                    }
-                }
-        ), "ImageSearchBridge");
-
-        // 3.9. Attach AndroidInterface for local homepage bridge (search focus, engine search, theme, stats, navigation)
-        webView.addJavascriptInterface(new Object() {
-            @android.webkit.JavascriptInterface
-            public void focusAddressBar() {
-                runOnUiThread(() -> {
-                    if (editUrl != null) {
-                        editUrl.requestFocus();
-                        android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-                        if (imm != null) {
-                            imm.showSoftInput(editUrl, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
-                        }
-                    }
-                });
-            }
-
-            @android.webkit.JavascriptInterface
-            public void searchOrNavigate(String query, String engine) {
-                runOnUiThread(() -> {
-                    if (query == null || query.trim().isEmpty()) return;
-                    String q = query.trim();
-                    String targetUrl;
-                    if (q.startsWith("http://") || q.startsWith("https://")) {
-                        targetUrl = q;
-                    } else if (q.contains(".") && !q.contains(" ")) {
-                        targetUrl = "https://" + q;
-                    } else {
-                        String eng = engine != null ? engine.toLowerCase() : "ddg";
-                        if ("google".equals(eng)) {
-                            targetUrl = "https://www.google.com/search?q=" + android.net.Uri.encode(q);
-                        } else if ("brave".equals(eng)) {
-                            targetUrl = "https://search.brave.com/search?q=" + android.net.Uri.encode(q);
-                        } else if ("searx".equals(eng)) {
-                            targetUrl = "https://searx.be/search?q=" + android.net.Uri.encode(q);
-                        } else if ("startpage".equals(eng)) {
-                            targetUrl = "https://www.startpage.com/sp/search?query=" + android.net.Uri.encode(q);
-                        } else {
-                            targetUrl = "https://duckduckgo.com/?q=" + android.net.Uri.encode(q);
-                        }
-                    }
-                    tab.setUrl(targetUrl);
-                    webView.loadUrl(targetUrl);
-                    saveSession();
-                });
-            }
-
-            @android.webkit.JavascriptInterface
-            public void openBookmarks() {
-                runOnUiThread(() -> startActivity(new Intent(MainActivity.this, BookmarksActivity.class)));
-            }
-
-            @android.webkit.JavascriptInterface
-            public void openHistory() {
-                runOnUiThread(() -> startActivity(new Intent(MainActivity.this, HistoryActivity.class)));
-            }
-
-            @android.webkit.JavascriptInterface
-            public void openDownloads() {
-                runOnUiThread(() -> startActivity(new Intent(MainActivity.this, com.privacy.downloader.ui.DownloadsActivity.class)));
-            }
-
-            @android.webkit.JavascriptInterface
-            public void openSettings() {
-                runOnUiThread(() -> startActivity(new Intent(MainActivity.this, com.privacy.browser.settings.SettingsActivity.class)));
-            }
-
-            @android.webkit.JavascriptInterface
-            public void openIncognito() {
-                runOnUiThread(() -> {
-                    String home = getDefaultHomeUrl();
-                    TabModel newTab = tabsManager.createTab(MainActivity.this, home, true);
-                    setupClientsForTab(newTab);
-                    newTab.getWebView().loadUrl(home);
-                    tabsManager.switchTab(tabsManager.getTabCount() - 1);
-                });
-            }
-
-            @android.webkit.JavascriptInterface
-            public String getAppTheme() {
-                return ThemeManager.isAppDarkTheme(MainActivity.this) ? "dark" : "light";
-            }
-
-            @android.webkit.JavascriptInterface
-            public void toggleTheme() {
-                runOnUiThread(() -> {
-                    boolean isDark = ThemeManager.isAppDarkTheme(MainActivity.this);
-                    String newTheme = isDark ? ThemeManager.APP_THEME_LIGHT : ThemeManager.APP_THEME_DARK;
-                    ThemeManager.setAppTheme(MainActivity.this, newTheme);
-                    saveSession();
-                    recreate();
-                });
-            }
-
-            @android.webkit.JavascriptInterface
-            public long getTotalBlockedCount() {
-                return com.privacy.browser.adblock.AdBlockManager.getInstance(MainActivity.this).getTotalBlockedCount();
-            }
-
-            @android.webkit.JavascriptInterface
-            public String getRecentBookmarksJson() {
-                try {
-                    if (bookmarkDbHelper == null) return "[]";
-                    java.util.List<BookmarkModel> list = bookmarkDbHelper.getAllBookmarks();
-                    if (list == null || list.isEmpty()) return "[]";
-                    org.json.JSONArray arr = new org.json.JSONArray();
-                    int max = Math.min(list.size(), 6);
-                    for (int i = 0; i < max; i++) {
-                        BookmarkModel bm = list.get(i);
-                        org.json.JSONObject o = new org.json.JSONObject();
-                        o.put("title", bm.getTitle());
-                        o.put("url", bm.getUrl());
-                        arr.put(o);
-                    }
-                    return arr.toString();
-                } catch (Exception e) {
-                    return "[]";
-                }
-            }
-        }, "AndroidInterface");
-
-        // 4. Attach BrowserDownloadListener for advanced segmented downloads
-        webView.setDownloadListener(new BrowserDownloadListener(this, () -> tab.getUrl(), () -> tab.getWebView()));
-
-        // 5. Attach Long-Press Context Menu for links & images
+        BrowserDownloadListener downloads = new BrowserDownloadListener(this, tab.isIncognito(), blob);
+        webView.setDownloadListener((url, userAgent, disposition, mime, length) -> {
+            if (foreground(tab, webView)) downloads.onDownloadStart(url, userAgent, disposition, mime, length);
+        });
         setupWebViewContextMenu(webView, tab);
     }
 
-    private void displayFormattedUrl(String url) {
-        if (url == null || url.isEmpty() || editUrl.hasFocus()) return;
-
-        ImageView btnSiteSecurity = findViewById(R.id.btn_site_security);
-
-        if (url.equals(DEFAULT_HOME_URL) || url.startsWith("file:///android_asset/")) {
-            editUrl.setText("");
-            editUrl.setHint(R.string.search_hint);
-            if (btnSiteSecurity != null) {
-                btnSiteSecurity.setColorFilter(Color.parseColor("#4CAF50"));
+    private void receivePageMessage(TabModel tab, PrivacyWebView view, TabNavigation.Page page, String kind,
+                                    JSONObject data, androidx.webkit.JavaScriptReplyProxy reply) {
+        if (kind.startsWith("home:")) {
+            if (!tab.isIncognito() && currentPage(tab, view, page, true)) handleHomeMessage(kind, reply);
+            return;
+        }
+        if (tab.isIncognito()) return;
+        if ("comic".equals(kind) || "comic-manual".equals(kind)) {
+            if (page != discoveryPage || !canScanComic(tab)) return;
+            boolean manual = "comic-manual".equals(kind);
+            String proof = data.optString("picker");
+            if (manual) {
+                if (comicScanToken == null || !comicScanToken.equals(proof)) return;
+                comicScanToken = null;
+            } else if (!comicObservation.equals(proof)) return;
+            JSONArray values = data.optJSONArray("value");
+            List<String> urls = new ArrayList<>();
+            if (values != null && values.length() <= ComicManager.MAX_PAGES) {
+                for (int i = 0; i < values.length(); i++) {
+                    Object raw = values.opt(i);
+                    String url = raw instanceof String ? boundedWebUrl((String) raw) : null;
+                    if (url == null) { urls.clear(); break; }
+                    urls.add(url); // One position per detected page; even a repeated URL is a page.
+                }
             }
-            TabModel activeTab = tabsManager != null ? tabsManager.getActiveTab() : null;
-            if (activeTab != null && activeTab.getWebView() != null) {
-                String themeMode = ThemeManager.isAppDarkTheme(this) ? "dark" : "light";
-                long totalBlocked = com.privacy.browser.adblock.AdBlockManager.getInstance(this).getTotalBlockedCount();
-                String js = "if (typeof applyTheme === 'function') applyTheme('" + themeMode + "'); if (typeof refreshHomeData === 'function') refreshHomeData(" + totalBlocked + ");";
-                activeTab.getWebView().evaluateJavascript(js, null);
+            if (ComicManager.setDetectedComic(page.key, tab.getTitle(), urls)) {
+                dismissComicDownload();
+                updateFabComicDownload(urls.size());
             }
-        } else {
-            boolean isDark = ThemeManager.isAppDarkTheme(this);
-            int domainTextColor = isDark ? Color.WHITE : Color.parseColor("#111827");
-            int neutralIconColor = isDark ? Color.WHITE : Color.parseColor("#111827");
-
-            if (url.startsWith("https://")) {
-                SpannableStringBuilder builder = new SpannableStringBuilder(url);
-                builder.setSpan(new ForegroundColorSpan(Color.parseColor("#4CAF50")), 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                builder.setSpan(new ForegroundColorSpan(domainTextColor), 5, url.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                editUrl.setText(builder, TextView.BufferType.SPANNABLE);
-                if (btnSiteSecurity != null) {
-                    btnSiteSecurity.setColorFilter(Color.parseColor("#4CAF50"));
-                }
-            } else if (url.startsWith("http://")) {
-                SpannableStringBuilder builder = new SpannableStringBuilder(url);
-                builder.setSpan(new ForegroundColorSpan(Color.parseColor("#FF5252")), 0, 4, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                builder.setSpan(new ForegroundColorSpan(domainTextColor), 4, url.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                editUrl.setText(builder, TextView.BufferType.SPANNABLE);
-                if (btnSiteSecurity != null) {
-                    btnSiteSecurity.setColorFilter(Color.parseColor("#FF5252"));
-                }
-            } else {
-                editUrl.setText(url);
-                if (btnSiteSecurity != null) {
-                    btnSiteSecurity.setColorFilter(neutralIconColor);
-                }
+            if (manual) Toast.makeText(this, urls.isEmpty() ? R.string.comic_scan_empty : R.string.comic_scan_ready,
+                    Toast.LENGTH_SHORT).show();
+        } else if (currentPage(tab, view, page, true)) {
+            if ("element".equals(kind)) {
+                JSONArray nodes = data.optJSONArray("value");
+                if (nodes == null) return;
+                pagePickerDialog = com.privacy.browser.adblock.picker.ElementPickerDialog.show(this, view, tab.getUrl(), nodes,
+                        () -> currentPage(tab, view, page, true), () -> reloadTab(tab));
+            } else if ("image".equals(kind)) {
+                String url = boundedWebUrl(data.optString("value"));
+                if (url != null) showImageSearchEngineChooser(tab, url);
             }
         }
     }
 
-    private String getDefaultHomeUrl() {
-        return DEFAULT_HOME_URL;
+    private static String boundedWebUrl(String url) {
+        return url != null && url.length() <= PageMessageGate.MAX_URL && RequestContext.origin(url) != null
+                && !InternalHome.ownsHost(url) ? url : null;
     }
 
+    private void handleHomeMessage(String kind, androidx.webkit.JavaScriptReplyProxy reply) {
+        switch (kind) {
+            case "home:init":
+                JSONArray items = new JSONArray();
+                try {
+                    if (bookmarkDbHelper != null) {
+                        for (BookmarkModel bm : bookmarkDbHelper.getRecentBookmarks(6)) {
+                            String url = boundedWebUrl(bm.getUrl());
+                            if (url == null) continue;
+                            String title = bm.getTitle();
+                            items.put(new JSONObject().put("url", url).put("title", title == null ? "" : title.substring(0, Math.min(256, title.length()))));
+                        }
+                    }
+                    reply.postMessage(new JSONObject().put("bookmarks", items)
+                            .put("blocked", com.privacy.browser.adblock.AdBlockManager.getInstance(this).getTotalBlockedCount())
+                            .put("theme", ThemeManager.isAppDarkTheme(this) ? "dark" : "light").toString());
+                } catch (Exception e) {
+                    Log.w("MainActivity", "Could not refresh local homepage data");
+                }
+                break;
+            case "home:bookmarks": startActivity(new Intent(this, BookmarksActivity.class)); break;
+            case "home:history": startActivity(new Intent(this, HistoryActivity.class)); break;
+            case "home:downloads": startActivity(new Intent(this, com.privacy.downloader.ui.DownloadsActivity.class)); break;
+            case "home:settings": startActivity(new Intent(this, SettingsActivity.class)); break;
+            case "home:private": explainPrivateUnavailable(); break;
+            case "home:theme":
+                ThemeManager.setAppTheme(this, ThemeManager.isAppDarkTheme(this)
+                        ? ThemeManager.APP_THEME_LIGHT : ThemeManager.APP_THEME_DARK);
+                checkpointSession();
+                recreate();
+                break;
+            default: break;
+        }
+    }
+
+    private void explainPrivateUnavailable() {
+        if (isFinishing() || disposing) return;
+        new AlertDialog.Builder(this, ThemeManager.getDialogTheme(this))
+                .setTitle("Private tabs unavailable")
+                .setMessage(PrivateTabPolicy.MESSAGE + "\n\n" + BrowserDataPolicy.OLDER_PRIVATE_DATA)
+                .setNegativeButton("Close", null)
+                .setNeutralButton("Review cleanup options", (d, which) -> showClearDataChoices())
+                .show();
+    }
+
+    private void renderLoadControls(TabModel tab) {
+        int progress = tab.navigation.progress();
+        btnReload.setImageResource(progress < 100 ? R.drawable.ic_close : R.drawable.ic_reload);
+        progressBar.setProgress(progress);
+        progressBar.setVisibility(progress < 100 ? View.VISIBLE : View.GONE);
+    }
+
+    private void renderVisibleShieldCount(String pageKey) {
+        TabModel tab = activeTab();
+        if (tab != null && foreground(tab, tab.getWebView()) && pageKey.equals(tab.pageKey())) {
+            renderShieldCount(pageKey);
+        }
+    }
+
+    private void renderShieldCount(String pageKey) {
+        int count = trackerBlocker.manager().getPageBlockedCount(pageKey);
+        if (count == shieldCount) return;
+        android.os.Trace.beginSection("Browser.filters.shieldCount");
+        try {
+            shieldCount = count;
+            btnShield.setText(String.valueOf(count));
+        } finally { android.os.Trace.endSection(); }
+    }
+
+    private void renderShield(TabModel tab) {
+        boolean selected = resumed && !disposing && !isFinishing() && tab == activeTab();
+        String pageKey = tab.isIncognito() ? null : tab.pageKey();
+        shieldRefresh.show(selected && tab.getWebView() != null ? pageKey : null);
+        if (!selected) return;
+        int icon = tab.isIncognito() ? R.drawable.ic_incognito : R.drawable.ic_shield;
+        if (icon != shieldIcon) {
+            shieldIcon = icon;
+            btnShield.setCompoundDrawablesWithIntrinsicBounds(icon, 0, 0, 0);
+        }
+        renderShieldCount(pageKey);
+    }
+
+    private void renderChrome(TabModel tab) {
+        renderLoadControls(tab);
+        renderShield(tab);
+        displayFormattedUrl(tab.getUrl());
+    }
+
+    private void displayFormattedUrl(String url) {
+        if (editUrl.hasFocus()) return;
+        TabModel tab = activeTab();
+        PrivacyWebView view = tab == null ? null : tab.getWebView();
+        ImageView security = findViewById(R.id.btn_site_security);
+        boolean local = url == null || isHomePageUrl(url) || "about:blank".equals(url);
+        editUrl.setText(local ? "" : url);
+        editUrl.setHint(R.string.search_hint);
+        if (security != null) {
+            boolean committedWeb = !local && view != null && currentPage(tab, view, tab.navigation.page(), false)
+                    && boundedWebUrl(url) != null;
+            security.setEnabled(committedWeb);
+            security.setAlpha(committedWeb ? 1f : 0.45f);
+            security.setColorFilter(committedWeb && url.startsWith("http://") ? Color.parseColor("#FF5252")
+                    : ThemeManager.isAppDarkTheme(this) ? Color.WHITE : Color.parseColor("#111827"));
+        }
+    }
+
+    private String getDefaultHomeUrl() { return DEFAULT_HOME_URL; }
+
     public static boolean isHomePageUrl(String url) {
-        if (url == null) return false;
-        String trimmed = url.trim();
-        return trimmed.equals(DEFAULT_HOME_URL)
-                || trimmed.startsWith(DEFAULT_HOME_URL)
-                || trimmed.startsWith("file:///android_asset/");
+        return InternalHome.isHome(InternalHome.migrate(url));
     }
 
     private boolean isCurrentTabOnHomePage() {
         TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-        if (active == null) return true;
-        String url = active.getUrl();
-        if (url == null && active.getWebView() != null) {
-            url = active.getWebView().getUrl();
-        }
-        return isHomePageUrl(url);
+        return active == null || active.isIncognito() || !active.navigation.ready() || isHomePageUrl(active.getUrl());
     }
 
     private void updateFloatingActionButtonsForActiveTab() {
         TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
         if (active != null) {
-            int detectedCount = MediaSniffer.getMediaForTab(active.getId()).size();
+            int detectedCount = active.navigation.page() == null ? 0 : active.navigation.page().media.count();
             updateFabVideoDownload(detectedCount);
-            com.privacy.browser.comic.ComicManager.ComicItem comicItem =
-                    com.privacy.browser.comic.ComicManager.getDetectedComic(active.getId());
+            ComicManager.ComicItem comicItem =
+                    ComicManager.getDetectedComic(active.pageKey());
             updateFabComicDownload(comicItem != null ? comicItem.getPageCount() : 0);
         } else {
             updateFabVideoDownload(0);
@@ -1671,10 +2108,21 @@ public class MainActivity extends Activity {
 
         hideOmniboxSuggestions();
 
+        if (query.regionMatches(true, 0, "javascript:", 0, "javascript:".length())) {
+            // Bookmarklets are a deliberate address-bar action, not a transferable link type.
+            PrivacyWebView view = active.getWebView();
+            if (currentPage(active, view, active.navigation.page(), true) && allowsPageScripts(active, view)
+                    && RequestContext.origin(active.getUrl()) != null && !InternalHome.ownsHost(active.getUrl())) {
+                view.loadUrl(query);
+            } else {
+                Toast.makeText(this, R.string.bookmarklet_unavailable, Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
         String targetUrl;
         if (SearchEngineManager.isBangsEnabled(this) && SearchEngineManager.detectBang(query) != null) {
             targetUrl = SearchEngineManager.buildSearchUrl(this, query);
-        } else if (query.startsWith("http://") || query.startsWith("https://") || query.startsWith("about:") || query.startsWith("file://") || query.startsWith("javascript:")) {
+        } else if (query.startsWith("http://") || query.startsWith("https://") || query.startsWith("about:") || InternalHome.isLegacy(query)) {
             targetUrl = query;
         } else if (isLocalHostOrIp(query)) {
             targetUrl = "http://" + query;
@@ -1683,9 +2131,8 @@ public class MainActivity extends Activity {
         } else {
             targetUrl = SearchEngineManager.buildSearchUrl(this, query);
         }
-        active.setUrl(targetUrl);
-        active.getWebView().loadUrl(targetUrl);
-        saveSession();
+
+        loadInTab(active, targetUrl);
     }
 
     private boolean isLocalHostOrIp(String query) {
@@ -1709,139 +2156,115 @@ public class MainActivity extends Activity {
         return false;
     }
 
-    private void updateOmniboxSuggestions(String input) {
-        if (!SearchEngineManager.isAutocompleteEnabled(this)) {
-            hideOmniboxSuggestions();
-            return;
-        }
+    private boolean canEditOmnibox() {
+        return startupReady && resumed && !disposing && !isFinishing() && hasWindowFocus()
+                && editUrl.hasFocus() && tabGrid == null && customVideoView == null && !BrowserDataCleaner.inProgress()
+                && SearchEngineManager.isAutocompleteEnabled(this);
+    }
 
-        if (input == null || input.trim().isEmpty()) {
-            hideOmniboxSuggestions();
-            return;
-        }
+    private boolean canShowOmniboxRequest(OmniboxRequests.Request request) {
+        TabModel active = activeTab();
+        return active != null && canEditOmnibox() && request.matches(active.getId(), active.isIncognito(), editUrl.getText());
+    }
 
-        String query = input.trim();
-        List<OmniboxSuggestion> suggestions = new ArrayList<>();
-
-        // 0. Check Clipboard for URL or text to paste
+    private void updateOmniboxSuggestions(CharSequence input) {
+        Trace.beginSection("Browser.omnibox.edit");
         try {
-            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip() != null && cm.getPrimaryClip().getItemCount() > 0) {
-                CharSequence clipText = cm.getPrimaryClip().getItemAt(0).getText();
-                if (clipText != null) {
-                    String clipStr = clipText.toString().trim();
-                    if (!clipStr.isEmpty() && !clipStr.equalsIgnoreCase(query)) {
-                        boolean isUrl = clipStr.startsWith("http://") || clipStr.startsWith("https://") || (clipStr.contains(".") && !clipStr.contains(" ")) || isLocalHostOrIp(clipStr);
-                        String target = isUrl ? (clipStr.startsWith("http") ? clipStr : (isLocalHostOrIp(clipStr) ? "http://" + clipStr : "https://" + clipStr)) : SearchEngineManager.buildSearchUrl(this, clipStr);
-                        suggestions.add(new OmniboxSuggestion(
-                                OmniboxSuggestion.Type.CLIPBOARD,
-                                isUrl ? "Link you copied" : "Text you copied",
-                                clipStr,
-                                target,
-                                R.drawable.ic_find
-                        ));
-                    }
-                }
+            TabModel active = activeTab();
+            if (active == null || !canEditOmnibox()) {
+                hideOmniboxSuggestions();
+                return;
             }
-        } catch (Exception ignored) {}
-
-        // 0.5. Check direct Localhost or IP navigation
-        if (isLocalHostOrIp(query)) {
-            String target = query.startsWith("http://") || query.startsWith("https://") ? query : "http://" + query;
-            suggestions.add(new OmniboxSuggestion(
-                    OmniboxSuggestion.Type.SEARCH,
-                    query,
-                    "Open " + target,
-                    target,
-                    R.drawable.ic_find
-            ));
-        }
-
-        // 1. Check Bang Command match
-        if (SearchEngineManager.isBangsEnabled(this)) {
-            SearchEngineManager.BangResult bang = SearchEngineManager.detectBang(query);
-            if (bang != null) {
-                String bangTitle = bang.getServiceName() + " Search (" + bang.getTag() + ")";
-                String bangSub = bang.getCleanQuery().isEmpty() ? "Search on " + bang.getServiceName() : bang.getCleanQuery();
-                suggestions.add(new OmniboxSuggestion(
-                        OmniboxSuggestion.Type.BANG,
-                        bangTitle,
-                        bangSub,
-                        bang.getTargetUrl(),
-                        R.drawable.ic_search
-                ));
-            }
-        }
-
-        // 2. Query Bookmarks
-        if (bookmarkDbHelper != null) {
-            List<BookmarkModel> bookmarks = bookmarkDbHelper.searchBookmarks(query, 3);
-            for (BookmarkModel bm : bookmarks) {
-                suggestions.add(new OmniboxSuggestion(
-                        OmniboxSuggestion.Type.BOOKMARK,
-                        bm.getTitle(),
-                        bm.getUrl(),
-                        bm.getUrl(),
-                        R.drawable.ic_bookmark
-                ));
-            }
-        }
-
-        // 3. Query History (suppressed on incognito tabs)
-        TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-        boolean isIncognito = active != null && active.isIncognito();
-        if (!isIncognito && historyDbHelper != null) {
-            List<HistoryModel> historyItems = historyDbHelper.searchHistory(query, 3);
-            for (HistoryModel hm : historyItems) {
-                boolean duplicate = false;
-                for (OmniboxSuggestion s : suggestions) {
-                    if (s.getTargetUrl().equalsIgnoreCase(hm.getUrl())) {
-                        duplicate = true;
-                        break;
-                    }
-                }
-                if (!duplicate) {
-                    suggestions.add(new OmniboxSuggestion(
-                            OmniboxSuggestion.Type.HISTORY,
-                            hm.getTitle(),
-                            hm.getUrl(),
-                            hm.getUrl(),
-                            R.drawable.ic_history
-                    ));
-                }
-            }
-        }
-
-        // 4. Search Engine fallback suggestion
-        SearchEngineManager.SearchEngine engine = SearchEngineManager.getSelectedEngine(this);
-        String searchTargetUrl = SearchEngineManager.buildSearchUrl(this, query);
-        suggestions.add(new OmniboxSuggestion(
-                OmniboxSuggestion.Type.SEARCH,
-                query,
-                "Search with " + engine.getName(),
-                searchTargetUrl,
-                R.drawable.ic_search
-        ));
-
-        if (suggestions.isEmpty()) {
-            hideOmniboxSuggestions();
-        } else {
-            if (omniboxAdapter != null) {
-                omniboxAdapter.updateItems(suggestions);
-            }
-            if (omniboxContainer != null && omniboxContainer.getVisibility() != View.VISIBLE) {
-                omniboxContainer.setVisibility(View.VISIBLE);
-            }
+            OmniboxRequests.Request request = omniboxRequests.submit(active.getId(), active.isIncognito(), input);
+            if (request == null) clearOmniboxRows();
+            else renderOmnibox(request, Collections.emptyList()); // immediate fallback, no local lookup or clipboard read
+        } finally {
+            Trace.endSection();
         }
     }
 
-    private void hideOmniboxSuggestions() {
-        if (omniboxContainer != null && omniboxContainer.getVisibility() == View.VISIBLE) {
-            omniboxContainer.setVisibility(View.GONE);
-            if (omniboxAdapter != null) {
-                omniboxAdapter.clear();
+    private void publishLocalOmnibox(OmniboxRequests.Request request, List<OmniboxSuggestion> local) {
+        Trace.beginSection("Browser.omnibox.localRows");
+        try {
+            boolean alreadyOffered = omniboxClipboard.offer(request.incognito, request.query) != null;
+            omniboxClipboard.inspect(request.incognito, this::readOmniboxClipboard);
+            if (!local.isEmpty() || (!alreadyOffered && omniboxClipboard.offer(request.incognito, request.query) != null)) {
+                renderOmnibox(request, local);
             }
+        } finally {
+            Trace.endSection();
         }
+    }
+
+    private CharSequence readOmniboxClipboard() {
+        Trace.beginSection("Browser.omnibox.clipboard");
+        try {
+            ClipboardManager manager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            ClipData clip = manager == null ? null : manager.getPrimaryClip();
+            return clip != null && clip.getItemCount() > 0 ? clip.getItemAt(0).getText() : null;
+        } catch (RuntimeException unavailable) {
+            return null;
+        } finally {
+            Trace.endSection();
+        }
+    }
+
+    private void renderOmnibox(OmniboxRequests.Request request, List<OmniboxSuggestion> local) {
+        if (omniboxAdapter == null || !omniboxRequests.isCurrent(request)) return;
+        String query = request.query;
+        List<OmniboxSuggestion> suggestions = new ArrayList<>(10);
+        String clip = omniboxClipboard.offer(request.incognito, query);
+        if (clip != null) {
+            boolean localAddress = isLocalHostOrIp(clip);
+            boolean webAddress = clip.startsWith("http://") || clip.startsWith("https://");
+            boolean link = webAddress || localAddress || (clip.contains(".") && !clip.contains(" "));
+            String target = !link ? SearchEngineManager.buildSearchUrl(this, clip)
+                    : webAddress ? clip : (localAddress ? "http://" : "https://") + clip;
+            suggestions.add(new OmniboxSuggestion(OmniboxSuggestion.Type.CLIPBOARD,
+                    link ? "Link you copied" : "Text you copied", clip, target, R.drawable.ic_find));
+        }
+
+        if (isLocalHostOrIp(query)) {
+            String target = query.startsWith("http://") || query.startsWith("https://") ? query : "http://" + query;
+            suggestions.add(new OmniboxSuggestion(OmniboxSuggestion.Type.SEARCH, query,
+                    "Open " + target, target, R.drawable.ic_find));
+        }
+        SearchEngineManager.BangResult bang = SearchEngineManager.isBangsEnabled(this)
+                ? SearchEngineManager.detectBang(query) : null;
+        if (bang != null) {
+            String title = bang.getServiceName() + " Search (" + bang.getTag() + ")";
+            String subtitle = bang.getCleanQuery().isEmpty() ? "Search on " + bang.getServiceName() : bang.getCleanQuery();
+            suggestions.add(new OmniboxSuggestion(OmniboxSuggestion.Type.BANG, title, subtitle,
+                    bang.getTargetUrl(), R.drawable.ic_search));
+        }
+
+        for (OmniboxSuggestion row : local) {
+            if (row.getType() == OmniboxSuggestion.Type.HISTORY) {
+                if (request.incognito || suggestions.stream().anyMatch(s -> s.getTargetUrl().equalsIgnoreCase(row.getTargetUrl()))) {
+                    continue;
+                }
+            }
+            suggestions.add(row);
+        }
+        SearchEngineManager.SearchEngine engine = SearchEngineManager.getSelectedEngine(this);
+        String searchTarget = bang != null ? bang.getTargetUrl() : SearchEngineManager.buildSearchUrl(this, query);
+        suggestions.add(new OmniboxSuggestion(OmniboxSuggestion.Type.SEARCH, query,
+                "Search with " + engine.getName(), searchTarget, R.drawable.ic_search));
+        visibleOmniboxRequest = request;
+        omniboxAdapter.updateItems(suggestions);
+        omniboxContainer.setVisibility(View.VISIBLE);
+    }
+
+    private void clearOmniboxRows() {
+        visibleOmniboxRequest = null;
+        if (omniboxContainer != null) omniboxContainer.setVisibility(View.GONE);
+        if (omniboxAdapter != null && omniboxAdapter.getCount() != 0) omniboxAdapter.clear();
+    }
+
+    private void hideOmniboxSuggestions() {
+        if (omniboxRequests != null) omniboxRequests.invalidate();
+        omniboxClipboard.reset();
+        clearOmniboxRows();
     }
 
     // =========================================================================
@@ -1849,181 +2272,153 @@ public class MainActivity extends Activity {
     // =========================================================================
 
     private void showTabsDialog() {
-        TabModel currentActive = tabsManager.getActiveTab();
-        if (currentActive != null) {
-            currentActive.captureThumbnail();
-        }
+        if (!resumed || !sessionWritable() || isFinishing() || tabGrid != null) return;
+        dismissVideoOptions();
+        if (editUrl.hasFocus()) dismissKeyboard();
+        tabPreviews.cancel(); // only existing previews or placeholders enter the grid
+        Trace.beginSection("Browser.tabs.openGrid");
+        try {
+            AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
+            View content = LayoutInflater.from(this).inflate(R.layout.dialog_tabs_grid, null);
+            AlertDialog dialog = builder.setView(content).create();
+            if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
+            RecyclerView recycler = content.findViewById(R.id.recycler_tabs);
+            recycler.setLayoutManager(new GridLayoutManager(this, 2));
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
-        View view = LayoutInflater.from(this).inflate(R.layout.dialog_tabs_grid, null);
-        builder.setView(view);
+            class Card extends RecyclerView.ViewHolder {
+                final TextView title, url, status;
+                final ImageView preview;
+                final View privateIcon, active;
+                TabModel tab;
 
-        AlertDialog dialog = builder.create();
-        if (dialog.getWindow() != null) {
-            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
-        }
-
-        TextView title = view.findViewById(R.id.tabs_grid_title);
-        title.setText("Open Tabs (" + tabsManager.getTabCount() + ")");
-
-        androidx.recyclerview.widget.RecyclerView recyclerView = view.findViewById(R.id.recycler_tabs);
-        recyclerView.setLayoutManager(new androidx.recyclerview.widget.GridLayoutManager(this, 2));
-
-        final androidx.recyclerview.widget.RecyclerView.Adapter[] adapterHolder = new androidx.recyclerview.widget.RecyclerView.Adapter[1];
-
-        class TabCardViewHolder extends androidx.recyclerview.widget.RecyclerView.ViewHolder {
-            TextView textTitle;
-            TextView textUrl;
-            ImageView iconIncognito;
-            ImageView imgPreview;
-            View layoutPlaceholder;
-            View indicatorActive;
-            ImageView btnClose;
-
-            public TabCardViewHolder(View itemView) {
-                super(itemView);
-                textTitle = itemView.findViewById(R.id.tab_card_title);
-                textUrl = itemView.findViewById(R.id.tab_card_url);
-                iconIncognito = itemView.findViewById(R.id.tab_icon_incognito);
-                imgPreview = itemView.findViewById(R.id.tab_card_preview);
-                layoutPlaceholder = itemView.findViewById(R.id.tab_card_placeholder);
-                indicatorActive = itemView.findViewById(R.id.tab_active_indicator);
-                btnClose = itemView.findViewById(R.id.tab_card_btn_close);
-            }
-        }
-
-        adapterHolder[0] = new androidx.recyclerview.widget.RecyclerView.Adapter<TabCardViewHolder>() {
-            @NonNull
-            @Override
-            public TabCardViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-                View card = LayoutInflater.from(MainActivity.this).inflate(R.layout.item_tab_grid_card, parent, false);
-                return new TabCardViewHolder(card);
-            }
-
-            @Override
-            public void onBindViewHolder(@NonNull TabCardViewHolder holder, int position) {
-                final int pos = holder.getAdapterPosition();
-                if (pos < 0 || pos >= tabsManager.getTabCount()) return;
-
-                TabModel tab = tabsManager.getTabs().get(pos);
-                holder.textTitle.setText(tab.getTitle());
-                holder.textUrl.setText(tab.getUrl() != null ? tab.getUrl().replace("https://", "").replace("http://", "") : "");
-                holder.iconIncognito.setVisibility(tab.isIncognito() ? View.VISIBLE : View.GONE);
-
-                boolean isActive = (pos == tabsManager.getActiveIndex());
-                holder.indicatorActive.setVisibility(isActive ? View.VISIBLE : View.GONE);
-
-                Bitmap thumb = tab.getThumbnail();
-                if (thumb != null && !thumb.isRecycled()) {
-                    holder.imgPreview.setImageBitmap(thumb);
-                    holder.imgPreview.setVisibility(View.VISIBLE);
-                    holder.layoutPlaceholder.setVisibility(View.GONE);
-                } else {
-                    holder.imgPreview.setImageDrawable(null);
-                    holder.imgPreview.setVisibility(View.GONE);
-                    holder.layoutPlaceholder.setVisibility(View.VISIBLE);
-                }
-
-                holder.itemView.setOnClickListener(v -> {
-                    int clickedPos = holder.getAdapterPosition();
-                    if (clickedPos != androidx.recyclerview.widget.RecyclerView.NO_POSITION) {
-                        tabsManager.switchTab(clickedPos);
-                        dialog.dismiss();
-                    }
-                });
-
-                holder.btnClose.setOnClickListener(v -> {
-                    int closePos = holder.getAdapterPosition();
-                    if (closePos != androidx.recyclerview.widget.RecyclerView.NO_POSITION) {
-                        if (tabsManager.getTabCount() <= 1) {
-                            // User closed the last remaining tab
-                            tabsManager.closeTab(closePos, MainActivity.this);
-                            TabModel active = tabsManager.getActiveTab();
-                            if (active != null) {
-                                active.getWebView().loadUrl(getDefaultHomeUrl());
-                            }
-                            dialog.dismiss();
-                        } else {
-                            tabsManager.closeTab(closePos, MainActivity.this);
-                            title.setText("Open Tabs (" + tabsManager.getTabCount() + ")");
-                            notifyItemRemoved(closePos);
-                            notifyItemRangeChanged(closePos, tabsManager.getTabCount());
-                        }
-                    }
-                });
-            }
-
-            @Override
-            public int getItemCount() {
-                return tabsManager.getTabCount();
-            }
-        };
-
-        recyclerView.setAdapter(adapterHolder[0]);
-
-        // Attach Swipe-to-Dismiss (Left and Right)
-        androidx.recyclerview.widget.ItemTouchHelper.SimpleCallback swipeCallback =
-                new androidx.recyclerview.widget.ItemTouchHelper.SimpleCallback(0, androidx.recyclerview.widget.ItemTouchHelper.LEFT | androidx.recyclerview.widget.ItemTouchHelper.RIGHT) {
-            @Override
-            public boolean onMove(@NonNull androidx.recyclerview.widget.RecyclerView rView,
-                                  @NonNull androidx.recyclerview.widget.RecyclerView.ViewHolder vh,
-                                  @NonNull androidx.recyclerview.widget.RecyclerView.ViewHolder target) {
-                return false;
-            }
-
-            @Override
-            public void onSwiped(@NonNull androidx.recyclerview.widget.RecyclerView.ViewHolder viewHolder, int direction) {
-                int swipedPos = viewHolder.getAdapterPosition();
-                if (swipedPos != androidx.recyclerview.widget.RecyclerView.NO_POSITION && swipedPos < tabsManager.getTabCount()) {
-                    if (tabsManager.getTabCount() <= 1) {
-                        // User swiped away the final tab
-                        tabsManager.closeTab(swipedPos, MainActivity.this);
-                        TabModel active = tabsManager.getActiveTab();
-                        if (active != null) {
-                            active.getWebView().loadUrl(getDefaultHomeUrl());
-                        }
-                        dialog.dismiss();
-                    } else {
-                        tabsManager.closeTab(swipedPos, MainActivity.this);
-                        title.setText("Open Tabs (" + tabsManager.getTabCount() + ")");
-                        adapterHolder[0].notifyItemRemoved(swipedPos);
-                        adapterHolder[0].notifyItemRangeChanged(swipedPos, tabsManager.getTabCount());
-                    }
+                Card(View item) {
+                    super(item);
+                    title = item.findViewById(R.id.tab_card_title);
+                    url = item.findViewById(R.id.tab_card_url);
+                    status = item.findViewById(R.id.tab_card_status);
+                    preview = item.findViewById(R.id.tab_card_preview);
+                    privateIcon = item.findViewById(R.id.tab_icon_incognito);
+                    active = item.findViewById(R.id.tab_active_indicator);
+                    item.setOnClickListener(v -> {
+                        int index = tabsManager.getTabs().indexOf(tab);
+                        if (index < 0 || tabGrid != dialog) return;
+                        dismissTabGrid();
+                        tabsManager.switchTab(index);
+                    });
+                    item.findViewById(R.id.tab_card_btn_close).setOnClickListener(v -> closeGridTab(dialog, tab));
                 }
             }
-        };
+            RecyclerView.Adapter<Card> adapter = new RecyclerView.Adapter<Card>() {
+                @NonNull @Override public Card onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+                    return new Card(LayoutInflater.from(parent.getContext()).inflate(R.layout.item_tab_grid_card, parent, false));
+                }
 
-        new androidx.recyclerview.widget.ItemTouchHelper(swipeCallback).attachToRecyclerView(recyclerView);
+                @Override public void onBindViewHolder(@NonNull Card holder, int position) {
+                    TabModel tab = tabsManager.getTabs().get(position);
+                    holder.tab = tab;
+                    holder.title.setText(tab.getTitle());
+                    String url = tab.sessionUrl();
+                    holder.url.setText(url == null ? "" : url.replaceFirst("^https?://", ""));
+                    holder.privateIcon.setVisibility(tab.isIncognito() ? View.VISIBLE : View.GONE);
+                    holder.active.setVisibility(tab == activeTab() ? View.VISIBLE : View.GONE);
+                    int label = tab.keepLive ? R.string.tab_kept_live
+                            : tab.hasPageTransfer() ? R.string.tab_live_for_download
+                            : tab.navigation.rendererLost() ? R.string.tab_needs_restore
+                            : tab.recovery() != null ? R.string.tab_saved : 0;
+                    holder.status.setVisibility(label == 0 ? View.GONE : View.VISIBLE);
+                    if (label != 0) holder.status.setText(label);
+                    holder.preview.setImageDrawable(tabPreviews.drawable(tab));
+                }
 
-        view.findViewById(R.id.tabs_btn_new_tab).setOnClickListener(v -> {
-            String home = getDefaultHomeUrl();
-            TabModel newTab = tabsManager.createTab(this, home, false);
-            newTab.getWebView().loadUrl(home);
-            dialog.dismiss();
-        });
+                @Override public void onViewRecycled(@NonNull Card holder) {
+                    holder.preview.setImageDrawable(null);
+                    holder.tab = null;
+                }
 
-        view.findViewById(R.id.tabs_btn_new_incognito).setOnClickListener(v -> {
-            String home = getDefaultHomeUrl();
-            TabModel newTab = tabsManager.createTab(this, home, true);
-            newTab.getWebView().loadUrl(home);
-            dialog.dismiss();
-        });
-
-        view.findViewById(R.id.tabs_btn_close_all).setOnClickListener(v -> {
-            AlertDialog.Builder closeConfirmBuilder = new AlertDialog.Builder(this, ThemeManager.getDialogTheme(MainActivity.this));
-            closeConfirmBuilder.setTitle("Close All Tabs");
-            closeConfirmBuilder.setMessage("Close all " + tabsManager.getTabCount() + " open tabs?");
-            closeConfirmBuilder.setPositiveButton("Close All", (d, w) -> {
-                tabsManager.closeAllTabs(this);
-                dialog.dismiss();
+                @Override public int getItemCount() { return tabsManager.getTabCount(); }
+            };
+            ItemTouchHelper swipe = new ItemTouchHelper(new ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT) {
+                @Override public boolean onMove(@NonNull RecyclerView list, @NonNull RecyclerView.ViewHolder holder,
+                                                @NonNull RecyclerView.ViewHolder target) { return false; }
+                @Override public void onSwiped(@NonNull RecyclerView.ViewHolder holder, int direction) {
+                    closeGridTab(dialog, ((Card) holder).tab);
+                }
             });
-            closeConfirmBuilder.setNegativeButton("Cancel", null);
-            AlertDialog closeConfirmDlg = closeConfirmBuilder.create();
-            closeConfirmDlg.show();
-            applyAmoledDialogTheme(closeConfirmDlg);
-        });
+            tabGrid = dialog;
+            tabGridTitle = content.findViewById(R.id.tabs_grid_title);
+            tabGridAdapter = adapter;
+            recycler.setAdapter(adapter);
+            swipe.attachToRecyclerView(recycler);
+            dialog.setOnDismissListener(ignored -> {
+                clearTabGrid(dialog);
+                swipe.attachToRecyclerView(null);
+                recycler.setAdapter(null);
+            });
 
-        dialog.show();
+            content.findViewById(R.id.tabs_btn_new_tab).setOnClickListener(v -> {
+                if (tabGrid != dialog || !resumed || !sessionWritable()) return;
+                dismissTabGrid();
+                String home = getDefaultHomeUrl();
+                loadInTab(tabsManager.createTab(this, home), home);
+            });
+            content.findViewById(R.id.tabs_btn_new_incognito).setOnClickListener(v -> {
+                if (tabGrid != dialog || !resumed || !sessionWritable()) return;
+                dismissTabGrid();
+                explainPrivateUnavailable();
+            });
+            content.findViewById(R.id.tabs_btn_close_all).setOnClickListener(v -> {
+                if (tabGrid != dialog || closeTabsConfirmation != null) return;
+                AlertDialog confirm = new AlertDialog.Builder(this, ThemeManager.getDialogTheme(this))
+                        .setTitle(R.string.tabs_close_all)
+                        .setMessage(getString(R.string.tabs_close_all_confirm, tabsManager.getTabCount()))
+                        .setPositiveButton(R.string.tabs_close_all, (d, w) -> {
+                            if (tabGrid != dialog || !resumed || !sessionWritable()) return;
+                            dismissTabGrid();
+                            tabsManager.closeAllTabs(this);
+                        }).setNegativeButton(android.R.string.cancel, null).create();
+                closeTabsConfirmation = confirm;
+                confirm.setOnDismissListener(d -> {
+                    if (closeTabsConfirmation == confirm) closeTabsConfirmation = null;
+                });
+                confirm.show();
+                applyAmoledDialogTheme(confirm);
+            });
+            refreshTabGrid();
+            dialog.show();
+        } finally { Trace.endSection(); }
+    }
+
+    private void closeGridTab(AlertDialog dialog, TabModel tab) {
+        if (tabGrid != dialog || tab == null) return;
+        int index = tabsManager.getTabs().indexOf(tab);
+        if (index < 0) return;
+        if (tabsManager.getTabCount() == 1) dismissTabGrid();
+        tabsManager.closeTab(index, this);
+    }
+
+    private void refreshTabGrid() {
+        if (tabGridAdapter == null) return;
+        tabGridTitle.setText(getString(R.string.tabs_open_count, tabsManager.getTabCount()));
+        tabGridAdapter.notifyDataSetChanged();
+    }
+
+    private void clearTabGrid(AlertDialog dialog) {
+        if (tabGrid != dialog) return;
+        tabGrid = null;
+        tabGridAdapter = null;
+        tabGridTitle = null;
+        if (closeTabsConfirmation != null) {
+            closeTabsConfirmation.dismiss();
+            closeTabsConfirmation = null;
+        }
+    }
+
+    private void dismissTabGrid() {
+        AlertDialog dialog = tabGrid;
+        if (dialog != null) {
+            clearTabGrid(dialog);
+            dialog.dismiss();
+        }
     }
 
     private void showBrowserMenu() {
@@ -2052,7 +2447,7 @@ public class MainActivity extends Activity {
             navBack.setColorFilter(activeIconColor);
             navBack.setOnClickListener(v -> {
                 popupWindow.dismiss();
-                active.getWebView().goBack();
+                navigateHistory(active, -1);
             });
         } else {
             navBack.setEnabled(false);
@@ -2064,7 +2459,7 @@ public class MainActivity extends Activity {
             navForward.setColorFilter(activeIconColor);
             navForward.setOnClickListener(v -> {
                 popupWindow.dismiss();
-                active.getWebView().goForward();
+                navigateHistory(active, 1);
             });
         } else {
             navForward.setEnabled(false);
@@ -2074,7 +2469,8 @@ public class MainActivity extends Activity {
         navReload.setColorFilter(activeIconColor);
         navReload.setOnClickListener(v -> {
             popupWindow.dismiss();
-            active.getWebView().reload();
+            if (active.getWebView() != null) reloadTab(active);
+            else restoreLostTab(active);
         });
 
         // Configure Bookmark item
@@ -2114,6 +2510,13 @@ public class MainActivity extends Activity {
             extractAndGrabPageLinks(active);
         });
 
+        View scanComic = popupView.findViewById(R.id.menu_item_scan_comic);
+        scanComic.setVisibility(canScanComic(active) ? View.VISIBLE : View.GONE);
+        scanComic.setOnClickListener(v -> {
+            popupWindow.dismiss();
+            scanComicPages(active);
+        });
+
         // Ad Blocker Shield item
         View itemAdblock = popupView.findViewById(R.id.menu_item_adblock);
         if (itemAdblock != null) {
@@ -2121,7 +2524,7 @@ public class MainActivity extends Activity {
             ImageView iconAdblock = popupView.findViewById(R.id.menu_icon_adblock);
             com.privacy.browser.adblock.AdBlockManager abm = com.privacy.browser.adblock.AdBlockManager.getInstance(this);
             boolean isWhitelisted = abm.isSiteWhitelisted(active.getUrl());
-            int blockedCount = abm.getPageBlockedCount(active.getId());
+            int blockedCount = abm.getPageBlockedCount(active.pageKey());
             if (badgeAdblock != null) {
                 if (isWhitelisted || !abm.isGlobalEnabled()) {
                     badgeAdblock.setText("OFF");
@@ -2137,9 +2540,9 @@ public class MainActivity extends Activity {
                 popupWindow.dismiss();
                 com.privacy.browser.adblock.AdBlockDashboardDialog.show(
                         MainActivity.this,
-                        active.getId(),
+                        active.pageKey(),
                         active.getUrl(),
-                        () -> active.getWebView().reload(),
+                        () -> reloadTab(active),
                         () -> startElementZapper(),
                         () -> startElementPicker(),
                         () -> showMyFilters()
@@ -2159,6 +2562,7 @@ public class MainActivity extends Activity {
             itemAgent.setOnClickListener(v -> {
                 boolean newState = !aiConfig.isAgentEnabled();
                 aiConfig.setAgentEnabled(newState);
+                if (!newState && agentBottomSheet != null) agentBottomSheet.disabled();
                 if (switchAgent != null) switchAgent.setChecked(newState);
                 updateAiFloatingButtonVisibility();
                 popupWindow.dismiss();
@@ -2170,43 +2574,18 @@ public class MainActivity extends Activity {
         if (itemImageSearch != null) {
             itemImageSearch.setOnClickListener(v -> {
                 popupWindow.dismiss();
-                com.privacy.imagesearch.ui.ImageSearchHubDialog.show(
-                        MainActivity.this,
-                        null,
-                        new com.privacy.imagesearch.ui.ImageSearchHubDialog.ImageSearchCallback() {
-                            @Override
-                            public void onSearchRequested(@NonNull String searchUrl, boolean openInBackground) {
-                                if (openInBackground) {
-                                    TabModel bgTab = tabsManager.createTab(MainActivity.this, searchUrl, active.isIncognito(), true);
-                                    setupClientsForTab(bgTab);
-                                    bgTab.getWebView().loadUrl(searchUrl);
-                                    showBackgroundTabNotice(bgTab);
-                                } else {
-                                    TabModel newTab = tabsManager.createTab(MainActivity.this, searchUrl, active.isIncognito());
-                                    setupClientsForTab(newTab);
-                                    newTab.getWebView().loadUrl(searchUrl);
-                                    tabsManager.switchTab(tabsManager.getTabCount() - 1);
-                                }
-                            }
-
-                            @Override
-                            public void onSelectWebImageRequested() {
-                                startImageSearchPicker();
-                            }
-
-                            @Override
-                            public void onCaptureRegionRequested() {
-                                startImageSearchAreaCrop();
-                            }
-
-                            @Override
-                            public void onUploadLocalImageRequested() {
-                                startImageSearchFilePicker();
-                            }
-                        }
-                );
+                showImageSearchEngineChooser(active, null);
             });
         }
+
+        View pin = popupView.findViewById(R.id.menu_item_keep_tab_live);
+        TextView pinLabel = pin.findViewById(R.id.menu_label_keep_tab_live);
+        pinLabel.setText(active.keepLive ? R.string.tab_release_pin : R.string.tab_keep_live);
+        pin.setVisibility(canToggleLivePin(active) ? View.VISIBLE : View.GONE);
+        pin.setOnClickListener(v -> {
+            popupWindow.dismiss();
+            toggleLivePin(active);
+        });
 
         // Desktop Site mode
         TextView badgeDesktop = popupView.findViewById(R.id.menu_badge_desktop);
@@ -2224,7 +2603,7 @@ public class MainActivity extends Activity {
 
         popupView.findViewById(R.id.menu_item_reader).setOnClickListener(v -> {
             popupWindow.dismiss();
-            ReaderModeHelper.toggleReaderMode(active.getWebView());
+            if (allowsPageScripts(active, active.getWebView())) ReaderModeHelper.toggleReaderMode(active.getWebView());
         });
 
         popupView.findViewById(R.id.menu_item_find).setOnClickListener(v -> {
@@ -2250,7 +2629,7 @@ public class MainActivity extends Activity {
 
         popupView.findViewById(R.id.menu_item_nuke).setOnClickListener(v -> {
             popupWindow.dismiss();
-            nukeAllData();
+            showClearDataChoices();
         });
 
         int xOffset = (int) (-180 * getResources().getDisplayMetrics().density);
@@ -2258,169 +2637,76 @@ public class MainActivity extends Activity {
         popupWindow.showAsDropDown(btnMenu, xOffset, yOffset);
     }
 
+    private boolean canToggleLivePin(TabModel tab) {
+        PrivacyWebView view = tab.getWebView();
+        return !tab.isIncognito() && foreground(tab, view) && sessionWritable() && (tab.keepLive
+                || (currentPage(tab, view, tab.navigation.page(), true) && !InternalHome.ownsHost(tab.getUrl())
+                && RequestContext.origin(tab.getUrl()) != null));
+    }
+
+    private void toggleLivePin(TabModel tab) {
+        if (!canToggleLivePin(tab)) return;
+        if (!tab.keepLive && TabViewBudget.count(tabsManager.getTabs(), saved -> saved.keepLive) >= TabViewBudget.MANUAL_PINS) {
+            Toast.makeText(this, getString(R.string.tab_pin_limit, TabViewBudget.MANUAL_PINS), Toast.LENGTH_LONG).show();
+            return;
+        }
+        tab.keepLive = !tab.keepLive;
+        Toast.makeText(this, tab.keepLive ? R.string.tab_pin_enabled : R.string.tab_pin_released, Toast.LENGTH_SHORT).show();
+        tabResourcesChanged();
+    }
+
     private void extractAndGrabPageLinks(TabModel active) {
-        if (active == null || active.getWebView() == null) return;
-        PrivacyWebView webView = active.getWebView();
-        String js = "(function() {" +
-                "  var list = [];" +
-                "  var seen = new Set();" +
-                "  function categorize(url, fallbackType) {" +
-                "    var u = (url || '').toLowerCase().split('?')[0];" +
-                "    if (u.match(/\\.(mp4|mkv|webm|avi|mov|flv|m3u8|ts|mpd)$/)) return 'video';" +
-                "    if (u.match(/\\.(mp3|m4a|aac|flac|wav|ogg|opus)$/)) return 'audio';" +
-                "    if (u.match(/\\.(zip|rar|7z|tar|gz|bz2|xz|apk|iso)$/)) return 'archive';" +
-                "    if (u.match(/\\.(pdf|epub|mobi|doc|docx|xls|xlsx|ppt|pptx)$/)) return 'document';" +
-                "    if (u.match(/\\.(jpg|jpeg|png|webp|gif|svg|bmp)$/)) return 'image';" +
-                "    return fallbackType || 'link';" +
-                "  }" +
-                "  function add(url, text, type) {" +
-                "    if (!url || url.indexOf('javascript:') === 0 || url.indexOf('about:') === 0 || url.indexOf('blob:') === 0 || url.indexOf('proxy.html') !== -1) return;" +
-                "    if (seen.has(url)) return;" +
-                "    seen.add(url);" +
-                "    list.push({url: url, title: (text || '').trim().substring(0, 100), type: categorize(url, type)});" +
-                "  }" +
-                "  var links = document.querySelectorAll('a[href]');" +
-                "  for (var i = 0; i < links.length; i++) {" +
-                "    add(links[i].href, links[i].innerText || links[i].getAttribute('title'), 'link');" +
-                "  }" +
-                "  var media = document.querySelectorAll('img[src], video[src], audio[src], source[src], track[src]');" +
-                "  for (var j = 0; j < media.length; j++) {" +
-                "    var tag = media[j].tagName.toLowerCase();" +
-                "    var t = tag === 'img' ? 'image' : (tag === 'video' ? 'video' : (tag === 'audio' ? 'audio' : 'link'));" +
-                "    add(media[j].src, media[j].getAttribute('alt') || media[j].getAttribute('title') || media[j].getAttribute('label') || '', t);" +
-                "  }" +
-                "  var iframes = document.querySelectorAll('iframe[src]');" +
-                "  for (var k = 0; k < iframes.length; k++) {" +
-                "    var isrc = iframes[k].src;" +
-                "    if (!isrc || isrc.indexOf('proxy.html') !== -1 || isrc.indexOf('about:') === 0 || isrc.indexOf('javascript:') === 0) continue;" +
-                "    if (isrc.match(/(?:player\\.vimeo\\.com\\/video\\/|vimeo\\.com\\/)(\\d+)/i)) {" +
-                "      list.push({url: isrc, title: iframes[k].getAttribute('title') || 'Vimeo Video', type: 'vimeo'});" +
-                "      continue;" +
-                "    }" +
-                "    if (isrc.match(/(youtube\\.com|dailymotion\\.com)/i)) {" +
-                "      add(isrc, iframes[k].getAttribute('title') || 'Embedded Video Player', 'link');" +
-                "    }" +
-                "  }" +
-                "  return JSON.stringify(list);" +
-                "})();";
-
-        webView.evaluateJavascript(js, value -> {
+        if (active == null || active.getWebView() == null || rejectPrivateDownloads(active)) return;
+        PrivacyWebView view = active.getWebView();
+        TabNavigation.Page page = active.navigation.page();
+        if (!currentPage(active, view, page, true) || !allowsPageScripts(active, view)) return;
+        RequestContext request = downloadContext(active);
+        // The link grabber is an explicit DOM snapshot, not another path to automatic network probes.
+        evaluateMediaSnapshot(active, view, MediaPageScripts.LINKS_JS, value -> {
+            if (!currentPage(active, view, page, true)) return;
+            JSONArray result = new JSONArray();
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            int chars = 0;
             try {
-                String currentUrl = active.getUrl();
-                String pageTitle = active.getTitle();
-                java.util.List<String> vimeoTargets = new java.util.ArrayList<>();
-                if (com.privacy.browser.media.MediaSniffer.isVimeoUrl(currentUrl)) {
-                    vimeoTargets.add(currentUrl);
-                }
-
-                java.util.List<org.json.JSONObject> domItems = new java.util.ArrayList<>();
-                if (value != null && !value.equals("null") && !value.isEmpty()) {
-                    String jsonStr = value;
-                    if (jsonStr.startsWith("\"") && jsonStr.endsWith("\"")) {
-                        org.json.JSONTokener tokener = new org.json.JSONTokener(jsonStr);
-                        Object obj = tokener.nextValue();
-                        if (obj instanceof String) {
-                            jsonStr = (String) obj;
-                        }
-                    }
-                    try {
-                        org.json.JSONArray domArr = new org.json.JSONArray(jsonStr);
-                        for (int i = 0; i < domArr.length(); i++) {
-                            org.json.JSONObject item = domArr.getJSONObject(i);
-                            String u = item.optString("url");
-                            String t = item.optString("type");
-                            if ("vimeo".equalsIgnoreCase(t)) {
-                                if (u != null && !vimeoTargets.contains(u)) {
-                                    vimeoTargets.add(u);
-                                }
-                            } else {
-                                domItems.add(item);
-                            }
-                        }
-                    } catch (Exception ignored) {}
-                }
-
-                // Check if Vimeo targets need proactive resolution before displaying grabber
-                java.util.List<com.privacy.browser.media.MediaSniffer.SniffedMedia> existingSniffed =
-                        com.privacy.browser.media.MediaSniffer.getMediaForTab(active.getId());
-                boolean hasVideoStreams = false;
-                for (com.privacy.browser.media.MediaSniffer.SniffedMedia sm : existingSniffed) {
-                    if ("video".equalsIgnoreCase(sm.getType())) {
-                        hasVideoStreams = true;
-                        break;
+                Predicate<String> allowed = mediaOptionsPolicy(view);
+                if (videoDiscoveryEnabled) {
+                    for (MediaSniffer.SniffedMedia row : page.media.snapshot()) {
+                        if (!allowed.test(row.getUrl()) || !seen.add(row.getUrl())) continue;
+                        JSONObject item = new JSONObject().put("url", row.getUrl()).put("title", row.getTitle()).put("type", row.getType());
+                        chars += item.toString().length() + 1;
+                        if (chars > 120 * 1024) break;
+                        result.put(item);
                     }
                 }
-
-                Runnable proceedToGrabber = () -> {
-                    try {
-                        org.json.JSONArray finalArr = new org.json.JSONArray();
-                        java.util.Set<String> seenUrls = new java.util.HashSet<>();
-
-                        // 1. Network & Platform Sniffed Media (Vimeo streams, HLS, DASH, direct MP4)
-                        java.util.List<com.privacy.browser.media.MediaSniffer.SniffedMedia> sniffedList =
-                                com.privacy.browser.media.MediaSniffer.getMediaForTab(active.getId());
-                        for (com.privacy.browser.media.MediaSniffer.SniffedMedia sm : sniffedList) {
-                            if (seenUrls.add(sm.getUrl())) {
-                                org.json.JSONObject obj = new org.json.JSONObject();
-                                obj.put("url", sm.getUrl());
-                                obj.put("title", sm.getTitle());
-                                obj.put("type", sm.getType());
-                                if (sm.getReferrer() != null) {
-                                    obj.put("referrer", sm.getReferrer());
-                                }
-                                finalArr.put(obj);
-                            }
-                        }
-
-                        // 2. DOM Extracted items
-                        for (org.json.JSONObject item : domItems) {
-                            String u = item.optString("url");
-                            if (u != null && seenUrls.add(u)) {
-                                finalArr.put(item);
-                            }
-                        }
-
-                        if (finalArr.length() == 0) {
-                            Toast.makeText(MainActivity.this, "No media links found on this page", Toast.LENGTH_SHORT).show();
-                            return;
-                        }
-
-                        Intent intent = new Intent(MainActivity.this, LinkGrabberActivity.class);
-                        intent.putExtra(LinkGrabberActivity.EXTRA_LINKS_JSON, finalArr.toString());
-                        intent.putExtra(LinkGrabberActivity.EXTRA_COOKIES, CookieManager.getInstance().getCookie(active.getUrl()));
-                        intent.putExtra(LinkGrabberActivity.EXTRA_USER_AGENT, webView.getSettings().getUserAgentString());
-                        intent.putExtra(LinkGrabberActivity.EXTRA_REFERRER, active.getUrl());
-                        startActivity(intent);
-                    } catch (Exception e) {
-                        Toast.makeText(MainActivity.this, "Failed to build links: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                    }
-                };
-
-                if (!hasVideoStreams && !vimeoTargets.isEmpty()) {
-                    java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(vimeoTargets.size());
-                    for (String vt : vimeoTargets) {
-                        com.privacy.browser.media.MediaSniffer.resolveVimeoFromUrl(active.getId(), vt, pageTitle, latch::countDown);
-                    }
-                    new Thread(() -> {
-                        try {
-                            latch.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS);
-                        } catch (Exception ignored) {}
-                        runOnUiThread(proceedToGrabber);
-                    }).start();
-                } else {
-                    proceedToGrabber.run();
+                JSONArray dom = mediaSnapshot(value);
+                for (int i = 0; dom != null && i < Math.min(160, dom.length()); i++) {
+                    JSONObject raw = dom.optJSONObject(i);
+                    if (raw == null) continue;
+                    String url = boundedWebUrl(raw.optString("url"));
+                    if (url == null || !seen.add(url)) continue;
+                    JSONObject item = new JSONObject().put("url", url)
+                            .put("title", clipLabel(raw.optString("title"), 100)).put("type", clipLabel(raw.optString("type"), 16));
+                    chars += item.toString().length() + 1;
+                    if (chars > 120 * 1024) break;
+                    result.put(item);
                 }
-
-            } catch (Exception e) {
-                Toast.makeText(MainActivity.this, "Failed to parse page links: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                if (result.length() != 0) LinkGrabberActivity.launch(this, result.toString(), request);
+                else Toast.makeText(this, R.string.media_no_links, Toast.LENGTH_SHORT).show();
+            } catch (org.json.JSONException ignored) {
+                Toast.makeText(this, R.string.media_no_links, Toast.LENGTH_SHORT).show();
             }
         });
     }
 
+    private static String clipLabel(String value, int limit) { return value.substring(0, Math.min(limit, value.length())); }
+
     private void setupWebViewContextMenu(PrivacyWebView webView, TabModel tab) {
         webView.setOnLongClickListener(v -> {
+            TabNavigation.Page page = tab.navigation.page();
+            if (!currentPage(tab, webView, page, true)) return false;
             WebView.HitTestResult result = webView.getHitTestResult();
             if (result == null) return false;
+            RequestContext request = downloadContext(tab);
             int type = result.getType();
             String extra = result.getExtra();
 
@@ -2429,23 +2715,24 @@ public class MainActivity extends Activity {
                 android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
                 android.os.Message msg = handler.obtainMessage();
                 msg.setTarget(new android.os.Handler(android.os.Looper.getMainLooper(), m -> {
+                    if (!currentPage(tab, webView, page, true)) return true;
                     String linkUrl = m.getData().getString("url");
                     String srcUrl = m.getData().getString("src");
                     if (linkUrl == null || linkUrl.isEmpty()) linkUrl = extra;
                     if (srcUrl == null || srcUrl.isEmpty()) srcUrl = extra;
-                    showTabbedContextMenu(tab, linkUrl, srcUrl, true, true);
+                    showTabbedContextMenu(tab, linkUrl, srcUrl, true, true, request);
                     return true;
                 }));
                 webView.requestFocusNodeHref(msg);
                 return true;
             } else if (type == WebView.HitTestResult.SRC_ANCHOR_TYPE) {
                 if (extra != null && !extra.isEmpty()) {
-                    showTabbedContextMenu(tab, extra, null, true, false);
+                    showTabbedContextMenu(tab, extra, null, true, false, request);
                     return true;
                 }
             } else if (type == WebView.HitTestResult.IMAGE_TYPE) {
                 if (extra != null && !extra.isEmpty()) {
-                    showTabbedContextMenu(tab, null, extra, false, true);
+                    showTabbedContextMenu(tab, null, extra, false, true, request);
                     return true;
                 }
             }
@@ -2453,8 +2740,9 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void showTabbedContextMenu(TabModel tab, String linkUrl, String imageUrl, boolean hasLink, boolean hasImage) {
+    private void showTabbedContextMenu(TabModel tab, String linkUrl, String imageUrl, boolean hasLink, boolean hasImage, RequestContext request) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this, ThemeManager.getDialogTheme(MainActivity.this));
+        dismissPageContextMenu();
         View view = LayoutInflater.from(this).inflate(R.layout.dialog_tabbed_context_menu, null);
         builder.setView(view);
 
@@ -2500,7 +2788,7 @@ public class MainActivity extends Activity {
                         return;
                     }
                     TabModel newTab = tabsManager.createTab(this, linkUrl, tab.isIncognito());
-                    newTab.getWebView().loadUrl(linkUrl);
+                    loadInTab(newTab, linkUrl);
                     dialog.dismiss();
                 });
 
@@ -2510,17 +2798,12 @@ public class MainActivity extends Activity {
                         dialog.dismiss();
                         return;
                     }
-                    TabModel bgTab = tabsManager.createTab(this, linkUrl, tab.isIncognito(), true);
-                    setupClientsForTab(bgTab);
-                    bgTab.getWebView().loadUrl(linkUrl);
-                    showBackgroundTabNotice(bgTab);
+                    queueBackgroundTab(tab, linkUrl);
                     dialog.dismiss();
                 });
 
                 addContextAction(actionsContainer, "Download Link with Manager", R.drawable.ic_download, () -> {
-                    String cookies = CookieManager.getInstance().getCookie(linkUrl);
-                    String userAgent = tab.getWebView().getSettings().getUserAgentString();
-                    DownloadPromptDialog.show(this, linkUrl, userAgent, null, null, cookies, tab.getUrl(), null);
+                    DownloadPromptDialog.show(this, linkUrl, request, null, null, -1);
                     dialog.dismiss();
                 });
 
@@ -2555,22 +2838,17 @@ public class MainActivity extends Activity {
 
                 addContextAction(actionsContainer, "Open Image in New Tab", R.drawable.ic_add, () -> {
                     TabModel newTab = tabsManager.createTab(this, imageUrl, tab.isIncognito());
-                    newTab.getWebView().loadUrl(imageUrl);
+                    loadInTab(newTab, imageUrl);
                     dialog.dismiss();
                 });
 
                 addContextAction(actionsContainer, "Open Image in Background", R.drawable.ic_add, () -> {
-                    TabModel bgTab = tabsManager.createTab(this, imageUrl, tab.isIncognito(), true);
-                    setupClientsForTab(bgTab);
-                    bgTab.getWebView().loadUrl(imageUrl);
-                    showBackgroundTabNotice(bgTab);
+                    queueBackgroundTab(tab, imageUrl);
                     dialog.dismiss();
                 });
 
                 addContextAction(actionsContainer, "Download Image with Manager", R.drawable.ic_download, () -> {
-                    String cookies = CookieManager.getInstance().getCookie(imageUrl);
-                    String userAgent = tab.getWebView().getSettings().getUserAgentString();
-                    DownloadPromptDialog.show(this, imageUrl, userAgent, null, "image/*", cookies, tab.getUrl(), null);
+                    DownloadPromptDialog.show(this, imageUrl, request, null, "image/*", -1);
                     dialog.dismiss();
                 });
 
@@ -2610,48 +2888,62 @@ public class MainActivity extends Activity {
         renderActions.run();
 
         view.findViewById(R.id.ctx_btn_dismiss).setOnClickListener(v -> dialog.dismiss());
+        pageContextMenu = dialog;
+        dialog.setOnDismissListener(d -> {
+            if (pageContextMenu == dialog) pageContextMenu = null;
+        });
         dialog.show();
     }
 
-    private void showBackgroundTabNotice(TabModel bgTab) {
-        int tabCount = tabsManager.getTabCount();
-        Toast.makeText(this, "Opened in background (Tab " + tabCount + ")", Toast.LENGTH_SHORT).show();
+    private void dismissPageContextMenu() {
+        if (pageContextMenu == null) return;
+        AlertDialog menu = pageContextMenu;
+        pageContextMenu = null;
+        menu.dismiss();
     }
 
-    private void showImageSearchEngineChooser(TabModel tab, String imageUrl) {
+    private void queueBackgroundTab(TabModel source, String candidate) {
+        PrivacyWebView view = source.getWebView();
+        if (!currentPage(source, view, source.navigation.page(), true)) return;
+        TabModel tab = tabsManager.queueBackgroundTab(navigationTarget(candidate), source.isIncognito());
+        if (tab == null) Toast.makeText(this, R.string.tab_background_unavailable, Toast.LENGTH_SHORT).show();
+        else Toast.makeText(this, R.string.tab_background_queued, Toast.LENGTH_SHORT).show();
+    }
+
+    private void showImageSearchEngineChooser(TabModel tab, @Nullable String imageUrl) {
+        PrivacyWebView webView = tab.getWebView();
+        TabNavigation.Page page = tab.navigation.page();
+        if (tab.isIncognito() || !currentPage(tab, webView, page, true)) return;
+        long scope = assistantForegroundEpoch;
         com.privacy.imagesearch.ui.ImageSearchHubDialog.show(
                 this,
                 imageUrl,
                 new com.privacy.imagesearch.ui.ImageSearchHubDialog.ImageSearchCallback() {
                     @Override
                     public void onSearchRequested(@NonNull String searchUrl, boolean openInBackground) {
+                        if (scope != assistantForegroundEpoch || !currentPage(tab, webView, page, true)) {
+                            Toast.makeText(MainActivity.this, "Tab changed. No image URL was sent.", Toast.LENGTH_LONG).show();
+                            return;
+                        }
                         if (openInBackground) {
-                            TabModel bgTab = tabsManager.createTab(MainActivity.this, searchUrl, tab.isIncognito(), true);
-                            setupClientsForTab(bgTab);
-                            bgTab.getWebView().loadUrl(searchUrl);
-                            showBackgroundTabNotice(bgTab);
+                            queueBackgroundTab(tab, searchUrl);
                         } else {
                             TabModel newTab = tabsManager.createTab(MainActivity.this, searchUrl, tab.isIncognito());
                             setupClientsForTab(newTab);
-                            newTab.getWebView().loadUrl(searchUrl);
+                            loadInTab(newTab, searchUrl);
                             tabsManager.switchTab(tabsManager.getTabCount() - 1);
                         }
                     }
 
                     @Override
                     public void onSelectWebImageRequested() {
+                        if (scope != assistantForegroundEpoch || !currentPage(tab, webView, page, true)) {
+                            Toast.makeText(MainActivity.this, "Tab changed. No image URL was sent.", Toast.LENGTH_LONG).show();
+                            return;
+                        }
                         startImageSearchPicker();
                     }
 
-                    @Override
-                    public void onCaptureRegionRequested() {
-                        startImageSearchAreaCrop();
-                    }
-
-                    @Override
-                    public void onUploadLocalImageRequested() {
-                        startImageSearchFilePicker();
-                    }
                 }
         );
     }
@@ -2679,6 +2971,8 @@ public class MainActivity extends Activity {
     }
 
     private void toggleBookmarkCurrentPage(TabModel active) {
+        PrivacyWebView view = active.getWebView();
+        if (active.isIncognito() || !currentPage(active, view, active.navigation.page(), true)) return;
         String url = active.getUrl();
         if (url == null || url.trim().isEmpty() || url.startsWith("about:")) {
             Toast.makeText(this, "Cannot bookmark this page", Toast.LENGTH_SHORT).show();
@@ -2693,8 +2987,14 @@ public class MainActivity extends Activity {
                 title = active.getWebView().getTitle();
             }
             long newId = bookmarkDbHelper.addBookmarkAndGetId(title, url, 0);
-            if (newId > 0 && active.getWebView() != null) {
-                com.privacy.browser.bookmarks.BookmarkPreviewManager.getInstance(this).captureAndSavePreview(newId, active.getWebView());
+            if (newId <= 0) {
+                Toast.makeText(this, "Could not save bookmark", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (active.getWebView() != null) {
+                TabNavigation.Page page = active.navigation.page();
+                com.privacy.browser.bookmarks.BookmarkPreviewManager.getInstance(this).captureAndSavePreview(newId, view,
+                        () -> currentPage(active, view, page, true));
             }
             Toast.makeText(this, "Bookmark saved", Toast.LENGTH_SHORT).show();
         }
@@ -2784,9 +3084,8 @@ public class MainActivity extends Activity {
             BookmarkModel bm = bookmarks.get(position);
             TabModel active = tabsManager.getActiveTab();
             if (active != null) {
-                active.setUrl(bm.getUrl());
-                active.getWebView().loadUrl(bm.getUrl());
-                saveSession();
+
+                loadInTab(active, bm.getUrl());
             }
             dialog.dismiss();
         });
@@ -2799,7 +3098,7 @@ public class MainActivity extends Activity {
                     if (which == 0) {
                         TabModel newTab = tabsManager.createTab(MainActivity.this, bm.getUrl());
                         setupClientsForTab(newTab);
-                        newTab.getWebView().loadUrl(bm.getUrl());
+                        loadInTab(newTab, bm.getUrl());
                         dialog.dismiss();
                     } else if (which == 1) {
                         bookmarkDbHelper.removeBookmark(bm.getUrl());
@@ -2919,9 +3218,8 @@ public class MainActivity extends Activity {
             HistoryModel item = historyList.get(position);
             TabModel active = tabsManager.getActiveTab();
             if (active != null) {
-                active.setUrl(item.getUrl());
-                active.getWebView().loadUrl(item.getUrl());
-                saveSession();
+
+                loadInTab(active, item.getUrl());
             }
             dialog.dismiss();
         });
@@ -2934,7 +3232,7 @@ public class MainActivity extends Activity {
                     if (which == 0) {
                         TabModel newTab = tabsManager.createTab(MainActivity.this, item.getUrl());
                         setupClientsForTab(newTab);
-                        newTab.getWebView().loadUrl(item.getUrl());
+                        loadInTab(newTab, item.getUrl());
                         dialog.dismiss();
                     } else if (which == 1) {
                         historyDbHelper.deleteVisit(item.getId());
@@ -2988,191 +3286,173 @@ public class MainActivity extends Activity {
         startActivity(Intent.createChooser(shareIntent, "Share link via"));
     }
 
-    private void toggleDesktopMode(TabModel tab) {
-        boolean nextState = !tab.isDesktopMode();
-        tab.setDesktopMode(nextState);
-        if (nextState) {
+    private void applyDesktopMode(TabModel tab) {
+        if (tab.getWebView() == null) return;
+        if (tab.isDesktopMode()) {
             tab.getWebView().getSettings().setUserAgentString(DESKTOP_UA);
             tab.getWebView().getSettings().setUseWideViewPort(true);
             tab.getWebView().getSettings().setLoadWithOverviewMode(true);
         } else {
             PrivacyWebView.applyCleanMobileUserAgent(tab.getWebView().getSettings());
         }
-        tab.getWebView().reload();
-        Toast.makeText(this, nextState ? "Desktop mode enabled" : "Mobile mode restored", Toast.LENGTH_SHORT).show();
     }
 
-    private void nukeAllData() {
-        AlertDialog dialog = new AlertDialog.Builder(this, ThemeManager.getDialogTheme(MainActivity.this))
-            .setTitle("Fire / Nuke Data")
-            .setMessage("Wipe all cookies, cache, web storage, history, and close all tabs?")
-            .setPositiveButton("Nuke Everything", (d, which) -> {
-                // Clear Cookies
-                CookieManager.getInstance().removeAllCookies(null);
-                CookieManager.getInstance().flush();
-
-                // Clear Web Storage & Databases
-                WebStorage.getInstance().deleteAllData();
-
-                // Clear History Database
-                if (historyDbHelper != null) {
-                    historyDbHelper.clearAll();
-                }
-
-                // Clear Saved Session in SharedPreferences
-                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().clear().commit();
-
-                // Reset Tabs & Cache
-                tabsManager.closeAllTabs(this);
-                blockedTrackerCount = 0;
-                btnShield.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_shield, 0, 0, 0);
-                btnShield.setText("0");
-
-                Toast.makeText(this, "Session incinerated. All traces cleared.", Toast.LENGTH_SHORT).show();
-            })
-            .setNegativeButton("Cancel", null)
-            .create();
-        dialog.show();
-        applyAmoledDialogTheme(dialog);
+    private void toggleDesktopMode(TabModel tab) {
+        if (tab.getWebView() == null) return;
+        tab.setDesktopMode(!tab.isDesktopMode());
+        sessionMetadataChanged(tab);
+        applyDesktopMode(tab);
+        reloadTab(tab);
+        Toast.makeText(this, tab.isDesktopMode() ? "Desktop mode enabled" : "Mobile mode restored", Toast.LENGTH_SHORT).show();
     }
 
-    private void saveSession() {
-        if (isRestoringSession || tabsManager == null) return;
-        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
-            runOnUiThread(this::saveSession);
+    private void showClearDataChoices() {
+        if (disposing || isFinishing()) return;
+        boolean[] selected = new boolean[4];
+        new AlertDialog.Builder(this, ThemeManager.getDialogTheme(this))
+                .setTitle("Clear browsing data — all sites")
+                .setMultiChoiceItems(new String[] {"WebView cookies", "WebView URL cache", "Legacy Web Storage request",
+                        "History and saved tabs (closes tabs)"}, selected, (d, which, enabled) -> selected[which] = enabled)
+                .setPositiveButton("Review", (d, which) -> requestClearBrowserData(
+                        BrowserDataPolicy.allSites(selected[0], selected[1], selected[2], selected[3]), null, null))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    /** The tool and menu both need a fresh, visible native confirmation for this exact immutable plan. */
+    public void requestClearBrowserData(BrowserDataPolicy.Plan plan,
+                                        java.util.function.Consumer<String> result, java.util.function.Consumer<String> error) {
+        if (!resumed || disposing || isFinishing() || BrowserDataCleaner.inProgress() || plan.isEmpty()) {
+            String message = plan.isEmpty() ? "No data types selected. No data was deleted."
+                    : "Open the browser to confirm, and wait for any previous clear to finish.";
+            if (error != null) error.accept(message);
+            else Toast.makeText(this, message, Toast.LENGTH_LONG).show();
             return;
         }
+        boolean[] confirmed = {false};
+        AlertDialog dialog = new AlertDialog.Builder(this, ThemeManager.getDialogTheme(this))
+                .setTitle("Confirm all-sites cleanup")
+                .setMessage(plan.selectedItems() + "\n\n" + BrowserDataPolicy.LIMITS + "\n\n" + BrowserDataPolicy.OLDER_PRIVATE_DATA)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Clear selected data", (d, which) -> {
+                    if (!resumed || disposing || isFinishing() || BrowserDataCleaner.inProgress()) return;
+                    confirmed[0] = true;
+                    performBrowserDataClear(plan, result);
+                }).create();
+        dialog.setOnDismissListener(d -> {
+            if (!confirmed[0] && error != null) error.accept("Cleanup not confirmed. No data was deleted.");
+        });
+        dialog.show();
+    }
 
-        CookieManager.getInstance().flush();
-
-        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        SharedPreferences.Editor editor = prefs.edit();
-
-        File sessionDir = new File(getFilesDir(), "saved_tabs");
-        if (!sessionDir.exists()) {
-            sessionDir.mkdirs();
+    /** Called by the native assistant approval callback, with no app-history permission. */
+    public void clearApprovedBrowserData(BrowserDataPolicy.Plan plan, java.util.function.Consumer<String> result,
+                                         java.util.function.Consumer<String> error) {
+        if (assistantPage() == null || plan.isEmpty() || plan.localHistoryAndTabs || BrowserDataCleaner.inProgress()) {
+            error.accept("Cleanup is unavailable now. No data was deleted.");
+            return;
         }
+        performBrowserDataClear(plan, result);
+    }
 
-        JSONArray array = new JSONArray();
-        List<TabModel> tabs = tabsManager.getTabs();
-        int activeIdx = tabsManager.getActiveIndex();
-        int savedActiveIdx = 0;
-        int nonIncognitoCount = 0;
-        java.util.Set<String> activeStateFiles = new java.util.HashSet<>();
+    private void performBrowserDataClear(BrowserDataPolicy.Plan plan, java.util.function.Consumer<String> result) {
+        hideOmniboxSuggestions();
+        dismissTabGrid();
+        tabPreviews.clear();
+        BrowserDataCleaner.clear(this, plan, this::clearLocalHistoryAndTabs, report -> {
+            if (result != null) result.accept(report.toJson());
+            if (result == null && !disposing && resumed && !isFinishing()) new AlertDialog.Builder(this, ThemeManager.getDialogTheme(this))
+                    .setTitle("Cleanup result").setMessage(report.summary()).setPositiveButton("Close", null).show();
+        });
+    }
 
-        for (int i = 0; i < tabs.size(); i++) {
-            TabModel tab = tabs.get(i);
-            if (tab == null || tab.isIncognito()) continue;
-
-            if (i == activeIdx) {
-                savedActiveIdx = nonIncognitoCount;
-            }
-
-            JSONObject obj = new JSONObject();
-            try {
-                String liveUrl = null;
-                String liveTitle = null;
-                if (tab.getWebView() != null) {
-                    liveUrl = tab.getWebView().getUrl();
-                    liveTitle = tab.getWebView().getTitle();
-                }
-                if (liveUrl == null || liveUrl.isEmpty() || "about:blank".equals(liveUrl)) {
-                    liveUrl = tab.getUrl();
-                }
-                if (liveUrl == null || liveUrl.isEmpty() || "about:blank".equals(liveUrl)) {
-                    liveUrl = getDefaultHomeUrl();
-                }
-
-                if (liveTitle == null || liveTitle.isEmpty()) {
-                    liveTitle = tab.getTitle();
-                }
-                if (liveTitle == null || liveTitle.isEmpty()) {
-                    liveTitle = "Tab";
-                }
-
-                obj.put("url", liveUrl);
-                obj.put("title", liveTitle);
-                obj.put("desktop", tab.isDesktopMode());
-
-                // Save full WebView state bundle (including WebBackForwardList history)
-                if (tab.getWebView() != null) {
-                    Bundle stateBundle = new Bundle();
-                    WebBackForwardList history = tab.getWebView().saveState(stateBundle);
-                    if (history != null && history.getSize() > 0) {
-                        String stateFileName = "tab_" + nonIncognitoCount + ".bin";
-                        File stateFile = new File(sessionDir, stateFileName);
-                        Parcel parcel = Parcel.obtain();
-                        stateBundle.writeToParcel(parcel, 0);
-                        byte[] bytes = parcel.marshall();
-                        parcel.recycle();
-
-                        try (FileOutputStream fos = new FileOutputStream(stateFile)) {
-                            fos.write(bytes);
-                            obj.put("state_file", stateFileName);
-                            activeStateFiles.add(stateFileName);
-                        } catch (Exception e) {
-                            Log.w("MainActivity", "Failed to write tab state: " + e.getMessage());
-                        }
-                    }
-                }
-                array.put(obj);
-                nonIncognitoCount++;
-            } catch (JSONException ignored) {}
+    private void clearLocalHistoryAndTabs(Consumer<Boolean> complete) {
+        if (!sessionWritable()) {
+            complete.accept(false);
+            return;
         }
-
-        // Clean orphaned state files not in active session
-        File[] existingFiles = sessionDir.listFiles();
-        if (existingFiles != null) {
-            for (File f : existingFiles) {
-                if (!activeStateFiles.contains(f.getName())) {
-                    f.delete();
-                }
-            }
+        replacingSession = true;
+        cancelTabTrim();
+        lazyRestore.cancel();
+        session.reset();
+        boolean closed = false;
+        boolean historyRemoved = false;
+        try {
+            // Old document callbacks lose ownership before they could write anything else.
+            tabsManager.closeAllTabs(this);
+            closed = true;
+        } catch (RuntimeException failure) {
+            Log.w("MainActivity", "Could not close all tabs during cleanup");
         }
-
-        editor.putString(KEY_SAVED_TABS, array.toString());
-        editor.putInt(KEY_ACTIVE_TAB, savedActiveIdx);
-        editor.commit();
+        try {
+            historyDbHelper.clearAll();
+            historyRemoved = true;
+        } catch (RuntimeException failure) {
+            Log.w("MainActivity", "Could not remove app history");
+        } finally {
+            replacingSession = false;
+        }
+        final boolean localRemoved = closed && historyRemoved;
+        Handler main = new Handler(Looper.getMainLooper());
+        sessionOwner = sessionWriter.wipe(sessionOwner,
+                removed -> main.post(() -> complete.accept(localRemoved && removed)));
+        if (closed) sessionTabsChanged(); // only the newly created home, never the pre-wipe tabs
+        else sessionWriter.release(sessionOwner);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        resumed = true;
+        getSharedPreferences(SettingsActivity.PREFS_BROWSER, MODE_PRIVATE).registerOnSharedPreferenceChangeListener(discoverySettings);
         String latestTheme = ThemeManager.getAppTheme(this);
         if (currentAppTheme != null && !currentAppTheme.equals(latestTheme)) {
-            currentAppTheme = latestTheme;
-            saveSession();
+            checkpointSession();
             recreate();
             return;
         }
-        if (tabsManager != null && tabsManager.getTabs() != null) {
-            for (TabModel tab : tabsManager.getTabs()) {
-                if (tab != null && tab.getWebView() != null) {
-                    ThemeManager.applyWebTheme(tab.getWebView());
-                    tab.getWebView().applyPageZoom();
-                }
-            }
+        if (startupReady) refreshScriptPolicies(null);
+        refreshDiscoverySettings();
+        if (!startupReady) return;
+        TabModel tab = activeTab();
+        if (tab != null && tab.getWebView() != null) {
+            ThemeManager.applyWebTheme(tab.getWebView());
+            tab.getWebView().applyPageZoom();
+            markAssistantDocument(tab);
+            if (tab.messages != null) tab.messages.activateHome();
         }
-        TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-        if (active != null) {
-            int detectedCount = MediaSniffer.getMediaForTab(active.getId()).size();
-            updateFabVideoDownload(detectedCount);
+        if (tab != null) renderShield(tab);
+        requestSelectedRestore();
+        scheduleTabPreview(tab);
+        scheduleResumeWork();
+    }
 
-            com.privacy.browser.comic.ComicManager.ComicItem comicItem =
-                    com.privacy.browser.comic.ComicManager.getDetectedComic(active.getId());
-            updateFabComicDownload(comicItem != null ? comicItem.getPageCount() : 0);
-        } else {
-            updateFabComicDownload(0);
-        }
+    private void scheduleResumeWork() {
+        resumeWork.removeCallbacks(deferredResumeWork);
+        if (startupReady && resumed) resumeWork.postDelayed(deferredResumeWork, 1500);
     }
 
     @Override
     protected void onPause() {
+        resumed = false;
+        getSharedPreferences(SettingsActivity.PREFS_BROWSER, MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(discoverySettings);
+        hideOmniboxSuggestions();
+        stopMediaDiscovery();
+        shieldRefresh.show(null);
+        if (lazyRestore != null) lazyRestore.cancel();
+        tabPreviews.cancel();
+        dismissTabGrid();
+        resumeWork.removeCallbacks(deferredResumeWork);
+        assistantForegroundEpoch++;
+        if (agentBottomSheet != null) agentBottomSheet.ownerPaused();
+        dismissPageContextMenu();
+        dismissComicDownload();
+        cancelPicker(displayedTab);
         if (customVideoView != null) {
             hideFullscreenVideo();
         }
         super.onPause();
-        saveSession();
+        checkpointSession();
     }
 
     private void showFullscreenVideo(View view, WebChromeClient.CustomViewCallback callback) {
@@ -3181,6 +3461,10 @@ public class MainActivity extends Activity {
             return;
         }
 
+        if (editUrl.hasFocus()) dismissKeyboard();
+        tabPreviews.cancel();
+        dismissVideoOptions();
+        dismissComicDownload();
         customVideoView = view;
         customViewCallback = callback;
         originalOrientation = getRequestedOrientation();
@@ -3225,15 +3509,6 @@ public class MainActivity extends Activity {
         if (toolbarContainer != null) toolbarContainer.setVisibility(View.VISIBLE);
         showTopBar(false);
 
-        TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-        if (active != null) {
-            int detectedCount = MediaSniffer.getMediaForTab(active.getId()).size();
-            updateFabVideoDownload(detectedCount);
-            com.privacy.browser.comic.ComicManager.ComicItem comicItem =
-                    com.privacy.browser.comic.ComicManager.getDetectedComic(active.getId());
-            updateFabComicDownload(comicItem != null ? comicItem.getPageCount() : 0);
-        }
-
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getDecorView().setSystemUiVisibility(originalSystemUiVisibility);
         setRequestedOrientation(originalOrientation);
@@ -3245,12 +3520,16 @@ public class MainActivity extends Activity {
             customViewCallback = null;
         }
         customVideoView = null;
+        fullscreenOwner = null;
+        fullscreenPage = null;
+        updateFloatingActionButtonsForActiveTab();
     }
 
     @Override
     protected void onStop() {
         super.onStop();
-        CookieManager.getInstance().flush();
+        checkpointSession();
+        if (startupReady) NativeTabSession.flushCookiesAfterStop();
     }
 
     private boolean isAdLink(String url, String topUrl) {
@@ -3267,9 +3546,9 @@ public class MainActivity extends Activity {
         if (active != null) {
             com.privacy.browser.adblock.AdBlockDashboardDialog.show(
                     this,
-                    active.getId(),
+                    active.pageKey(),
                     active.getUrl(),
-                    () -> active.getWebView().reload(),
+                    () -> reloadTab(active),
                     () -> startElementZapper(),
                     () -> startElementPicker(),
                     () -> showMyFilters()
@@ -3278,223 +3557,46 @@ public class MainActivity extends Activity {
     }
 
     public void startImageSearchPicker() {
-        TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-        if (active != null && active.getWebView() != null) {
-            try {
-                java.io.InputStream is = getAssets().open("image_search_picker.js");
-                java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-                byte[] buffer = new byte[4096];
-                int len;
-                while ((len = is.read(buffer)) != -1) {
-                    baos.write(buffer, 0, len);
-                }
-                is.close();
-                String js = baos.toString("UTF-8");
-                active.getWebView().evaluateJavascript(js, result -> {
-                    Log.d("ImageSearch", "Picker script evaluated: " + result);
-                });
-            } catch (Exception e) {
-                Log.e("ImageSearch", "Failed to load image_search_picker.js from assets", e);
-                // Inline fallback if asset read fails
-                String fallbackJs = "(function(){" +
-                        "if(window.__imageSearchPickerActive){if(window.__cleanupImageSearchPicker)window.__cleanupImageSearchPicker(false);}" +
-                        "window.__imageSearchPickerActive=true;" +
-                        "var b=document.createElement('div');b.id='__isp_b';" +
-                        "b.style='position:fixed;top:14px;left:16px;right:16px;z-index:2147483647;background:#1E1E2E;color:#FFF;padding:12px 16px;border-radius:12px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 8px 24px rgba(0,0,0,0.6);font-size:14px;font-family:sans-serif;';" +
-                        "b.innerHTML='<span>Tap any image on the page to search</span><button id=\"__isp_c\" style=\"background:#45475A;color:#CDD6F4;border:none;padding:6px 14px;border-radius:6px;font-weight:bold;\">Cancel</button>';" +
-                        "(document.body||document.documentElement).appendChild(b);" +
-                        "function cleanup(c){window.__imageSearchPickerActive=false;var el=document.getElementById('__isp_b');if(el)el.remove();document.removeEventListener('click',h,true);document.removeEventListener('touchend',h,true);if(c&&window.ImageSearchBridge&&window.ImageSearchBridge.onPickerCancelled)window.ImageSearchBridge.onPickerCancelled();}" +
-                        "window.__cleanupImageSearchPicker=cleanup;" +
-                        "document.getElementById('__isp_c').onclick=function(e){e.preventDefault();e.stopPropagation();cleanup(true);};" +
-                        "function ext(node){if(!node)return null;var tag=(node.nodeName||'').toLowerCase();" +
-                        "if(tag==='img'){var s=node.currentSrc||node.src||node.getAttribute('src')||node.getAttribute('data-src')||node.getAttribute('data-original')||node.getAttribute('data-url');if(s&&!s.startsWith('data:image/svg'))return s;}" +
-                        "if(tag==='picture'){var ic=node.querySelector('img');if(ic)return ext(ic);}" +
-                        "if(tag==='canvas'){try{return node.toDataURL('image/png');}catch(e){}}" +
-                        "var bg=window.getComputedStyle(node).backgroundImage;if(bg&&bg!=='none'){var m=/url\\(['\"]?(.*?)['\"]?\\)/i.exec(bg);if(m&&m[1])return m[1];}" +
-                        "var ch=node.querySelector('img, canvas');if(ch)return ext(ch);return null;}" +
-                        "function h(e){if(b.contains(e.target))return;var x=e.clientX,y=e.clientY;if(e.changedTouches&&e.changedTouches.length>0){x=e.changedTouches[0].clientX;y=e.changedTouches[0].clientY;}" +
-                        "var s=ext(e.target);if(!s&&document.elementsFromPoint&&typeof x==='number'){var els=document.elementsFromPoint(x,y);for(var i=0;i<els.length;i++){if(!b.contains(els[i])){s=ext(els[i]);if(s)break;}}}" +
-                        "if(s){e.preventDefault();e.stopPropagation();cleanup(false);if(window.ImageSearchBridge)window.ImageSearchBridge.onImageSelected(s);}}" +
-                        "document.addEventListener('click',h,true);document.addEventListener('touchend',h,true);" +
-                        "})();";
-                active.getWebView().evaluateJavascript(fallbackJs, null);
-            }
+        TabModel active = activeTab();
+        if (active == null || active.messages == null) return;
+        cancelPicker(active);
+        String ticket = active.messages.armPicker("image");
+        if (ticket == null) {
+            Toast.makeText(this, R.string.picker_unavailable, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try (java.io.InputStream in = getAssets().open("image_search_picker.js")) {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int len;
+            while ((len = in.read(buffer)) != -1) out.write(buffer, 0, len);
+            active.messages.evaluate("const pickerTicket=" + JSONObject.quote(ticket) + ";" + out.toString("UTF-8"));
+        } catch (java.io.IOException e) {
+            active.messages.cancelPicker();
+            Toast.makeText(this, R.string.picker_unavailable, Toast.LENGTH_SHORT).show();
         }
     }
 
-    public void startImageSearchAreaCrop() {
-        TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-        if (active == null || active.getWebView() == null) return;
+    public void startElementPicker() { startElementTool(false); }
+    public void startElementZapper() { startElementTool(true); }
 
-        WebView webView = active.getWebView();
-        // Wait 200ms for any dismissing menus or dialogs to completely clear from screen
-        webView.postDelayed(() -> {
-            if (isFinishing() || isDestroyed()) return;
-            int width = webView.getWidth();
-            int height = webView.getHeight();
-            if (width <= 0 || height <= 0) return;
-
-            // Capture hardware bitmap via PixelCopy on Android O+ or fallback to decorView draw
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && getWindow() != null) {
-                View decorView = getWindow().getDecorView();
-                int winW = decorView.getWidth();
-                int winH = decorView.getHeight();
-                if (winW > 0 && winH > 0) {
-                    Bitmap windowBitmap = Bitmap.createBitmap(winW, winH, Bitmap.Config.ARGB_8888);
-                    try {
-                        PixelCopy.request(getWindow(), null, windowBitmap, copyResult -> {
-                            if (copyResult == PixelCopy.SUCCESS) {
-                                int[] loc = new int[2];
-                                webView.getLocationInWindow(loc);
-                                int x = Math.max(0, Math.min(loc[0], winW - 1));
-                                int y = Math.max(0, Math.min(loc[1], winH - 1));
-                                int w = Math.max(1, Math.min(width, winW - x));
-                                int h = Math.max(1, Math.min(height, winH - y));
-                                Bitmap webViewSnapshot = Bitmap.createBitmap(windowBitmap, x, y, w, h);
-                                windowBitmap.recycle();
-                                launchCropOverlay(webViewSnapshot, active);
-                            } else {
-                                windowBitmap.recycle();
-                                fallbackCanvasCaptureAndCrop(webView, width, height, active);
-                            }
-                        }, new Handler(Looper.getMainLooper()));
-                        return;
-                    } catch (Throwable t) {
-                        windowBitmap.recycle();
-                    }
-                }
-            }
-
-            fallbackCanvasCaptureAndCrop(webView, width, height, active);
-        }, 220);
-    }
-
-    private void fallbackCanvasCaptureAndCrop(WebView webView, int width, int height, TabModel active) {
-        try {
-            View decorView = getWindow().getDecorView();
-            int winW = decorView.getWidth();
-            int winH = decorView.getHeight();
-            if (winW <= 0 || winH <= 0) return;
-
-            Bitmap snapshot = Bitmap.createBitmap(winW, winH, Bitmap.Config.ARGB_8888);
-            Canvas canvas = new Canvas(snapshot);
-            decorView.draw(canvas);
-
-            int[] loc = new int[2];
-            webView.getLocationInWindow(loc);
-            int x = Math.max(0, Math.min(loc[0], winW - 1));
-            int y = Math.max(0, Math.min(loc[1], winH - 1));
-            int w = Math.max(1, Math.min(width, winW - x));
-            int h = Math.max(1, Math.min(height, winH - y));
-            Bitmap webViewSnapshot = Bitmap.createBitmap(snapshot, x, y, w, h);
-            snapshot.recycle();
-            launchCropOverlay(webViewSnapshot, active);
-        } catch (Throwable ignored) {
-            Toast.makeText(this, "Failed to capture screen area", Toast.LENGTH_SHORT).show();
+    private void startElementTool(boolean zapper) {
+        TabModel active = activeTab();
+        if (active == null || active.messages == null) return;
+        cancelPicker(active);
+        String ticket = active.messages.armPicker("element");
+        if (ticket == null) {
+            Toast.makeText(this, R.string.picker_unavailable, Toast.LENGTH_SHORT).show();
+            return;
         }
-    }
-
-    private void launchCropOverlay(Bitmap snapshot, TabModel active) {
-        FrameLayout container = findViewById(R.id.webview_container);
-        if (container == null) return;
-
-        com.privacy.imagesearch.ui.RegionCropOverlayView cropView = new com.privacy.imagesearch.ui.RegionCropOverlayView(this);
-        container.addView(cropView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        cropView.setup(snapshot, new com.privacy.imagesearch.ui.RegionCropOverlayView.CropCallback() {
-            @Override
-            public void onAreaCropped(@NonNull Bitmap croppedBitmap) {
-                Toast.makeText(MainActivity.this, "Searching captured region...", Toast.LENGTH_SHORT).show();
-                com.privacy.imagesearch.uploader.ImageSearchUploader.uploadAndSearch(croppedBitmap, new com.privacy.imagesearch.uploader.ImageSearchUploader.UploadCallback() {
-                    @Override
-                    public void onSuccess(@NonNull String searchResultUrl) {
-                        TabModel newTab = tabsManager.createTab(MainActivity.this, searchResultUrl, active.isIncognito());
-                        setupClientsForTab(newTab);
-                        newTab.getWebView().loadUrl(searchResultUrl);
-                        tabsManager.switchTab(tabsManager.getTabCount() - 1);
-                    }
-
-                    @Override
-                    public void onError(@NonNull String errorMessage) {
-                        Toast.makeText(MainActivity.this, errorMessage, Toast.LENGTH_LONG).show();
-                    }
-                });
-            }
-
-            @Override
-            public void onCancelled() {
-                Toast.makeText(MainActivity.this, "Capture cancelled", Toast.LENGTH_SHORT).show();
-            }
-        });
-    }
-
-    private static final int REQUEST_CODE_PICK_IMAGE_SEARCH = 8842;
-
-    public void startImageSearchFilePicker() {
-        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-        intent.setType("image/*");
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        try {
-            startActivityForResult(Intent.createChooser(intent, "Select Image to Search"), REQUEST_CODE_PICK_IMAGE_SEARCH);
-        } catch (Exception e) {
-            Toast.makeText(this, "No file picker available", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_CODE_PICK_IMAGE_SEARCH && resultCode == RESULT_OK && data != null && data.getData() != null) {
-            Uri imageUri = data.getData();
-            try (java.io.InputStream is = getContentResolver().openInputStream(imageUri)) {
-                if (is != null) {
-                    Bitmap bitmap = android.graphics.BitmapFactory.decodeStream(is);
-                    if (bitmap != null) {
-                        Toast.makeText(this, "Uploading selected image...", Toast.LENGTH_SHORT).show();
-                        com.privacy.imagesearch.uploader.ImageSearchUploader.uploadAndSearch(bitmap, new com.privacy.imagesearch.uploader.ImageSearchUploader.UploadCallback() {
-                            @Override
-                            public void onSuccess(@NonNull String searchResultUrl) {
-                                TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-                                boolean incognito = active != null && active.isIncognito();
-                                TabModel newTab = tabsManager.createTab(MainActivity.this, searchResultUrl, incognito);
-                                setupClientsForTab(newTab);
-                                newTab.getWebView().loadUrl(searchResultUrl);
-                                tabsManager.switchTab(tabsManager.getTabCount() - 1);
-                            }
-
-                            @Override
-                            public void onError(@NonNull String errorMessage) {
-                                Toast.makeText(MainActivity.this, errorMessage, Toast.LENGTH_LONG).show();
-                            }
-                        });
-                    }
-                }
-            } catch (Exception e) {
-                Toast.makeText(this, "Failed to load selected image: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-            }
-        }
-    }
-
-    public void startElementPicker() {
-        TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-        if (active != null) {
-            Toast.makeText(this, "Tap any element to block it", Toast.LENGTH_SHORT).show();
-            active.getWebView().evaluateJavascript(com.privacy.browser.adblock.picker.ElementPickerEngine.getInjectionScript(false), null);
-        }
-    }
-
-    public void startElementZapper() {
-        TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-        if (active != null) {
-            Toast.makeText(this, "Tap any element to zap it", Toast.LENGTH_SHORT).show();
-            active.getWebView().evaluateJavascript(com.privacy.browser.adblock.picker.ElementPickerEngine.getInjectionScript(true), null);
-        }
+        Toast.makeText(this, zapper ? "Tap any element to zap it" : "Tap any element to block it", Toast.LENGTH_SHORT).show();
+        active.messages.evaluate(com.privacy.browser.adblock.picker.ElementPickerEngine.getInjectionScript(zapper, ticket));
     }
 
     public void showMyFilters() {
         com.privacy.browser.adblock.rules.MyFiltersDialog.show(this, () -> {
             TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-            if (active != null) active.getWebView().reload();
+            if (active != null) reloadTab(active);
         });
     }
 
@@ -3523,8 +3625,10 @@ public class MainActivity extends Activity {
 
         textHost.setText(host);
 
-        if (rawUrl.startsWith("https://")) {
-            textStatus.setText("Connection is Secure");
+        PrivacyWebView siteView = active.getWebView();
+        if (siteView == null || !currentPage(active, siteView, active.navigation.page(), true)) return;
+        if (rawUrl.startsWith("https://") && siteView.getCertificate() != null) {
+            textStatus.setText("HTTPS connection");
             textStatus.setTextColor(Color.parseColor("#4CAF50"));
             iconSecurity.setColorFilter(Color.parseColor("#4CAF50"));
         } else if (rawUrl.startsWith("http://")) {
@@ -3532,40 +3636,16 @@ public class MainActivity extends Activity {
             textStatus.setTextColor(Color.parseColor("#FF5252"));
             iconSecurity.setColorFilter(Color.parseColor("#FF5252"));
         } else {
-            textStatus.setText("Internal Page");
+            textStatus.setText("Connection security not verified");
             textStatus.setTextColor(Color.WHITE);
             iconSecurity.setColorFilter(Color.WHITE);
         }
 
-        final String finalHost = host;
-        view.findViewById(R.id.site_info_btn_clear_cookies).setOnClickListener(v -> {
-            CookieManager cookieManager = CookieManager.getInstance();
-            String cookies = cookieManager.getCookie(rawUrl);
-            if (cookies != null) {
-                String[] cookieList = cookies.split(";");
-                for (String cookie : cookieList) {
-                    String[] parts = cookie.split("=");
-                    if (parts.length > 0) {
-                        String name = parts[0].trim();
-                        cookieManager.setCookie(rawUrl, name + "=; Expires=Thu, 01 Jan 1970 00:00:00 GMT");
-                    }
-                }
-                cookieManager.flush();
-            }
-            Toast.makeText(this, "Cookies cleared for " + finalHost, Toast.LENGTH_SHORT).show();
+        View dataNote = view.findViewById(R.id.site_info_data_note);
+        ((TextView) dataNote).setText(BrowserDataPolicy.SITE_CLEAR_UNAVAILABLE);
+        view.findViewById(R.id.site_info_btn_clear_browser).setOnClickListener(v -> {
             dialog.dismiss();
-        });
-
-        view.findViewById(R.id.site_info_btn_clear_storage).setOnClickListener(v -> {
-            try {
-                java.net.URI uri = new java.net.URI(rawUrl);
-                String origin = uri.getScheme() + "://" + uri.getAuthority();
-                WebStorage.getInstance().deleteOrigin(origin);
-                Toast.makeText(this, "Cache and storage wiped for " + finalHost, Toast.LENGTH_SHORT).show();
-            } catch (Exception e) {
-                Toast.makeText(this, "Cleared local storage", Toast.LENGTH_SHORT).show();
-            }
-            dialog.dismiss();
+            showClearDataChoices();
         });
 
         view.findViewById(R.id.site_info_btn_done).setOnClickListener(v -> dialog.dismiss());
@@ -3574,17 +3654,8 @@ public class MainActivity extends Activity {
         applyAmoledDialogTheme(dialog);
     }
 
-    public void updateBlockedCounter(int delta) {
-        blockedTrackerCount += delta;
-        runOnUiThread(() -> {
-            TabModel active = tabsManager != null ? tabsManager.getActiveTab() : null;
-            int iconRes = (active != null && active.isIncognito()) ? R.drawable.ic_incognito : R.drawable.ic_shield;
-            btnShield.setCompoundDrawablesWithIntrinsicBounds(iconRes, 0, 0, 0);
-            btnShield.setText(String.valueOf(blockedTrackerCount));
-        });
-    }
-
     private void dismissKeyboard() {
+        hideOmniboxSuggestions();
         InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
         if (imm != null && getCurrentFocus() != null) {
             imm.hideSoftInputFromWindow(getCurrentFocus().getWindowToken(), 0);
@@ -3611,8 +3682,7 @@ public class MainActivity extends Activity {
             return;
         }
 
-        if (omniboxContainer != null && omniboxContainer.getVisibility() == View.VISIBLE) {
-            hideOmniboxSuggestions();
+        if (editUrl.hasFocus() || visibleOmniboxRequest != null) {
             dismissKeyboard();
             return;
         }
@@ -3620,13 +3690,13 @@ public class MainActivity extends Activity {
         if (findBar.getVisibility() == View.VISIBLE) {
             findBar.setVisibility(View.GONE);
             TabModel active = tabsManager.getActiveTab();
-            if (active != null) active.getWebView().clearMatches();
+            if (active != null && active.getWebView() != null) active.getWebView().clearMatches();
             return;
         }
 
         TabModel active = tabsManager.getActiveTab();
-        if (active != null && active.getWebView().canGoBack()) {
-            active.getWebView().goBack();
+        if (active != null && active.getWebView() != null && active.getWebView().canGoBack()) {
+            navigateHistory(active, -1);
             return;
         }
 
@@ -3649,10 +3719,37 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        if (customVideoView != null) {
-            hideFullscreenVideo();
+        checkpointSession();
+        if (session != null) {
+            session.reset();
+            sessionWriter.release(sessionOwner);
         }
-        saveSession();
+        disposing = true;
+        resumed = false;
+        hideOmniboxSuggestions();
+        omniboxRequests.close();
+        omniboxWorker.shutdownNow();
+        shieldRefresh.show(null);
+        cancelTabTrim();
+        dismissTabGrid();
+        tabPreviews.clear();
+        resumeWork.removeCallbacks(deferredResumeWork);
+        if (lazyRestore != null) lazyRestore.cancel();
+        pendingLaunch = null;
+        assistantForegroundEpoch++;
+        dismissPageContextMenu();
+        dismissComicDownload();
+        cancelPicker(displayedTab);
+        hideFullscreenVideo();
+        cancelTopBarAnimation();
+        stopMediaDiscovery();
+        if (agentBottomSheet != null) {
+            agentBottomSheet.dispose();
+            agentBottomSheet = null;
+        }
+        if (tabsManager != null) tabsManager.dispose();
+        traceTabResources();
+        displayedTab = null;
         super.onDestroy();
     }
 }

@@ -75,7 +75,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Paste refreshed URL to resume partial transfer without redownloading"
+            android:text="Paste the refreshed link. If saved bytes cannot be verified, start over."
             android:textColor="?attr/textSecondary"
             android:textSize="12sp"
             android:layout_marginTop="2dp" />
@@ -148,7 +148,7 @@
             android:layout_width="0dp"
             android:layout_height="46dp"
             android:layout_weight="1"
-            android:text="Update &amp; Resume"
+            android:text="Update &amp; Retry"
             android:textColor="?attr/textPrimary"
             android:textSize="14sp"
             android:fontFamily="sans-serif-bold"

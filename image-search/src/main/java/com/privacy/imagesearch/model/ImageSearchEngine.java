@@ -57,6 +57,8 @@ public final class ImageSearchEngine {
         return description;
     }
 
+    public boolean acceptsImageUrl() { return urlTemplate.contains("{imgUrl}"); }
+
     @NonNull
     public String buildSearchUrl(@NonNull String imageUrl) {
         String encoded = Uri.encode(imageUrl);

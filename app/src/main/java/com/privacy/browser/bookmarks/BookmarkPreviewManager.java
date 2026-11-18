@@ -4,50 +4,35 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.LruCache;
 import android.view.PixelCopy;
 import android.view.View;
 import android.view.Window;
 
+import com.privacy.browser.images.LocalThumbnailStore;
+import com.privacy.browser.images.ThumbnailBudget;
+
 import java.io.File;
-import java.io.FileOutputStream;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.Collections;
+import java.util.Set;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 public class BookmarkPreviewManager {
 
     private static volatile BookmarkPreviewManager instance;
 
-    private final Context appContext;
-    private final File previewDir;
-    private final LruCache<Long, Bitmap> memoryCache;
-    private final ExecutorService ioExecutor = Executors.newFixedThreadPool(2);
+    private final LocalThumbnailStore<Long> covers;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    public interface PreviewCallback {
-        void onPreviewLoaded(long bookmarkId, Bitmap bitmap);
-    }
-
     private BookmarkPreviewManager(Context context) {
-        this.appContext = context.getApplicationContext();
-        this.previewDir = new File(appContext.getFilesDir(), "bookmark_previews");
-        if (!previewDir.exists()) {
-            previewDir.mkdirs();
-        }
-
-        // Cache up to 30 thumbnails in memory (each 480x300 bitmap is ~400 KB uncompressed)
-        this.memoryCache = new LruCache<Long, Bitmap>(30) {
-            @Override
-            protected int sizeOf(Long key, Bitmap bitmap) {
-                return 1;
-            }
-        };
+        Context app = context.getApplicationContext();
+        covers = new LocalThumbnailStore<>(() -> new File(app.getFilesDir(), "bookmark_previews"),
+                id -> "bm_" + id + ".webp", ThumbnailBudget.BOOKMARK_COVER, 8 * 1024 * 1024);
     }
 
     public static BookmarkPreviewManager getInstance(Context context) {
@@ -61,56 +46,17 @@ public class BookmarkPreviewManager {
         return instance;
     }
 
-    public Bitmap getCachedPreview(long bookmarkId) {
-        synchronized (memoryCache) {
-            Bitmap mem = memoryCache.get(bookmarkId);
-            if (mem != null) return mem;
-        }
-
-        File file = getPreviewFile(bookmarkId);
-        if (file.exists()) {
-            try {
-                Bitmap bmp = BitmapFactory.decodeFile(file.getAbsolutePath());
-                if (bmp != null) {
-                    synchronized (memoryCache) {
-                        memoryCache.put(bookmarkId, bmp);
-                    }
-                    return bmp;
-                }
-            } catch (Exception ignored) {}
-        }
-        return null;
+    public Bitmap peekPreview(long bookmarkId) {
+        return covers.peek(bookmarkId);
     }
 
-    public void loadPreviewAsync(long bookmarkId, PreviewCallback callback) {
-        Bitmap cached = getCachedPreview(bookmarkId);
-        if (cached != null) {
-            if (callback != null) {
-                callback.onPreviewLoaded(bookmarkId, cached);
-            }
-            return;
-        }
-
-        ioExecutor.execute(() -> {
-            File file = getPreviewFile(bookmarkId);
-            if (file.exists()) {
-                try {
-                    Bitmap bmp = BitmapFactory.decodeFile(file.getAbsolutePath());
-                    if (bmp != null) {
-                        synchronized (memoryCache) {
-                            memoryCache.put(bookmarkId, bmp);
-                        }
-                        if (callback != null) {
-                            mainHandler.post(() -> callback.onPreviewLoaded(bookmarkId, bmp));
-                        }
-                    }
-                } catch (Exception ignored) {}
-            }
-        });
+    public void loadPreview(long bookmarkId, Consumer<Bitmap> ready) {
+        if (bookmarkId > 0) covers.load(bookmarkId, ready);
+        else ready.accept(null);
     }
 
-    public void captureAndSavePreview(long bookmarkId, View webView) {
-        if (webView == null || webView.getWidth() <= 0 || webView.getHeight() <= 0) return;
+    public void captureAndSavePreview(long bookmarkId, View webView, BooleanSupplier current) {
+        if (!current.getAsBoolean() || webView == null || webView.getWidth() <= 0 || webView.getHeight() <= 0) return;
 
         try {
             int width = webView.getWidth();
@@ -129,15 +75,13 @@ public class BookmarkPreviewManager {
                     webView.getLocationInWindow(location);
                     Rect srcRect = new Rect(location[0], location[1], location[0] + squareDimension, location[1] + squareDimension);
 
-                    Bitmap destBitmap = Bitmap.createBitmap(squareDimension, squareDimension, Bitmap.Config.ARGB_8888);
+                    // PixelCopy scales the source rectangle to the destination bitmap.
+                    Bitmap destBitmap = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888);
                     try {
                         PixelCopy.request(window, srcRect, destBitmap, copyResult -> {
+                            if (!current.getAsBoolean()) { destBitmap.recycle(); return; }
                             if (copyResult == PixelCopy.SUCCESS) {
-                                Bitmap scaled = Bitmap.createScaledBitmap(destBitmap, targetSize, targetSize, true);
-                                if (destBitmap != scaled) {
-                                    destBitmap.recycle();
-                                }
-                                savePreviewBitmap(bookmarkId, scaled);
+                                savePreviewBitmap(bookmarkId, destBitmap, null);
                             } else {
                                 destBitmap.recycle();
                                 captureWithCanvasFallback(bookmarkId, webView, squareDimension, targetSize);
@@ -163,22 +107,8 @@ public class BookmarkPreviewManager {
 
             canvas.scale(scale, scale);
             canvas.clipRect(0, 0, squareDimension, squareDimension);
-
-            try {
-                webView.setDrawingCacheEnabled(true);
-                Bitmap cache = webView.getDrawingCache();
-                if (cache != null && !cache.isRecycled()) {
-                    Bitmap cropped = Bitmap.createBitmap(cache, 0, 0, squareDimension, squareDimension);
-                    Bitmap scaled = Bitmap.createScaledBitmap(cropped, targetSize, targetSize, true);
-                    savePreviewBitmap(bookmarkId, scaled);
-                    webView.setDrawingCacheEnabled(false);
-                    return;
-                }
-                webView.setDrawingCacheEnabled(false);
-            } catch (Throwable ignored) {}
-
             webView.draw(canvas);
-            savePreviewBitmap(bookmarkId, bitmap);
+            savePreviewBitmap(bookmarkId, bitmap, null);
         } catch (Throwable ignored) {}
     }
 
@@ -192,38 +122,21 @@ public class BookmarkPreviewManager {
         return null;
     }
 
-    public void savePreviewBitmap(long bookmarkId, Bitmap bitmap) {
-        if (bitmap == null) return;
-
-        synchronized (memoryCache) {
-            memoryCache.put(bookmarkId, bitmap);
+    public void savePreviewBitmap(long bookmarkId, Bitmap bitmap, Consumer<Boolean> ready) {
+        if (bookmarkId <= 0) {
+            if (ready != null) ready.accept(false);
+            return;
         }
-
-        ioExecutor.execute(() -> {
-            File file = getPreviewFile(bookmarkId);
-            try (FileOutputStream out = new FileOutputStream(file)) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, 80, out);
-                } else {
-                    bitmap.compress(Bitmap.CompressFormat.WEBP, 80, out);
-                }
-            } catch (Exception ignored) {}
-        });
+        Bitmap.CompressFormat format = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                ? Bitmap.CompressFormat.WEBP_LOSSY : Bitmap.CompressFormat.WEBP;
+        covers.save(bookmarkId, bitmap, format, 80, ready);
     }
 
-    public void deletePreview(long bookmarkId) {
-        synchronized (memoryCache) {
-            memoryCache.remove(bookmarkId);
-        }
-        ioExecutor.execute(() -> {
-            File file = getPreviewFile(bookmarkId);
-            if (file.exists()) {
-                file.delete();
-            }
-        });
+    public void deletePreview(long bookmarkId, Consumer<Boolean> ready) {
+        covers.delete(Collections.singleton(bookmarkId), ready);
     }
 
-    public File getPreviewFile(long bookmarkId) {
-        return new File(previewDir, "bm_" + bookmarkId + ".webp");
+    public void deletePreviews(Set<Long> bookmarkIds) {
+        covers.delete(bookmarkIds, null);
     }
 }

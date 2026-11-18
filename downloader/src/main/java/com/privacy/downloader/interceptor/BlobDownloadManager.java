@@ -1,256 +1,279 @@
 package com.privacy.downloader.interceptor;
 
+import android.app.AlertDialog;
 import android.content.Context;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Base64;
 import android.webkit.WebView;
+import android.widget.Toast;
 
-import com.privacy.downloader.db.DownloadDbHelper;
-import com.privacy.downloader.engine.BlobDownloadTask;
-import com.privacy.downloader.engine.DownloadTask;
-import com.privacy.downloader.engine.SpeedLimiter;
+import androidx.annotation.UiThread;
+import androidx.webkit.JavaScriptReplyProxy;
+import androidx.webkit.WebMessageCompat;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
+import com.privacy.downloader.engine.BlobIntake;
+import com.privacy.downloader.engine.DownloadEngine;
 import com.privacy.downloader.model.DownloadItem;
+import com.privacy.downloader.ui.DownloadPromptDialog;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import org.json.JSONObject;
 
-public class BlobDownloadManager implements BlobDownloadBridge.BlobListener {
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.UUID;
+import java.util.function.BooleanSupplier;
 
-    private static BlobDownloadManager instance;
-    private final Context context;
-    private final BlobDownloadBridge bridge;
-    private final Handler mainHandler;
+/** UI-thread coordinator for one WebView. Only queued workers can initiate intake. */
+@UiThread
+public final class BlobDownloadManager {
+    private static final String BRIDGE = "PrivacyBrowserBlobIntake";
+    private static final String PAGE_LEFT = "The original page was closed or navigated away before the blob finished.";
+    private static String script; // bundled script; read once on the UI thread
 
-    private static class BlobSession {
-        final String blobId;
-        final String blobUrl;
-        long totalSize = -1;
-        String mimeType = "";
-        File bufferedTempFile;
-        FileOutputStream bufferedOut;
-        boolean isComplete = false;
-        String failedError = null;
-        BlobDownloadTask linkedTask = null;
+    private final WebView webView;
+    private final BooleanSupplier canRetainSource;
+    private final Runnable sourceReleased;
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private final boolean supported;
+    private boolean closed;
+    private boolean rendererGone;
+    private BlobDocument<JavaScriptReplyProxy> document;
+    private Prompt prompt;
+    private Request active;
 
-        BlobSession(String blobId, String blobUrl, File tempFile) {
-            this.blobId = blobId;
-            this.blobUrl = blobUrl;
-            this.bufferedTempFile = tempFile;
-        }
-
-        synchronized void closeBufferedStream() {
-            if (bufferedOut != null) {
-                try {
-                    bufferedOut.flush();
-                    bufferedOut.close();
-                } catch (Exception ignored) {}
-                bufferedOut = null;
+    public BlobDownloadManager(WebView webView, BooleanSupplier canRetainSource, Runnable sourceReleased) {
+        this.webView = webView;
+        this.canRetainSource = canRetainSource;
+        this.sourceReleased = sourceReleased;
+        boolean listening = false;
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            try {
+                // Tabs navigate to arbitrary HTTP(S) sites. The injected object grants no
+                // actions: callbacks require a main frame, verified origin, and a pinned proxy.
+                WebViewCompat.addWebMessageListener(webView, BRIDGE, Collections.singleton("*"), this::onMessage);
+                listening = true;
+            } catch (RuntimeException ignored) {
+                // No addJavascriptInterface fallback: it cannot prove which frame called it.
             }
         }
+        supported = listening;
     }
 
-    private final Map<String, BlobSession> sessionsByBlobId = new ConcurrentHashMap<>();
-    private final Map<String, BlobSession> sessionsByUrl = new ConcurrentHashMap<>();
+    /** Queued or streaming intake still depends on this document. Prompts alone do not pin it. */
+    public boolean hasPendingTransfer() { return active != null; }
 
-    public static synchronized BlobDownloadManager getInstance(Context context) {
-        if (instance == null && context != null) {
-            instance = new BlobDownloadManager(context.getApplicationContext());
+    public void onNavigation() {
+        document = null;
+        Prompt oldPrompt = prompt;
+        prompt = null;
+        if (oldPrompt != null) oldPrompt.dialog.dismiss();
+        Request oldRequest = active;
+        if (oldRequest != null) {
+            active = null;
+            ui.removeCallbacks(oldRequest.admissionTimeout);
+            oldRequest.intake.abort(PAGE_LEFT);
+            if (!closed) sourceReleased.run();
         }
-        return instance;
     }
 
-    private BlobDownloadManager(Context context) {
-        this.context = context;
-        this.bridge = new BlobDownloadBridge(this);
-        this.mainHandler = new Handler(Looper.getMainLooper());
+    public void onDocumentCommitted(String url) {
+        onNavigation();
+        if (closed || !supported) return;
+        String origin = BlobDocument.webOrigin(url);
+        if (origin == null || !origin.equals(BlobDocument.webOrigin(webView.getUrl()))) return;
+        try {
+            BlobDocument<JavaScriptReplyProxy> next = new BlobDocument<>(webView, origin);
+            document = next;
+            // This only binds the reply endpoint. The script doesn't know any blob URL yet.
+            webView.evaluateJavascript("(" + readScript(webView.getContext()) + ")('" + next.challenge + "');", null);
+        } catch (IOException | RuntimeException e) {
+            document = null;
+        }
     }
 
-    public BlobDownloadBridge getBridge() {
-        return bridge;
+    public void rendererGone() {
+        rendererGone = true;
+        close();
     }
 
-    public synchronized void prepareBlob(WebView webView, String blobUrl) {
-        if (webView == null || blobUrl == null || !blobUrl.startsWith("blob:")) return;
-
-        String blobId = "blob_" + Math.abs(blobUrl.hashCode()) + "_" + System.currentTimeMillis();
-        File tempFile = new File(context.getCacheDir(), blobId + ".part");
-        BlobSession session = new BlobSession(blobId, blobUrl, tempFile);
-
-        sessionsByBlobId.put(blobId, session);
-        sessionsByUrl.put(blobUrl, session);
-
-        // Inject JavaScript to fetch and stream blob in 512KB slices immediately
-        String js = String.format(
-                "(function() {" +
-                "  var blobUrl = '%s';" +
-                "  var blobId = '%s';" +
-                "  fetch(blobUrl)" +
-                "    .then(function(res) {" +
-                "      if (!res.ok) throw new Error('HTTP ' + res.status);" +
-                "      return res.blob();" +
-                "    })" +
-                "    .then(function(blob) {" +
-                "      var totalSize = blob.size;" +
-                "      var mime = blob.type || '';" +
-                "      if (window.BlobDownloadBridge) {" +
-                "        window.BlobDownloadBridge.onBlobReady(blobId, totalSize, mime);" +
-                "      }" +
-                "      var CHUNK_SIZE = 524288;" +
-                "      var offset = 0;" +
-                "      function readSlice() {" +
-                "        if (offset >= totalSize) {" +
-                "          if (window.BlobDownloadBridge) window.BlobDownloadBridge.onBlobEnd(blobId);" +
-                "          return;" +
-                "        }" +
-                "        var end = Math.min(offset + CHUNK_SIZE, totalSize);" +
-                "        var slice = blob.slice(offset, end);" +
-                "        var reader = new FileReader();" +
-                "        reader.onload = function(e) {" +
-                "          var bytes = new Uint8Array(e.target.result);" +
-                "          var binary = '';" +
-                "          var len = bytes.byteLength;" +
-                "          var step = 8192;" +
-                "          for (var i = 0; i < len; i += step) {" +
-                "            binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + step, len)));" +
-                "          }" +
-                "          var base64 = btoa(binary);" +
-                "          if (window.BlobDownloadBridge) {" +
-                "            window.BlobDownloadBridge.onBlobChunk(blobId, base64, offset, totalSize);" +
-                "          }" +
-                "          offset = end;" +
-                "          readSlice();" +
-                "        };" +
-                "        reader.onerror = function() {" +
-                "          if (window.BlobDownloadBridge) window.BlobDownloadBridge.onBlobFailed(blobId, 'Read error at offset ' + offset);" +
-                "        };" +
-                "        reader.readAsArrayBuffer(slice);" +
-                "      }" +
-                "      readSlice();" +
-                "    })" +
-                "    .catch(function(err) {" +
-                "      if (window.BlobDownloadBridge) window.BlobDownloadBridge.onBlobFailed(blobId, err.message || err.toString());" +
-                "    });" +
-                "})();", blobUrl, blobId
-        );
-
-        mainHandler.post(() -> {
+    public void close() {
+        if (closed) return;
+        closed = true;
+        onNavigation();
+        if (!rendererGone && supported && WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             try {
-                webView.evaluateJavascript(js, null);
-            } catch (Exception ignored) {}
+                WebViewCompat.removeWebMessageListener(webView, BRIDGE);
+            } catch (RuntimeException ignored) {}
+        }
+    }
+
+    void showPrompt(String url, String disposition, String mimeType, long length) {
+        Context context = webView.getContext();
+        if (closed) return;
+        if (!supported) {
+            notifyUnavailable(context, "This WebView does not support secure blob downloads. Update Android System WebView.");
+            return;
+        }
+        if (!isCurrent(document) || !url.startsWith("blob:") || url.length() > 8192
+                || !document.origin.equals(BlobDocument.webOrigin(url.substring(5)))) {
+            notifyUnavailable(context, "This blob is not available in the current main page.");
+            return;
+        }
+        if (length > BlobIntake.MAX_BYTES) {
+            notifyUnavailable(context, "This blob exceeds the 512 MiB download limit.");
+            return;
+        }
+        if (prompt != null || active != null) {
+            notifyUnavailable(context, "Finish or cancel this tab's other blob download first.");
+            return;
+        }
+        Prompt offer = new Prompt(document, url, Math.max(-1, length));
+        offer.dialog = DownloadPromptDialog.showBlob(context, url, disposition, mimeType, offer.length,
+                item -> confirm(offer, item));
+        prompt = offer;
+        offer.dialog.setOnDismissListener(dialog -> {
+            if (prompt == offer) prompt = null;
         });
     }
 
-    public synchronized BlobDownloadTask getOrCreateTask(DownloadItem item, DownloadDbHelper dbHelper,
-                                                         DownloadTask.TaskListener listener, SpeedLimiter globalLimiter) {
-        BlobDownloadTask task = new BlobDownloadTask(item, dbHelper, listener, globalLimiter);
-        BlobSession session = sessionsByUrl.get(item.getUrl());
-
-        if (session != null) {
-            synchronized (session) {
-                session.linkedTask = task;
-                if (session.totalSize > 0) {
-                    task.setInitialMetadata(session.totalSize);
-                }
-
-                // If early chunks were buffered to cache file while user was in prompt dialog, transfer them
-                session.closeBufferedStream();
-                if (session.bufferedTempFile != null && session.bufferedTempFile.exists() && session.bufferedTempFile.length() > 0) {
-                    try {
-                        byte[] buffer = new byte[65536];
-                        int read;
-                        long offset = 0;
-                        try (FileInputStream in = new FileInputStream(session.bufferedTempFile)) {
-                            while ((read = in.read(buffer)) > 0) {
-                                byte[] chunk = new byte[read];
-                                System.arraycopy(buffer, 0, chunk, 0, read);
-                                task.appendChunk(chunk, offset, session.totalSize);
-                                offset += read;
-                            }
-                        }
-                    } catch (Exception ignored) {}
-                    session.bufferedTempFile.delete();
-                }
-
-                if (session.isComplete) {
-                    task.onStreamComplete();
-                } else if (session.failedError != null) {
-                    task.onStreamFailed(session.failedError);
-                }
-            }
+    private void confirm(Prompt offer, DownloadItem item) throws IOException {
+        if (prompt != offer || active != null || !isCurrent(offer.document) || !offer.url.equals(item.getUrl())) {
+            throw new IOException(BlobIntake.SOURCE_GONE);
         }
-
-        return task;
-    }
-
-    @Override
-    public void onBlobReady(String blobId, long totalSize, String mimeType) {
-        BlobSession session = sessionsByBlobId.get(blobId);
-        if (session == null) return;
-        synchronized (session) {
-            session.totalSize = totalSize;
-            session.mimeType = mimeType;
-            if (session.linkedTask != null) {
-                session.linkedTask.setInitialMetadata(totalSize);
-            }
+        if (!canRetainSource.getAsBoolean()) {
+            throw new IOException("Confirm from the source tab. If other tabs have page downloads pending, finish or cancel one first.");
         }
-    }
-
-    @Override
-    public void onBlobChunk(String blobId, String base64Chunk, long offset, long totalSize) {
-        BlobSession session = sessionsByBlobId.get(blobId);
-        if (session == null || base64Chunk == null) return;
-
-        byte[] data;
+        Request request = new Request(offer, DownloadEngine.getInstance(webView.getContext()));
+        active = request;
         try {
-            data = Base64.decode(base64Chunk, Base64.DEFAULT);
-        } catch (Exception e) {
+            request.engine.enqueueBlob(item, request.intake);
+        } catch (IOException | RuntimeException e) {
+            active = null;
+            request.intake.close();
+            throw e;
+        }
+        prompt = null;
+        ui.postDelayed(request.admissionTimeout, BlobIntake.QUEUED_TIMEOUT_MS);
+    }
+
+    private void onMessage(WebView view, WebMessageCompat message, Uri sourceOrigin, boolean isMainFrame,
+                           JavaScriptReplyProxy reply) {
+        BlobDocument<JavaScriptReplyProxy> current = document;
+        if (current == null || !current.acceptsFrame(view, sourceOrigin.toString(), isMainFrame)
+                || !current.origin.equals(BlobDocument.webOrigin(webView.getUrl()))
+                || message.getType() != WebMessageCompat.TYPE_STRING) return;
+        String data = message.getData();
+        if (data == null || current.bind(data, reply) || !current.owns(reply)) return;
+        if (("gone:" + current.challenge).equals(data)) {
+            onNavigation();
             return;
         }
-
-        synchronized (session) {
-            if (session.linkedTask != null) {
-                session.linkedTask.appendChunk(data, offset, totalSize);
-            } else {
-                // Buffer to cache file until user confirms prompt dialog
-                try {
-                    if (session.bufferedOut == null) {
-                        session.bufferedOut = new FileOutputStream(session.bufferedTempFile, true);
-                    }
-                    session.bufferedOut.write(data);
-                } catch (Exception ignored) {}
-            }
+        Request request = active;
+        if (request != null && request.document == current && request.started && data.startsWith(request.prefix)) {
+            int offset = request.prefix.length();
+            // Don't copy or decode an oversize payload, even from a bound document.
+            request.intake.receive(data.length() - offset > BlobIntake.MAX_FRAME_CHARS ? null : data.substring(offset));
         }
     }
 
-    @Override
-    public void onBlobEnd(String blobId) {
-        BlobSession session = sessionsByBlobId.get(blobId);
-        if (session == null) return;
-        synchronized (session) {
-            session.isComplete = true;
-            session.closeBufferedStream();
-            if (session.linkedTask != null) {
-                session.linkedTask.onStreamComplete();
+    private boolean isCurrent(BlobDocument<JavaScriptReplyProxy> candidate) {
+        return !closed && candidate != null && document == candidate && candidate.endpoint() != null
+                && candidate.origin.equals(BlobDocument.webOrigin(webView.getUrl()));
+    }
+
+    private static void notifyUnavailable(Context context, String reason) {
+        Toast.makeText(context, reason, Toast.LENGTH_LONG).show();
+    }
+
+    private static String readScript(Context context) throws IOException {
+        if (script == null) {
+            try (InputStream in = context.getAssets().open("downloader/blob_intake.js");
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[4096];
+                for (int count; (count = in.read(buffer)) != -1; ) out.write(buffer, 0, count);
+                script = new String(out.toByteArray(), StandardCharsets.UTF_8).trim();
             }
+        }
+        return script;
+    }
+
+    private static final class Prompt {
+        final BlobDocument<JavaScriptReplyProxy> document;
+        final String url;
+        final long length;
+        AlertDialog dialog;
+
+        Prompt(BlobDocument<JavaScriptReplyProxy> document, String url, long length) {
+            this.document = document;
+            this.url = url;
+            this.length = length;
         }
     }
 
-    @Override
-    public void onBlobFailed(String blobId, String error) {
-        BlobSession session = sessionsByBlobId.get(blobId);
-        if (session == null) return;
-        synchronized (session) {
-            session.failedError = error;
-            session.closeBufferedStream();
-            if (session.bufferedTempFile != null && session.bufferedTempFile.exists()) {
-                session.bufferedTempFile.delete();
-            }
-            if (session.linkedTask != null) {
-                session.linkedTask.onStreamFailed(error);
+    private final class Request implements BlobIntake.Page {
+        final BlobDocument<JavaScriptReplyProxy> document;
+        final DownloadEngine engine;
+        final BlobIntake intake;
+        final String url;
+        final String token = UUID.randomUUID().toString();
+        final String prefix = token + ":";
+        final Runnable admissionTimeout = this::expire;
+        boolean started; // UI thread only: a start command was sent to this document
+
+        Request(Prompt offer, DownloadEngine engine) {
+            this.document = offer.document;
+            this.engine = engine;
+            this.url = offer.url;
+            this.intake = new BlobIntake(offer.length, this);
+        }
+
+        private void expire() {
+            intake.abort("The blob expired while waiting for the download queue.");
+        }
+
+        @Override public void start() {
+            ui.post(() -> {
+                ui.removeCallbacks(admissionTimeout);
+                if (!intake.isActive()) return;
+                if (active != this || !isCurrent(document)) {
+                    intake.abort(PAGE_LEFT);
+                    return;
+                }
+                started = true;
+                send("start", ",\"url\":" + JSONObject.quote(url) + ",\"chunkBytes\":" + BlobIntake.MAX_CHUNK_BYTES
+                        + ",\"maxBytes\":" + BlobIntake.MAX_BYTES);
+            });
+        }
+
+        @Override public void acknowledge() {
+            ui.post(() -> {
+                if (intake.isActive() && active == this && isCurrent(document)) send("ack", "");
+            });
+        }
+
+        @Override public void stop() {
+            ui.post(() -> {
+                ui.removeCallbacks(admissionTimeout);
+                if (active == this) {
+                    active = null;
+                    sourceReleased.run();
+                }
+                if (started && !closed && !rendererGone) send("stop", ""); // never call a destroyed view's endpoint
+                engine.reconcile(); // expire a bound row still waiting for conditions or a slot
+            });
+        }
+
+        private void send(String type, String arguments) {
+            try {
+                document.endpoint().postMessage("{\"type\":\"" + type + "\",\"token\":\"" + token + "\"" + arguments + "}");
+            } catch (RuntimeException e) {
+                intake.abort(PAGE_LEFT);
             }
         }
     }

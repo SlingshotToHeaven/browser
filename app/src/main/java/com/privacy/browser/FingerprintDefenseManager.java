@@ -5,8 +5,7 @@ import android.util.Log;
 import android.webkit.WebView;
 
 import androidx.annotation.NonNull;
-import androidx.webkit.JavaScriptReplyProxy;
-import androidx.webkit.WebMessageCompat;
+import androidx.webkit.ScriptHandler;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 
@@ -15,57 +14,33 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
-import java.util.Set;
 
 /**
- * Manages document-start script injection and two-way bridge communication
+ * Manages document-start script injection
  * for anti-fingerprinting protection.
  */
-public class FingerprintDefenseManager {
+public final class FingerprintDefenseManager {
 
     private static final String TAG = "FingerprintDefense";
     private static final String SCRIPT_PATH = "scripts/fingerprint_defense.js";
-    private static final String BRIDGE_NAME = "PrivacyShieldBridge";
+    private static String cachedScript;
 
-    public interface ShieldEventListener {
-        void onFingerprintIntercepted(String apiType);
+    static void prepare(@NonNull Context context) {
+        String script = loadScript(context);
+        if (script == null || script.isEmpty()) throw new IllegalStateException("Missing fingerprint script");
     }
 
-    private static String cachedScript = null;
-
-    public static void attach(@NonNull Context context,
-                              @NonNull WebView webView,
-                              @NonNull ShieldEventListener listener) {
-        // 1. Establish Two-Way Bridge for Telemetry
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            Set<String> allowedOrigins = Collections.singleton("*");
-            WebViewCompat.addWebMessageListener(
-                webView,
-                BRIDGE_NAME,
-                allowedOrigins,
-                (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
-                    String data = message.getData();
-                    if (data != null && data.contains("FINGERPRINT_INTERCEPTED")) {
-                        Log.d(TAG, "Shield event from: " + sourceOrigin + " -> " + data);
-                        listener.onFingerprintIntercepted(data);
-                    }
-                }
-            );
-        } else {
-            Log.w(TAG, "WEB_MESSAGE_LISTENER feature not supported by current WebView provider.");
-        }
-
-        // 2. Inject Anti-Fingerprinting Script at document_start
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            String script = loadScript(context);
-            if (script != null && !script.isEmpty()) {
-                Set<String> allowedOrigins = Collections.singleton("*");
-                WebViewCompat.addDocumentStartJavaScript(webView, script, allowedOrigins);
-                Log.i(TAG, "FingerprintDefense.js successfully registered at document_start.");
+    public static ScriptHandler attach(@NonNull Context context, @NonNull WebView webView) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return null;
+        String script = loadScript(context);
+        if (script != null && !script.isEmpty()) {
+            try {
+                return WebViewCompat.addDocumentStartJavaScript(webView, InternalHome.excludeFromScript(script), Collections.singleton("*"));
+            } catch (RuntimeException e) {
+                Log.w(TAG, "Provider did not register fingerprint protection");
             }
-        } else {
-            Log.w(TAG, "DOCUMENT_START_SCRIPT feature not supported by current WebView provider.");
         }
+        return null;
     }
 
     private static synchronized String loadScript(@NonNull Context context) {

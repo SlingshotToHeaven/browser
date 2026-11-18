@@ -2,19 +2,19 @@ package com.privacy.imagesearch.ui;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
-import android.text.TextUtils;
+import android.text.InputFilter;
+import android.text.InputType;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
-import android.widget.ImageView;
+import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -32,13 +32,16 @@ public final class ImageSearchHubDialog {
     public interface ImageSearchCallback {
         void onSearchRequested(@NonNull String searchUrl, boolean openInBackground);
         void onSelectWebImageRequested();
-        void onCaptureRegionRequested();
-        void onUploadLocalImageRequested();
     }
 
     public static void show(@NonNull Activity activity,
                             @Nullable String candidateImageUrl,
                             @NonNull ImageSearchCallback callback) {
+        final String imageUrl = ImageSearchUrl.normalize(candidateImageUrl);
+        if (candidateImageUrl != null && imageUrl == null) {
+            Toast.makeText(activity, "Image search needs an HTTP(S) image URL. Local and inline images cannot be sent.", Toast.LENGTH_LONG).show();
+            return;
+        }
         int themeResId = ImageSearchThemeHelper.getDialogThemeResId(activity);
         ContextThemeWrapper themedContext = new ContextThemeWrapper(activity, themeResId);
         AlertDialog.Builder builder = new AlertDialog.Builder(themedContext);
@@ -59,12 +62,12 @@ public final class ImageSearchHubDialog {
         View actionsStrip = view.findViewById(R.id.container_actions_strip);
         View dividerBelowActions = view.findViewById(R.id.divider_below_actions);
 
-        if (!TextUtils.isEmpty(candidateImageUrl)) {
+        if (imageUrl != null) {
             if (textTitle != null) textTitle.setText("Search Selected Image");
-            if (textSubtitle != null) textSubtitle.setText("Choose a search engine below");
+            if (textSubtitle != null) textSubtitle.setText("Share the URL with one search provider");
             if (previewContainer != null) {
                 previewContainer.setVisibility(View.VISIBLE);
-                if (textPreviewUrl != null) textPreviewUrl.setText(candidateImageUrl);
+                if (textPreviewUrl != null) textPreviewUrl.setText(imageUrl);
             }
             if (actionsStrip != null) actionsStrip.setVisibility(View.GONE);
             if (dividerBelowActions != null) dividerBelowActions.setVisibility(View.GONE);
@@ -81,66 +84,11 @@ public final class ImageSearchHubDialog {
             });
         }
 
-        // Mode 2: Capture Area
-        View btnCapture = view.findViewById(R.id.btn_capture_region);
-        if (btnCapture != null) {
-            btnCapture.setOnClickListener(v -> {
-                dialog.dismiss();
-                callback.onCaptureRegionRequested();
-            });
-        }
-
-        // Mode 3: Upload Local File (Browse)
-        View btnUpload = view.findViewById(R.id.btn_upload_file);
-        if (btnUpload != null) {
-            btnUpload.setOnClickListener(v -> {
-                dialog.dismiss();
-                callback.onUploadLocalImageRequested();
-            });
-        }
-
-        // Mode 4: Paste Image URL
         View btnUrl = view.findViewById(R.id.btn_enter_url);
-        if (btnUrl != null) {
-            btnUrl.setOnClickListener(v -> {
-                dialog.dismiss();
-                promptImageUrl(activity, candidateImageUrl, callback);
-            });
-        }
-
-        // Mode 5: Search All Engines
-        View btnSearchAll = view.findViewById(R.id.btn_search_all_engines);
-        if (btnSearchAll != null) {
-            btnSearchAll.setOnClickListener(v -> {
-                if (!TextUtils.isEmpty(candidateImageUrl)) {
-                    searchAllEngines(activity, candidateImageUrl, callback);
-                    dialog.dismiss();
-                } else {
-                    dialog.dismiss();
-                    promptImageUrl(activity, null, new ImageSearchCallback() {
-                        @Override
-                        public void onSearchRequested(@NonNull String searchUrl, boolean openInBackground) {
-                            searchAllEngines(activity, searchUrl, callback);
-                        }
-
-                        @Override
-                        public void onSelectWebImageRequested() {
-                            callback.onSelectWebImageRequested();
-                        }
-
-                        @Override
-                        public void onCaptureRegionRequested() {
-                            callback.onCaptureRegionRequested();
-                        }
-
-                        @Override
-                        public void onUploadLocalImageRequested() {
-                            callback.onUploadLocalImageRequested();
-                        }
-                    });
-                }
-            });
-        }
+        if (btnUrl != null) btnUrl.setOnClickListener(v -> {
+            dialog.dismiss();
+            promptImageUrl(activity, null, callback);
+        });
 
         LinearLayout enginesContainer = view.findViewById(R.id.container_engine_items);
         LinearLayout categoryTabsContainer = view.findViewById(R.id.container_category_filters);
@@ -169,14 +117,14 @@ public final class ImageSearchHubDialog {
                         updateCategoryPillStyle((TextView) c, c == catPill, themedContext);
                     }
                 }
-                renderEnginesList(activity, themedContext, enginesContainer, cat, candidateImageUrl, dialog, callback);
+                renderEnginesList(activity, themedContext, enginesContainer, cat, imageUrl, dialog, callback);
             });
 
             categoryTabsContainer.addView(catPill);
         }
 
         // Initial engine list render (All categories)
-        renderEnginesList(activity, themedContext, enginesContainer, ImageSearchEngine.Category.ALL, candidateImageUrl, dialog, callback);
+        renderEnginesList(activity, themedContext, enginesContainer, ImageSearchEngine.Category.ALL, imageUrl, dialog, callback);
 
         dialog.show();
     }
@@ -205,6 +153,7 @@ public final class ImageSearchHubDialog {
         List<ImageSearchEngine> engines = ImageSearchEngine.getEnginesByCategory(category);
 
         for (ImageSearchEngine engine : engines) {
+            if (!engine.acceptsImageUrl()) continue;
             View itemRow = LayoutInflater.from(themedContext).inflate(R.layout.item_image_search_engine, container, false);
             TextView textName = itemRow.findViewById(R.id.engine_name);
             TextView textDesc = itemRow.findViewById(R.id.engine_description);
@@ -216,115 +165,65 @@ public final class ImageSearchHubDialog {
 
             itemRow.setOnClickListener(v -> {
                 dialog.dismiss();
-                if (!TextUtils.isEmpty(candidateImageUrl)) {
-                    callback.onSearchRequested(engine.buildSearchUrl(candidateImageUrl), false);
-                } else {
-                    promptUrlForEngine(activity, engine, callback);
-                }
+                if (candidateImageUrl == null) promptImageUrl(activity, engine, callback);
+                else confirmSearch(activity, engine, candidateImageUrl, false, callback);
             });
 
-            // Long-click opens in background tab
             itemRow.setOnLongClickListener(v -> {
+                if (candidateImageUrl == null) return false;
                 dialog.dismiss();
-                if (!TextUtils.isEmpty(candidateImageUrl)) {
-                    callback.onSearchRequested(engine.buildSearchUrl(candidateImageUrl), true);
-                    Toast.makeText(activity, "Searching in background tab...", Toast.LENGTH_SHORT).show();
-                    return true;
-                }
-                return false;
+                confirmSearch(activity, engine, candidateImageUrl, true, callback);
+                return true;
             });
 
             container.addView(itemRow);
         }
+        if (container.getChildCount() == 0) {
+            TextView empty = new TextView(themedContext);
+            empty.setText("No URL search providers in this category.");
+            container.addView(empty);
+        }
     }
 
-    private static void promptUrlForEngine(@NonNull Activity activity,
-                                           @NonNull ImageSearchEngine engine,
-                                           @NonNull ImageSearchCallback callback) {
-        int themeResId = ImageSearchThemeHelper.getDialogThemeResId(activity);
-        ContextThemeWrapper themedContext = new ContextThemeWrapper(activity, themeResId);
-        AlertDialog.Builder builder = new AlertDialog.Builder(themedContext);
-        builder.setTitle("Search with " + engine.getDisplayName());
-
-        final EditText input = new EditText(themedContext);
+    private static void promptImageUrl(Activity activity, @Nullable ImageSearchEngine engine, ImageSearchCallback callback) {
+        Context theme = new ContextThemeWrapper(activity, ImageSearchThemeHelper.getDialogThemeResId(activity));
+        EditText input = new EditText(theme);
         input.setHint("https://example.com/photo.jpg");
         input.setSingleLine(true);
-        ClipboardManager cb = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
-        if (cb != null && cb.hasPrimaryClip() && cb.getPrimaryClip().getItemCount() > 0) {
-            CharSequence text = cb.getPrimaryClip().getItemAt(0).getText();
-            if (text != null && (text.toString().startsWith("http://") || text.toString().startsWith("https://"))) {
-                input.setText(text);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(ImageSearchUrl.MAX_LENGTH)});
+        ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard != null) {
+            android.content.ClipData clip = clipboard.getPrimaryClip();
+            if (clip != null && clip.getItemCount() > 0) {
+                CharSequence text = clip.getItemAt(0).getText();
+                if (text != null && text.length() <= ImageSearchUrl.MAX_LENGTH) input.setText(ImageSearchUrl.normalize(text.toString()));
             }
         }
-        input.setPadding(40, 30, 40, 30);
-        builder.setView(input);
-
-        builder.setPositiveButton("Search", (d, w) -> {
-            String url = input.getText().toString().trim();
-            if (!url.isEmpty()) {
-                callback.onSearchRequested(engine.buildSearchUrl(url), false);
-            }
-        });
-        builder.setNegativeButton("Cancel", null);
-        builder.show();
+        AlertDialog dialog = new AlertDialog.Builder(theme).setTitle("Enter image URL").setView(input)
+                .setNegativeButton("Cancel", null).setPositiveButton(engine == null ? "Choose provider" : "Review", null).create();
+        dialog.setOnShowListener(event -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String url = ImageSearchUrl.normalize(input.getText().toString());
+            if (url == null) { input.setError("Enter an HTTP(S) image URL without login credentials."); return; }
+            dialog.dismiss();
+            if (engine == null) show(activity, url, callback);
+            else confirmSearch(activity, engine, url, false, callback);
+        }));
+        dialog.show();
     }
 
-    private static void promptImageUrl(@NonNull Activity activity,
-                                       @Nullable String initialUrl,
-                                       @NonNull ImageSearchCallback callback) {
-        int themeResId = ImageSearchThemeHelper.getDialogThemeResId(activity);
-        ContextThemeWrapper themedContext = new ContextThemeWrapper(activity, themeResId);
-        AlertDialog.Builder builder = new AlertDialog.Builder(themedContext);
-        builder.setTitle("Enter Image URL");
-
-        final EditText input = new EditText(themedContext);
-        input.setHint("https://example.com/photo.jpg");
-        input.setSingleLine(true);
-        if (initialUrl != null) {
-            input.setText(initialUrl);
-        } else {
-            ClipboardManager cb = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
-            if (cb != null && cb.hasPrimaryClip() && cb.getPrimaryClip().getItemCount() > 0) {
-                CharSequence text = cb.getPrimaryClip().getItemAt(0).getText();
-                if (text != null && (text.toString().startsWith("http://") || text.toString().startsWith("https://"))) {
-                    input.setText(text);
-                }
-            }
-        }
-        input.setPadding(40, 30, 40, 30);
-        builder.setView(input);
-
-        builder.setPositiveButton("Search (Google)", (d, w) -> {
-            String url = input.getText().toString().trim();
-            if (!url.isEmpty()) {
-                ImageSearchEngine def = ImageSearchEngine.getById("googleLens");
-                if (def != null) {
-                    callback.onSearchRequested(def.buildSearchUrl(url), false);
-                }
-            }
-        });
-
-        builder.setNeutralButton("Choose Engine", (d, w) -> {
-            String url = input.getText().toString().trim();
-            if (!url.isEmpty()) {
-                show(activity, url, callback);
-            }
-        });
-
-        builder.setNegativeButton("Cancel", null);
-        builder.show();
-    }
-
-    private static void searchAllEngines(@NonNull Activity activity,
-                                         @NonNull String imageUrl,
-                                         @NonNull ImageSearchCallback callback) {
-        String[] defaultBatch = new String[]{"googleLens", "bing", "yandex", "tineye"};
-        for (int i = 0; i < defaultBatch.length; i++) {
-            ImageSearchEngine e = ImageSearchEngine.getById(defaultBatch[i]);
-            if (e != null) {
-                callback.onSearchRequested(e.buildSearchUrl(imageUrl), i > 0);
-            }
-        }
-        Toast.makeText(activity, "Searching across Google, Bing, Yandex, and TinEye", Toast.LENGTH_SHORT).show();
+    private static void confirmSearch(Activity activity, ImageSearchEngine engine, String imageUrl, boolean background, ImageSearchCallback callback) {
+        String target = engine.buildSearchUrl(imageUrl);
+        String host = java.net.URI.create(target).getHost();
+        AlertDialog dialog = new AlertDialog.Builder(activity, ImageSearchThemeHelper.getDialogThemeResId(activity))
+                .setTitle("Share image URL with " + engine.getDisplayName() + "?")
+                .setMessage("Destination: " + host + "\n\n" + imageUrl
+                        + "\n\nThe provider receives this complete address, including any query. No file or screenshot is uploaded by the app.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton(background ? "Open in background" : "Open URL search", (d, button) -> callback.onSearchRequested(target, background))
+                .create();
+        dialog.show();
+        Button confirm = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+        confirm.setFilterTouchesWhenObscured(true);
     }
 }

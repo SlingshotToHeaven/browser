@@ -1,25 +1,32 @@
 package com.privacy.browser;
 
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.net.http.SslError;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Log;
-import android.webkit.CookieManager;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.SslErrorHandler;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.privacy.browser.adblock.AdBlockManager;
+import com.privacy.browser.adblock.SiteRequestPolicy;
+import com.privacy.downloader.net.RequestContext;
 import com.privacy.downloader.ui.DownloadPromptDialog;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
+import java.util.function.Predicate;
+
+import org.json.JSONObject;
 
 /**
  * Hardened WebViewClient handling subresource blocking, cosmetic CSS injection,
@@ -40,15 +47,6 @@ public class PrivacyWebViewClient extends WebViewClient {
     };
 
     private static final String TAG = "PrivacyWebViewClient";
-    private static final String COSMETIC_FILTER_JS =
-        "(function() {" +
-        "  if (document.getElementById('__privacy_shield_css')) return;" +
-        "  const style = document.createElement('style');" +
-        "  style.id = '__privacy_shield_css';" +
-        "  style.textContent = '.advertisement, .adsbygoogle, [id*=\"google_ads\"], .trc_related_container, .cookie-banner, .consent-banner { display: none !important; }';" +
-        "  (document.head || document.documentElement).appendChild(style);" +
-        "})();";
-
     private static final String FORCE_IMAGE_INTERACTION_JS =
         "(function() {" +
         "  try {" +
@@ -67,295 +65,106 @@ public class PrivacyWebViewClient extends WebViewClient {
         "  } catch(e) {}" +
         "})();";
 
-    public static final String VIDEO_SNIFFER_JS =
-        "(function() {" +
-        "  if (window.__privacy_video_sniffer_installed) {" +
-        "    if (typeof window.__checkPrivacyMedia === 'function') window.__checkPrivacyMedia();" +
-        "    if (typeof window.__checkYouTubeData === 'function') window.__checkYouTubeData();" +
-        "    return;" +
-        "  }" +
-        "  window.__privacy_video_sniffer_installed = true;" +
-        "  var reportedUrls = {};" +
-        "  var mediaRegex = /\\.(m3u8|mpd|mp4|webm|m4v|m4a|mp3|ogg|wav|flac)(\\?.*)?$|(\\/manifest\\.m3u8)|(\\/master\\.m3u8)|(\\/playlist\\.m3u8)|(mime=(video|audio)%2f)/i;" +
-        "  function isChunkOrSegment(u) {" +
-        "    if (!u || typeof u !== 'string') return true;" +
-        "    if (u.indexOf('googlevideo.com') !== -1 || u.indexOf('/videoplayback') !== -1) return true;" +
-        "    if (u.indexOf('/proxy.html') !== -1 || u.indexOf('/generate_204') !== -1 || u.indexOf('/stats/qoe') !== -1) return true;" +
-        "    if (u.indexOf('range=') !== -1 || u.indexOf('.ts') !== -1 || u.indexOf('.m4s') !== -1 || u.indexOf('.key') !== -1) return true;" +
-        "    return /[\\/._-](segment|seg|chunk|frag|slice|part|sq)[\\/._\\d-]|init\\.mp4/i.test(u);" +
-        "  }" +
-        "  function reportMedia(url) {" +
-        "    if (!url || typeof url !== 'string') return;" +
-        "    if (url.startsWith('blob:') || url.startsWith('data:') || url.startsWith('javascript:')) return;" +
-        "    if (reportedUrls[url]) return;" +
-        "    if (isChunkOrSegment(url)) return;" +
-        "    if (mediaRegex.test(url)) {" +
-        "      reportedUrls[url] = true;" +
-        "      if (window.PrivacyVideoSniffer && typeof window.PrivacyVideoSniffer.onVideoFound === 'function') {" +
-        "        setTimeout(function() {" +
-        "          try { window.PrivacyVideoSniffer.onVideoFound(window.location.href, document.title || '', url); } catch(e) {}" +
-        "        }, 0);" +
-        "      }" +
-        "    }" +
-        "  }" +
-        "  try {" +
-        "    var origMediaSrc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');" +
-        "    if (origMediaSrc && origMediaSrc.set) {" +
-        "      Object.defineProperty(HTMLMediaElement.prototype, 'src', {" +
-        "        set: function(val) {" +
-        "          reportMedia(val);" +
-        "          return origMediaSrc.set.call(this, val);" +
-        "        }," +
-        "        get: origMediaSrc.get," +
-        "        configurable: true," +
-        "        enumerable: true" +
-        "      });" +
-        "    }" +
-        "  } catch(e) {}" +
-        "  try {" +
-        "    if (window.fetch) {" +
-        "      var origFetch = window.fetch;" +
-        "      window.fetch = function(input, init) {" +
-        "        var u = (typeof input === 'string') ? input : (input && input.url ? input.url : '');" +
-        "        reportMedia(u);" +
-        "        return origFetch.apply(this, arguments);" +
-        "      };" +
-        "    }" +
-        "  } catch(e) {}" +
-        "  try {" +
-        "    if (window.XMLHttpRequest) {" +
-        "      var origOpen = XMLHttpRequest.prototype.open;" +
-        "      XMLHttpRequest.prototype.open = function(method, url) {" +
-        "        reportMedia(url);" +
-        "        return origOpen.apply(this, arguments);" +
-        "      };" +
-        "    }" +
-        "  } catch(e) {}" +
-        "  function notifyVideo(video) {" +
-        "    if (!video) return;" +
-        "    var src = video.currentSrc || video.src || '';" +
-        "    if (!src && video.children) {" +
-        "      for (var i = 0; i < video.children.length; i++) {" +
-        "        var child = video.children[i];" +
-        "        if (child.tagName === 'SOURCE' && child.src) {" +
-        "          src = child.src;" +
-        "          break;" +
-        "        }" +
-        "      }" +
-        "    }" +
-        "    if (src) reportMedia(src);" +
-        "  }" +
-        "  window.__checkPrivacyMedia = function() {" +
-        "    var videos = document.querySelectorAll('video, audio');" +
-        "    for (var i = 0; i < videos.length; i++) {" +
-        "      notifyVideo(videos[i]);" +
-        "    }" +
-        "  };" +
-        "  window.__checkPrivacyMedia();" +
-        "  var events = ['play', 'playing', 'loadedmetadata', 'canplay', 'loadstart'];" +
-        "  for (var e = 0; e < events.length; e++) {" +
-        "    document.addEventListener(events[e], function(evt) {" +
-        "      if (evt.target && (evt.target.tagName === 'VIDEO' || evt.target.tagName === 'AUDIO')) {" +
-        "        notifyVideo(evt.target);" +
-        "      }" +
-        "    }, true);" +
-        "  }" +
-        "  if (window.MutationObserver) {" +
-        "    var observer = new MutationObserver(function(mutations) {" +
-        "      for (var m = 0; m < mutations.length; m++) {" +
-        "        var nodes = mutations[m].addedNodes;" +
-        "        for (var n = 0; n < nodes.length; n++) {" +
-        "          var node = nodes[n];" +
-        "          if (node.nodeType === 1) {" +
-        "            if (node.tagName === 'VIDEO' || node.tagName === 'AUDIO') {" +
-        "              notifyVideo(node);" +
-        "            } else if (node.querySelectorAll) {" +
-        "              var vList = node.querySelectorAll('video, audio');" +
-        "              for (var k = 0; k < vList.length; k++) {" +
-        "                notifyVideo(vList[k]);" +
-        "              }" +
-        "            }" +
-        "          }" +
-        "        }" +
-        "      }" +
-        "    });" +
-        "    var obsTarget = document.documentElement || document.body || document;" +
-        "    if (obsTarget) { try { observer.observe(obsTarget, { childList: true, subtree: true }); } catch(e) {} }" +
-        "    else { document.addEventListener('DOMContentLoaded', function() { try { observer.observe(document.documentElement || document.body || document, { childList: true, subtree: true }); } catch(e) {} }); }" +
-        "  }" +
-        "  function getCurrentVideoId() {" +
-        "    var m = window.location.search.match(/[?&]v=([^&#]+)/) ||" +
-        "            window.location.pathname.match(/\\/shorts\\/([^&#/?]+)/) ||" +
-        "            window.location.pathname.match(/\\/embed\\/([^&#/?]+)/);" +
-        "    return m ? m[1] : null;" +
-        "  }" +
-        "  function checkYouTubeData() {" +
-        "    try {" +
-        "      var currentVid = getCurrentVideoId();" +
-        "      if (!currentVid) return;" +
-        "      var data = null;" +
-        "      var player = document.getElementById('movie_player') || document.querySelector('#movie_player');" +
-        "      if (player && typeof player.getPlayerResponse === 'function') {" +
-        "        try {" +
-        "          var pr = player.getPlayerResponse();" +
-        "          if (pr && pr.videoDetails && pr.videoDetails.videoId === currentVid) {" +
-        "            data = pr;" +
-        "          }" +
-        "        } catch(e) {}" +
-        "      }" +
-        "      if (!data) {" +
-        "        var watchEl = document.querySelector('ytm-watch, ytd-watch-flexy');" +
-        "        if (watchEl && watchEl.playerData) {" +
-        "          var wpr = watchEl.playerData;" +
-        "          if (wpr && wpr.videoDetails && wpr.videoDetails.videoId === currentVid) {" +
-        "            data = wpr;" +
-        "          }" +
-        "        }" +
-        "      }" +
-        "      if (!data && window.ytInitialPlayerResponse) {" +
-        "        var ipr = window.ytInitialPlayerResponse;" +
-        "        if (ipr && ipr.videoDetails && ipr.videoDetails.videoId === currentVid) {" +
-        "          data = ipr;" +
-        "        }" +
-        "      }" +
-        "      if (!data && window.ytplayer && window.ytplayer.config && window.ytplayer.config.args) {" +
-        "        var raw = window.ytplayer.config.args.raw_player_response;" +
-        "        if (raw && raw.videoDetails && raw.videoDetails.videoId === currentVid) {" +
-        "          data = raw;" +
-        "        }" +
-        "      }" +
-        "      if (data && data.streamingData && window.PrivacyVideoSniffer && typeof window.PrivacyVideoSniffer.onYouTubeData === 'function') {" +
-        "        var str = JSON.stringify(data);" +
-        "        window.PrivacyVideoSniffer.onYouTubeData(window.location.href, document.title || '', str);" +
-        "      }" +
-        "    } catch(e) {}" +
-        "  }" +
-        "  window.__checkYouTubeData = checkYouTubeData;" +
-        "  checkYouTubeData();" +
-        "  var ytInterval = setInterval(checkYouTubeData, 1500);" +
-        "  setTimeout(function() { clearInterval(ytInterval); }, 15000);" +
-        "  function onUrlChange() {" +
-        "    if (window.PrivacyVideoSniffer && typeof window.PrivacyVideoSniffer.onPageUrlChanged === 'function') {" +
-        "      window.PrivacyVideoSniffer.onPageUrlChanged(window.location.href, document.title || '');" +
-        "    }" +
-        "    setTimeout(checkYouTubeData, 500);" +
-        "    setTimeout(checkYouTubeData, 1500);" +
-        "  }" +
-        "  var pushState = history.pushState;" +
-        "  var replaceState = history.replaceState;" +
-        "  history.pushState = function() {" +
-        "    var ret = pushState.apply(this, arguments);" +
-        "    onUrlChange();" +
-        "    return ret;" +
-        "  };" +
-        "  history.replaceState = function() {" +
-        "    var ret = replaceState.apply(this, arguments);" +
-        "    onUrlChange();" +
-        "    return ret;" +
-        "  };" +
-        "  window.addEventListener('popstate', onUrlChange);" +
-        "  window.addEventListener('hashchange', onUrlChange);" +
-        "  document.addEventListener('yt-navigate-finish', onUrlChange);" +
-        "  document.addEventListener('yt-page-data-updated', onUrlChange);" +
-        "})();";
-
-    public interface ClientListener {
-        void onPageStarted(String url, Bitmap favicon);
-        void onPageFinished(String url);
-        void onTrackerBlocked(String host);
+    interface ClientListener {
+        void onPageStarted(String url);
+        void onPageCommitted(String url);
+        void onNativeHistoryChanged(String url);
+        void onPageVisible(String url);
+        boolean onPageFinished(String url);
+        void onPageFailed(String url);
+        void onTrackerBlocked(String pageKey);
+        boolean canPrompt();
+        void onRendererLost();
     }
 
-    private final TrackerBlocker trackerBlocker;
+    private final AdBlockManager filters;
+    private final SiteRequestPolicy.Cache requestPolicies;
     private final ClientListener listener;
-    private String tabId;
-    private volatile String currentUrl;
-    private volatile String currentTitle;
-    private volatile android.content.Context appContext;
+    private final TabModel tab;
+    private final boolean privateTab;
+    private final Context appContext;
+    private final TabPageMessages pageMessages;
+    private static volatile String homeHtml;
 
-    public PrivacyWebViewClient(@NonNull TrackerBlocker trackerBlocker,
-                                @NonNull ClientListener listener) {
-        this(trackerBlocker, null, null, null, listener);
-    }
-
-    public PrivacyWebViewClient(@NonNull TrackerBlocker trackerBlocker,
-                                @Nullable String tabId,
-                                @NonNull ClientListener listener) {
-        this(trackerBlocker, tabId, null, null, listener);
-    }
-
-    public PrivacyWebViewClient(@NonNull TrackerBlocker trackerBlocker,
-                                @Nullable String tabId,
-                                @Nullable String initialUrl,
-                                @Nullable android.content.Context context,
-                                @NonNull ClientListener listener) {
-        this.trackerBlocker = trackerBlocker;
-        this.tabId = tabId;
-        this.currentUrl = initialUrl;
-        if (context != null) {
-            this.appContext = context.getApplicationContext();
-        }
+    PrivacyWebViewClient(TrackerBlocker trackerBlocker, TabModel tab, Context context, ClientListener listener) {
+        filters = trackerBlocker.manager();
+        requestPolicies = filters.requestPolicies(tab.sessionUrl());
+        this.tab = tab;
+        privateTab = tab.isIncognito();
+        appContext = context.getApplicationContext();
+        pageMessages = tab.messages;
         this.listener = listener;
-    }
-
-    public void setTabId(String tabId) {
-        this.tabId = tabId;
     }
 
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-        if (request == null || request.getUrl() == null) {
-            return false;
-        }
+        if (view != tab.getWebView()) return true;
+        if (request == null || request.getUrl() == null) return false;
         Uri uri = request.getUrl();
-        String topUrl = currentUrl != null ? currentUrl : (view != null ? view.getUrl() : null);
-        com.privacy.browser.adblock.AdBlockManager abm = appContext != null ? com.privacy.browser.adblock.AdBlockManager.getInstance(appContext) : null;
-        if (abm != null && abm.isAdBlockActiveForSite(topUrl) && trackerBlocker != null && trackerBlocker.isBlocked(uri, topUrl)) {
-            Log.d(TAG, "BLOCKED ad link navigation: " + uri);
-            String host = uri.getHost() != null ? uri.getHost() : "unknown";
-            abm.recordBlockedHost(tabId, host);
-            listener.onTrackerBlocked(host);
-            new Handler(Looper.getMainLooper()).post(() -> {
-                android.widget.Toast.makeText(view.getContext(), "Blocked ad link navigation", android.widget.Toast.LENGTH_SHORT).show();
-            });
+        if (InternalHome.ownsHost(uri.toString())) return !request.isForMainFrame() || request.isRedirect();
+        // Link decisions still use the native current URL, not the attempted destination.
+        if (requestPolicies.forUrl(tab.getUrl()).blocksNetwork(uri)) {
+            recordBlocked(uri, tab.pageKey());
             return true;
         }
-        return handleUrlLoading(view, uri.toString());
+        // Subframes cannot invoke the native prompt or borrow the top page's identity.
+        if (!request.isForMainFrame() || !isDownloadableUrl(uri.toString())) return false;
+        if (listener.canPrompt()) {
+            RequestContext context = request.hasGesture() && !request.isRedirect()
+                    ? downloadContext(view) : unboundDownloadContext();
+            DownloadPromptDialog.show(view.getContext(), uri.toString(), context, null, null, -1);
+        }
+        return true;
     }
 
-    @Override
-    public boolean shouldOverrideUrlLoading(WebView view, String url) {
-        if (url == null) {
-            return false;
-        }
-        try {
-            Uri uri = Uri.parse(url);
-            String topUrl = currentUrl != null ? currentUrl : (view != null ? view.getUrl() : null);
-            com.privacy.browser.adblock.AdBlockManager abm = appContext != null ? com.privacy.browser.adblock.AdBlockManager.getInstance(appContext) : null;
-            if (abm != null && abm.isAdBlockActiveForSite(topUrl) && trackerBlocker != null && trackerBlocker.isBlocked(uri, topUrl)) {
-                Log.d(TAG, "BLOCKED ad link navigation: " + uri);
-                String host = uri.getHost() != null ? uri.getHost() : "unknown";
-                abm.recordBlockedHost(tabId, host);
-                listener.onTrackerBlocked(host);
-                new Handler(Looper.getMainLooper()).post(() -> {
-                    android.widget.Toast.makeText(view.getContext(), "Blocked ad link navigation", android.widget.Toast.LENGTH_SHORT).show();
-                });
-                return true;
-            }
-        } catch (Exception ignored) {}
-        return handleUrlLoading(view, url);
+    private RequestContext unboundDownloadContext() {
+        return privateTab ? RequestContext.fromBrowser(null, null, true) : RequestContext.anonymous();
     }
 
-    private boolean handleUrlLoading(WebView view, String url) {
-        if (isDownloadableUrl(url)) {
-            String cookies = CookieManager.getInstance().getCookie(url);
-            String userAgent = view.getSettings() != null ? view.getSettings().getUserAgentString() : null;
-            String referrer = view.getUrl();
-            new Handler(Looper.getMainLooper()).post(() -> {
-                DownloadPromptDialog.show(view.getContext(), url, userAgent, null, null, cookies, referrer, null);
-            });
-            return true;
+    RequestContext downloadContext(WebView view) {
+        if (privateTab || view == null || view != tab.getWebView() || InternalHome.ownsHost(tab.getUrl())
+                || !tab.navigation.current(tab.getWebView(), tab.navigation.page(), view.getUrl())) return unboundDownloadContext();
+        String origin = RequestContext.origin(tab.getUrl());
+        return origin == null ? unboundDownloadContext()
+                : RequestContext.fromBrowser(origin, view.getSettings().getUserAgentString(), false);
+    }
+
+    private void recordBlocked(Uri uri, String pageKey) {
+        if (privateTab) return;
+        String host = uri.getHost();
+        if (filters.recordBlockedHost(pageKey, host == null ? "unknown" : host)) listener.onTrackerBlocked(pageKey);
+    }
+
+    private WebResourceResponse serveHome(WebResourceRequest request) {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Cache-Control", "no-store");
+        headers.put("X-Content-Type-Options", "nosniff");
+        headers.put("X-Frame-Options", "DENY");
+        headers.put("Referrer-Policy", "no-referrer");
+        headers.put("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; "
+                + "style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+        if (request.isForMainFrame() && "GET".equals(request.getMethod()) && InternalHome.isHome(request.getUrl().toString())) {
+            try {
+                String html = getHomeHtml().replace("__HOME_DELIVERY_TOKEN__", pageMessages.issueHomeDelivery());
+                return new WebResourceResponse("text/html", "UTF-8", 200, "OK", headers,
+                        new ByteArrayInputStream(html.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            } catch (IOException ignored) {}
         }
-        return false;
+        return new WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", headers, new ByteArrayInputStream(new byte[0]));
+    }
+
+    private String getHomeHtml() throws IOException {
+        String cached = homeHtml;
+        if (cached != null) return cached;
+        try (java.io.InputStream input = appContext.getAssets().open("home.html")) {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = input.read(buffer)) != -1) out.write(buffer, 0, count);
+            cached = out.toString("UTF-8");
+            homeHtml = cached;
+            return cached;
+        }
     }
 
     public static boolean isDownloadableUrl(String url) {
@@ -389,77 +198,36 @@ public class PrivacyWebViewClient extends WebViewClient {
     @Nullable
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-        if (request == null || request.getUrl() == null) {
-            return null;
-        }
-
-        if (request.isForMainFrame()) {
-            this.currentUrl = request.getUrl().toString();
-        }
-
-        if (appContext == null && view != null) {
-            try {
-                android.content.Context ctx = view.getContext();
-                if (ctx != null) {
-                    appContext = ctx.getApplicationContext();
-                }
-            } catch (Throwable ignored) {}
-        }
-
+        TabNavigation.Page page = tab.navigation.page(); // per-view owner at interception entry
+        String pageKey = page == null ? null : page.key;
+        if (view != tab.getWebView()) return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
+        if (request == null) return null;
         Uri uri = request.getUrl();
-        if (appContext != null) {
-            com.privacy.browser.adblock.AdBlockManager.getInstance(appContext).recordRequest(tabId);
-        }
+        if (uri == null) return null;
 
-        String topUrl = currentUrl;
-        if (topUrl == null || topUrl.isEmpty()) {
-            if (request.getRequestHeaders() != null) {
-                topUrl = request.getRequestHeaders().get("Referer");
-                if (topUrl == null) {
-                    topUrl = request.getRequestHeaders().get("referer");
-                }
+        String url = uri.toString();
+        boolean mainFrame = request.isForMainFrame();
+        if (InternalHome.ownsHost(url)) return serveHome(request);
+        if (!privateTab) filters.recordRequest(pageKey);
+
+        // Referer is only a filter fallback. It never seeds navigation or download authority.
+        SiteRequestPolicy policy = mainFrame ? (url.isEmpty() ? null : requestPolicies.forUrl(url))
+                : requestPolicies.forSubresource();
+        if (policy == null) {
+            policy = requestPolicies.forUrl(header(request.getRequestHeaders(), "Referer", "referer"));
+        }
+        if (policy.hasAssetPolicy()) {
+            switch (policy.asset(uri.getPath())) {
+                case FONT:
+                    return new WebResourceResponse("font/woff2", "UTF-8", 200, "OK", null, new ByteArrayInputStream(new byte[0]));
+                case MEDIA:
+                    return new WebResourceResponse("text/plain", "UTF-8", 200, "OK", null, new ByteArrayInputStream(new byte[0]));
+                default:
+                    break;
             }
         }
-
-        com.privacy.browser.adblock.AdBlockManager abm = appContext != null ? com.privacy.browser.adblock.AdBlockManager.getInstance(appContext) : null;
-        boolean adBlockActive = (abm != null) && abm.isAdBlockActiveForSite(topUrl);
-
-        if (!adBlockActive) {
-            // Unrestricted stock browser behavior when adblocking is disabled: pass straight through!
-            try {
-                com.privacy.browser.media.MediaSniffer.inspectRequest(tabId, uri, currentTitle);
-            } catch (Throwable ignored) {}
-            return super.shouldInterceptRequest(view, request);
-        }
-
-        if (topUrl != null) {
-            if (abm.isSiteFontsBlocked(topUrl)) {
-                String path = uri.getPath();
-                if (path != null) {
-                    String p = path.toLowerCase(java.util.Locale.US);
-                    if (p.endsWith(".woff") || p.endsWith(".woff2") || p.endsWith(".ttf") || p.endsWith(".otf") || p.contains("/fonts/")) {
-                        return new WebResourceResponse("font/woff2", "UTF-8", 200, "OK", null, new ByteArrayInputStream(new byte[0]));
-                    }
-                }
-            }
-            if (abm.isSiteLargeMediaBlocked(topUrl)) {
-                String path = uri.getPath();
-                if (path != null) {
-                    String p = path.toLowerCase(java.util.Locale.US);
-                    if (p.endsWith(".mp4") || p.endsWith(".webm") || p.endsWith(".m4v") || p.endsWith(".jpg") || p.endsWith(".jpeg") || p.endsWith(".png") || p.endsWith(".webp") || p.endsWith(".gif")) {
-                        return new WebResourceResponse("text/plain", "UTF-8", 200, "OK", null, new ByteArrayInputStream(new byte[0]));
-                    }
-                }
-            }
-        }
-
-        if (trackerBlocker.isBlocked(uri, topUrl)) {
-            String host = uri.getHost() != null ? uri.getHost() : "unknown";
-            Log.d(TAG, "BLOCKED tracker/ad subresource: " + host);
-            if (appContext != null) {
-                com.privacy.browser.adblock.AdBlockManager.getInstance(appContext).recordBlockedHost(tabId, host);
-            }
-            listener.onTrackerBlocked(host);
+        if (policy.blocksNetwork(uri)) {
+            recordBlocked(uri, pageKey);
 
             // Never return 403 or error status codes for blocked ad/tracker resources.
             // In Android Chromium WebView, returning 4xx on any subframe or iframe navigation triggers
@@ -471,36 +239,26 @@ public class PrivacyWebViewClient extends WebViewClient {
             // 4. Empty JSON object for APIs / XHR
             // 5. Clean notification page for main-frame navigation
             // 6. Zero-dimension, display:none empty HTML for iframes / subframes / documents.
-            java.util.Map<String, String> headers = new java.util.HashMap<>();
-            String reqOrigin = null;
-            if (request.getRequestHeaders() != null) {
-                reqOrigin = request.getRequestHeaders().get("Origin");
-                if (reqOrigin == null) {
-                    reqOrigin = request.getRequestHeaders().get("origin");
-                }
-            }
+            Map<String, String> headers = new HashMap<>();
+            Map<String, String> requestHeaders = request.getRequestHeaders();
+            String reqOrigin = header(requestHeaders, "Origin", "origin");
             headers.put("Access-Control-Allow-Origin", reqOrigin != null && !reqOrigin.isEmpty() ? reqOrigin : "*");
             headers.put("Access-Control-Allow-Credentials", "true");
             headers.put("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD, PUT, DELETE");
             headers.put("Access-Control-Allow-Headers", "*");
             headers.put("Cache-Control", "no-cache, no-store, must-revalidate");
 
-            String accept = null;
-            if (request.getRequestHeaders() != null) {
-                accept = request.getRequestHeaders().get("Accept");
-                if (accept == null) {
-                    accept = request.getRequestHeaders().get("accept");
-                }
-            }
+            String accept = header(requestHeaders, "Accept", "accept");
 
             // Main frame navigation (top-level page navigated to blocked ad URL)
-            if (request.isForMainFrame()) {
+            if (mainFrame) {
                 String blockedPage = "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>Blocked</title><style>html,body{height:100%;margin:0;display:flex;align-items:center;justify-content:center;background:#000000;font-family:-apple-system,BlinkMacSystemFont,Roboto,sans-serif;color:#ffffff;text-align:center;padding:24px;box-sizing:border-box;}h1{font-size:20px;font-weight:600;margin:0 0 8px;color:#ffffff;}p{font-size:14px;color:#a0a0a0;margin:0;}</style></head><body><div><h1>Advertisement Blocked</h1><p>This tracking or advertisement domain was blocked by Privacy Shield.</p></div></body></html>";
                 byte[] htmlBytes = blockedPage.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 return new WebResourceResponse("text/html", "UTF-8", 200, "OK", headers, new ByteArrayInputStream(htmlBytes));
             }
 
-            String path = uri.getPath() != null ? uri.getPath().toLowerCase(java.util.Locale.US) : "";
+            String path = uri.getPath();
+            path = path == null ? "" : path.toLowerCase(Locale.US);
 
             // Image requests -> 1x1 transparent PNG
             // Note: Modern browsers include image/avif, image/webp in Accept header for main HTML requests too.
@@ -539,169 +297,106 @@ public class PrivacyWebViewClient extends WebViewClient {
             return new WebResourceResponse("text/html", "UTF-8", 200, "OK", headers, new ByteArrayInputStream(bytes));
         }
 
-        // Robust Media Sniffing (HLS/m3u8, DASH/mpd, Vimeo/YouTube chunks, MP4/WebM)
-        try {
-            com.privacy.browser.media.MediaSniffer.inspectRequest(tabId, uri, currentTitle);
-        } catch (Throwable ignored) {}
+        // Only allowed, per-view resource GETs supply passive hints. There is deliberately no
+        // process-wide ServiceWorkerClient forwarding anything to a selected tab.
+        if (!privateTab && !mainFrame && page != null && page.media.isObserving()
+                && !policy.blocksMedia() && "GET".equals(request.getMethod()) && tab.navigation.page() == page) {
+            page.media.requestHint(url, uri.getEncodedPath(), tab.getTitle());
+        }
 
         return super.shouldInterceptRequest(view, request);
     }
 
+    private static String header(Map<String, String> headers, String name, String lowercase) {
+        if (headers == null) return null;
+        String value = headers.get(name);
+        return value == null ? headers.get(lowercase) : value;
+    }
+
+    Predicate<String> mediaOptionsPolicy() {
+        if (privateTab) return url -> false;
+        String document = tab.getUrl();
+        SiteRequestPolicy.Cache policies = requestPolicies; // No view or Activity captured by a worker.
+        return url -> {
+            if (url == null || url.length() > PageMessageGate.MAX_URL || InternalHome.ownsHost(url)) return false;
+            SiteRequestPolicy policy = policies.forUrl(document);
+            if (policy.blocksMedia()) return false;
+            Uri uri = Uri.parse(url);
+            return policy.asset(uri.getPath()) == SiteRequestPolicy.Asset.PASS && !policy.blocksNetwork(uri);
+        };
+    }
+
+    // Explicit GET/history navigation seeds interception before the provider's first callback.
+    void setNavigationTarget(String url) { requestPolicies.navigate(url); }
+
     @Override
     public void onPageStarted(WebView view, String url, Bitmap favicon) {
-        super.onPageStarted(view, url, favicon);
-        this.currentUrl = url;
-        if (view != null) {
-            this.currentTitle = view.getTitle();
-            if (view.getContext() != null) {
-                this.appContext = view.getContext().getApplicationContext();
-            }
+        if (view != tab.getWebView()) return;
+        setNavigationTarget(url);
+        listener.onPageStarted(url);
+    }
+
+    @Override
+    public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+        onNativeCommit(view, url);
+    }
+
+    @Override
+    public void onPageCommitVisible(WebView view, String url) {
+        onNativeCommit(view, url);
+        if (view != tab.getWebView() || url == null || !url.equals(view.getUrl())) return;
+        listener.onPageVisible(url);
+        if (listener.canPrompt()) {
+            // A provider milestone, not a measurement of pixels already presented to the user.
+            android.os.Trace.beginSection("Browser.tabs.commitVisible");
+            android.os.Trace.endSection();
         }
-        if (tabId != null && url != null) {
-            com.privacy.browser.media.MediaSniffer.setTabUrl(tabId, url);
+    }
+
+    private void onNativeCommit(WebView view, String url) {
+        if (view != tab.getWebView()) return;
+        listener.onPageCommitted(url);
+        if (view == tab.getWebView() && url != null && url.equals(tab.getUrl()) && url.equals(view.getUrl())) {
+            // A trusted commit can be deduplicated for UI/permissions yet move native history at the same URL.
+            listener.onNativeHistoryChanged(url);
+            setNavigationTarget(url);
         }
-        // Synchronize local homepage theme and prevent algorithmic force-dark on light home
-        if (url != null && url.startsWith("file:///android_asset/home.html") && view != null && view.getContext() != null) {
-            boolean isDark = ThemeManager.isAppDarkTheme(view.getContext());
-            if (!isDark) {
-                if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.ALGORITHMIC_DARKENING)) {
-                    androidx.webkit.WebSettingsCompat.setAlgorithmicDarkeningAllowed(view.getSettings(), false);
-                }
-                if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.FORCE_DARK)) {
-                    androidx.webkit.WebSettingsCompat.setForceDark(view.getSettings(), androidx.webkit.WebSettingsCompat.FORCE_DARK_OFF);
-                }
-            }
-        }
-        // Early inject anti-adblock defusers, cosmetic rules, YouTube defuser, popup defuser, and user scripts ONLY if active
-        if (view != null && view.getContext() != null) {
-            com.privacy.browser.adblock.AdBlockManager abm = com.privacy.browser.adblock.AdBlockManager.getInstance(view.getContext());
-            if (abm.isAdBlockActiveForSite(url)) {
-                boolean cosmeticAllowed = abm.isSiteCosmeticEnabled(url);
-                boolean antiAdblockEnabled = abm.isAntiAdblockDefuserEnabled();
-                com.privacy.browser.adblock.AntiAdblockDefuser.inject(view, cosmeticAllowed, antiAdblockEnabled);
-                if (cosmeticAllowed) {
-                    String cleanHost = com.privacy.browser.adblock.AdBlockManager.extractCleanHost(url);
-                    String userCss = com.privacy.browser.adblock.rules.UserFiltersManager.getInstance(view.getContext()).getCosmeticCssForDomain(cleanHost);
-                    if (!userCss.isEmpty()) {
-                        String js = "var s = document.createElement('style'); s.id = '__user_ublock_filters'; s.textContent = '" + userCss.replace("'", "\\'") + "'; var t = document.head || document.documentElement; if (t) t.appendChild(s);";
-                        view.evaluateJavascript(js, null);
-                    }
-                }
-                // Early inject YouTube ad defuser
-                if (url != null && (url.contains("youtube.com") || url.contains("youtu.be"))) {
-                    com.privacy.browser.adblock.YouTubeAdDefuser.inject(view);
-                }
-                // Early inject popup and click-jacking defuser
-                com.privacy.browser.adblock.PopupClickDefuser.inject(view);
-                // Early inject custom user scripts configured for document-start
-                com.privacy.browser.adblock.UserScriptManager.getInstance(view.getContext())
-                        .injectForTiming(view, url, com.privacy.browser.adblock.UserScriptManager.RunAt.DOCUMENT_START);
-            }
-        }
-        // Early inject video sniffer so requests fired during initial page loading are captured
-        view.evaluateJavascript(VIDEO_SNIFFER_JS, null);
-        listener.onPageStarted(url, favicon);
     }
 
     @Override
     public void onPageFinished(WebView view, String url) {
-        super.onPageFinished(view, url);
-        this.currentUrl = url;
-        if (view != null) {
-            this.currentTitle = view.getTitle();
-            if (view.getContext() != null) {
-                this.appContext = view.getContext().getApplicationContext();
-            }
+        if (view != tab.getWebView() || !listener.onPageFinished(url)) return;
+        if (InternalHome.isHome(url)) {
+            ThemeManager.applyHomeUi(tab.getWebView());
+            pageMessages.activateHome();
+            return;
         }
-        // Inject cosmetic CSS hiding rules, anti-adblock, YouTube defuser, popup defuser, and user scripts ONLY if active
-        if (view != null && view.getContext() != null) {
-            com.privacy.browser.adblock.AdBlockManager abm = com.privacy.browser.adblock.AdBlockManager.getInstance(view.getContext());
-            if (abm.isAdBlockActiveForSite(url)) {
-                boolean cosmeticAllowed = abm.isSiteCosmeticEnabled(url);
-                com.privacy.browser.adblock.AntiAdblockDefuser.inject(view, cosmeticAllowed, abm.isAntiAdblockDefuserEnabled());
-                if (cosmeticAllowed) {
-                    String cleanHost = com.privacy.browser.adblock.AdBlockManager.extractCleanHost(url);
-                    String userCss = com.privacy.browser.adblock.rules.UserFiltersManager.getInstance(view.getContext()).getCosmeticCssForDomain(cleanHost);
-                    if (!userCss.isEmpty()) {
-                        String js = "var s = document.createElement('style'); s.id = '__user_ublock_filters'; s.textContent = '" + userCss.replace("'", "\\'") + "'; var t = document.head || document.documentElement; if (t) t.appendChild(s);";
-                        view.evaluateJavascript(js, null);
-                    }
-                }
-                if (abm.isSiteLargeMediaBlocked(url)) {
-                    view.evaluateJavascript("var ms = document.createElement('style'); ms.textContent = 'img, video, audio, picture { display: none !important; }'; var t = document.head || document.documentElement; if (t) t.appendChild(ms);", null);
-                }
-                // Inject YouTube ad defuser
-                if (url != null && (url.contains("youtube.com") || url.contains("youtu.be"))) {
-                    com.privacy.browser.adblock.YouTubeAdDefuser.inject(view);
-                }
-                // Inject popup and click-jacking defuser
-                com.privacy.browser.adblock.PopupClickDefuser.inject(view);
-                // Inject custom user scripts configured for document-end
-                com.privacy.browser.adblock.UserScriptManager.getInstance(view.getContext())
-                        .injectForTiming(view, url, com.privacy.browser.adblock.UserScriptManager.RunAt.DOCUMENT_END);
-            }
-        }
+        if (tab.scriptPolicy != null) tab.scriptPolicy.onFinishedPage(url);
+    }
 
-        // Inject force image interaction override if enabled in settings
-        if (view.getContext() != null && com.privacy.browser.settings.SettingsActivity.isForceLongPressImagesEnabled(view.getContext())) {
-            view.evaluateJavascript(FORCE_IMAGE_INTERACTION_JS, null);
-        }
-
-        // Inject real-time video sniffer & SPA history hook
-        view.evaluateJavascript(VIDEO_SNIFFER_JS, null);
-
-        // Inject sequential comic and gallery sniffer
-        if (com.privacy.browser.settings.SettingsActivity.isComicDownloaderEnabled(view.getContext())) {
-            com.privacy.browser.comic.ComicDetector.inject(view);
-        }
-
-        // Apply document zoom if non-default page zoom selected
-        if (view.getContext() != null) {
-            int pageZoom = com.privacy.browser.settings.SettingsActivity.getPageZoom(view.getContext());
-            if (pageZoom != 100) {
-                double factor = pageZoom / 100.0;
-                view.evaluateJavascript("try { if (document.documentElement && document.documentElement.style) { document.documentElement.style.zoom = '" + factor + "'; } } catch(e) {}", null);
-            }
-        }
-
-        // Proactively sniff Vimeo media streams if on a Vimeo video page
-        if (url != null && com.privacy.browser.media.MediaSniffer.isVimeoUrl(url)) {
-            String pageTitle = view != null ? view.getTitle() : null;
-            com.privacy.browser.media.MediaSniffer.resolveVimeoFromUrl(tabId, url, pageTitle, null);
-        }
-
-        // Proactively sniff YouTube media streams if on a YouTube video page
-        if (url != null && com.privacy.browser.media.MediaSniffer.isYouTubeUrl(url)) {
-            String pageTitle = view != null ? view.getTitle() : null;
-            com.privacy.browser.media.MediaSniffer.resolveYouTubeFromUrl(tabId, url, pageTitle, null);
-        }
-
-        // Sync theme and defense statistics on local homepage
-        if (url != null && url.startsWith("file:///android_asset/home.html") && view != null && view.getContext() != null) {
-            boolean isDark = ThemeManager.isAppDarkTheme(view.getContext());
-            String themeMode = isDark ? "dark" : "light";
-            long totalBlocked = com.privacy.browser.adblock.AdBlockManager.getInstance(view.getContext()).getTotalBlockedCount();
-            String js = "if (typeof applyTheme === 'function') applyTheme('" + themeMode + "'); if (typeof refreshHomeData === 'function') refreshHomeData(" + totalBlocked + ");";
-            view.evaluateJavascript(js, null);
-        }
-
-        listener.onPageFinished(url);
+    @Override
+    public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+        if (view == tab.getWebView()) listener.onRendererLost();
+        // WebView can share a renderer, but this callback is sent to each affected view.
+        return true;
     }
 
     private void collapseFailedSubframe(@Nullable WebView view, @Nullable WebResourceRequest request) {
-        if (view == null || request == null || request.isForMainFrame()) {
+        if (view != tab.getWebView() || request == null || request.isForMainFrame() || InternalHome.isHome(tab.getUrl())
+                || tab.scriptPolicy == null || !tab.scriptPolicy.allowsScripts(view)
+                || !tab.navigation.current(tab.getWebView(), tab.navigation.page(), view.getUrl())) {
             return;
         }
         Uri uri = request.getUrl();
         if (uri == null) return;
-        final String u = uri.toString().replace("'", "\\'");
-        final String host = uri.getHost() != null ? uri.getHost().replace("'", "\\'") : "";
-        final String path = uri.getPath() != null ? uri.getPath().replace("'", "\\'") : "";
+        final String u = JSONObject.quote(uri.toString());
+        final String host = JSONObject.quote(uri.getHost() == null ? "" : uri.getHost());
+        final String path = JSONObject.quote(uri.getPath() == null ? "" : uri.getPath());
         String js = "(function() {" +
             "  try {" +
-            "    var u = '" + u + "';" +
-            "    var host = '" + host + "';" +
-            "    var path = '" + path + "';" +
+            "    var u = " + u + ";" +
+            "    var host = " + host + ";" +
+            "    var path = " + path + ";" +
             "    var iframes = document.querySelectorAll('iframe, frame, embed, object');" +
             "    for (var i = 0; i < iframes.length; i++) {" +
             "      var f = iframes[i];" +
@@ -730,46 +425,14 @@ public class PrivacyWebViewClient extends WebViewClient {
             "    }" +
             "  } catch(e) {}" +
             "})();";
-        view.evaluateJavascript(js, null);
+        view.evaluateJavascript(InternalHome.guardExternalPage(tab.getUrl(), js), null);
     }
 
     @Override
     public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
-        super.onReceivedError(view, request, error);
-        collapseFailedSubframe(view, request);
-    }
-
-    @SuppressWarnings("deprecation")
-    @Override
-    public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-        super.onReceivedError(view, errorCode, description, failingUrl);
-        if (failingUrl != null && view != null && !failingUrl.equals(currentUrl)) {
-            String u = failingUrl.replace("'", "\\'");
-            String js = "(function() {" +
-                "  try {" +
-                "    var u = '" + u + "';" +
-                "    var iframes = document.querySelectorAll('iframe, frame, embed, object');" +
-                "    for (var i = 0; i < iframes.length; i++) {" +
-                "      var f = iframes[i];" +
-                "      var s = f.src || f.getAttribute('src') || '';" +
-                "      if (u && s.indexOf(u) !== -1) {" +
-                "        f.style.setProperty('display', 'none', 'important');" +
-                "        f.style.setProperty('width', '0px', 'important');" +
-                "        f.style.setProperty('height', '0px', 'important');" +
-                "        f.style.setProperty('visibility', 'hidden', 'important');" +
-                "        var p = f.parentElement;" +
-                "        while (p && p !== document.body && p !== document.documentElement) {" +
-                "          p.style.setProperty('display', 'none', 'important');" +
-                "          p.style.setProperty('height', '0px', 'important');" +
-                "          p.style.setProperty('min-height', '0px', 'important');" +
-                "          p = p.parentElement;" +
-                "        }" +
-                "      }" +
-                "    }" +
-                "  } catch(e) {}" +
-                "})();";
-            view.evaluateJavascript(js, null);
-        }
+        if (view != tab.getWebView()) return;
+        if (request.isForMainFrame()) listener.onPageFailed(request.getUrl().toString());
+        else collapseFailedSubframe(view, request);
     }
 
     @Override

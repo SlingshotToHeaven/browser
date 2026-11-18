@@ -1,27 +1,48 @@
 package com.privacy.browser;
 
+import com.privacy.downloader.interceptor.BlobDownloadManager;
+
+import com.privacy.browser.adblock.AdBlockManager;
+import com.privacy.browser.adblock.WebScriptPolicy;
+import com.privacy.browser.comic.ComicManager;
+
 import java.util.UUID;
 
 /**
- * Encapsulates an active browser tab and its dedicated WebView instance.
+ * A tab row can exist without a live page or WebView.
  */
 public class TabModel {
 
     private final String id;
     private volatile String title;
-    private volatile String url;
-    private final PrivacyWebView webView;
+    final TabNavigation<PrivacyWebView> navigation;
+    private TabSession.Row recovery; // metadata only until selected, never a live page
+    TabPageMessages messages;
+    WebScriptPolicy scriptPolicy;
+    private BlobDownloadManager blobDownloads;
     private boolean isDesktopMode = false;
     private boolean isInitialized = false;
     private boolean isIncognito = false;
-    private android.graphics.Bitmap thumbnail = null;
+    long lastLiveUse;
+    boolean keepLive; // only for the lifetime of this WebView, never persisted
 
     public TabModel(PrivacyWebView webView, String initialUrl) {
-        this.id = UUID.randomUUID().toString();
-        this.webView = webView;
-        this.url = initialUrl;
-        this.title = "New Tab";
+        id = UUID.randomUUID().toString();
+        navigation = new TabNavigation<>(webView, initialUrl);
+        title = "New Tab";
     }
+
+    TabModel(TabSession.Row row) {
+        id = row.id;
+        navigation = new TabNavigation<>(null, row.url, row.rendererLost);
+        navigation.seedRestoredUrl(row.url);
+        title = row.title;
+        isDesktopMode = row.desktop;
+        recovery = row.rendererLost ? null : row;
+    }
+
+    TabSession.Row recovery() { return recovery; }
+    void discardRecovery() { recovery = null; }
 
     public String getId() {
         return id;
@@ -36,15 +57,11 @@ public class TabModel {
     }
 
     public String getUrl() {
-        return url;
-    }
-
-    public void setUrl(String url) {
-        this.url = url;
+        return navigation.url();
     }
 
     public PrivacyWebView getWebView() {
-        return webView;
+        return navigation.view();
     }
 
     public boolean isDesktopMode() {
@@ -67,48 +84,86 @@ public class TabModel {
         return isIncognito;
     }
 
-    public void setIncognito(boolean incognito) {
+    void setIncognito(boolean incognito) {
         isIncognito = incognito;
     }
 
-    public android.graphics.Bitmap getThumbnail() {
-        return thumbnail;
+    String sessionUrl() {
+        return getUrl() == null ? navigation.initialTarget() : getUrl();
     }
 
-    public void setThumbnail(android.graphics.Bitmap thumbnail) {
-        if (this.thumbnail != null && this.thumbnail != thumbnail && !this.thumbnail.isRecycled()) {
-            this.thumbnail.recycle();
+    boolean hasPageTransfer() { return blobDownloads != null && blobDownloads.hasPendingTransfer(); }
+
+    boolean park(PrivacyWebView view, TabSession.Row row) {
+        return id.equals(row.id) && !row.rendererLost && releaseView(view, false, row);
+    }
+
+    BlobDownloadManager blobDownloads() { return blobDownloads; }
+
+    void setBlobDownloads(BlobDownloadManager blobDownloads) {
+        this.blobDownloads = blobDownloads;
+    }
+
+    String pageKey() {
+        TabNavigation.Page page = navigation.page();
+        return page == null ? null : page.key;
+    }
+
+    void updatePageScope(TabNavigation.Page oldPage, PrivacyWebView view) {
+        TabNavigation.Page current = navigation.page();
+        if (oldPage == current) return;
+        if (oldPage != null) {
+            ComicManager.clearTab(oldPage.key);
+            if (!isIncognito) AdBlockManager.getInstance(view.getContext()).resetPageStats(oldPage.key);
         }
-        this.thumbnail = thumbnail;
+        if (current != null && !isIncognito) {
+            AdBlockManager.getInstance(view.getContext()).beginPageStats(current.key);
+        }
     }
 
-    public void captureThumbnail() {
-        if (webView == null || webView.getWidth() <= 0 || webView.getHeight() <= 0) return;
-        try {
-            int w = Math.min(webView.getWidth(), 480);
-            int h = (int) (w * ((float) webView.getHeight() / webView.getWidth()));
-            if (h <= 0) h = 320;
-            android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.RGB_565);
-            android.graphics.Canvas canvas = new android.graphics.Canvas(bmp);
-            float scaleX = (float) w / webView.getWidth();
-            float scaleY = (float) h / webView.getHeight();
-            canvas.scale(scaleX, scaleY);
-            webView.draw(canvas);
-            setThumbnail(bmp);
-        } catch (Throwable ignored) {}
+    boolean releaseView(PrivacyWebView webView, boolean rendererLost) {
+        return releaseView(webView, rendererLost, null);
+    }
+
+    private boolean releaseView(PrivacyWebView webView, boolean rendererLost, TabSession.Row parked) {
+        TabNavigation.Page oldPage = navigation.page();
+        if (!navigation.detach(webView, rendererLost)) return false;
+        recovery = parked;
+        if (parked != null) {
+            navigation.seedRestoredUrl(parked.url);
+            setTitle(parked.title);
+        }
+        keepLive = false;
+        // Invalidate callbacks before dismantling the view. Do not call load/stop/history
+        // APIs on a renderer-dead WebView or signal its fullscreen JS callback.
+        if (blobDownloads != null) {
+            if (rendererLost) blobDownloads.rendererGone();
+            else blobDownloads.close();
+            blobDownloads = null;
+        }
+        if (messages != null) {
+            messages.close(!rendererLost);
+            messages = null;
+        }
+        if (scriptPolicy != null) {
+            scriptPolicy.close(!rendererLost);
+            scriptPolicy = null;
+        }
+        updatePageScope(oldPage, webView);
+        isInitialized = false;
+        webView.setToolbarCoordinator(null);
+        webView.setOnScrollListener(null);
+        if (!rendererLost) {
+            webView.setOnLongClickListener(null);
+            webView.setDownloadListener(null);
+            webView.setWebChromeClient(null);
+        }
+        WebViewDisposal.detachAndDestroy(webView);
+        return true;
     }
 
     public void destroy() {
-        if (thumbnail != null && !thumbnail.isRecycled()) {
-            thumbnail.recycle();
-            thumbnail = null;
-        }
-        if (webView != null) {
-            webView.stopLoading();
-            webView.clearHistory();
-            webView.removeAllViews();
-            webView.destroy();
-        }
-        com.privacy.browser.media.MediaSniffer.clearTab(id);
+        releaseView(getWebView(), false);
+        discardRecovery();
     }
 }

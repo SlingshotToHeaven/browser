@@ -7,6 +7,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.ColorStateList;
+import android.database.sqlite.SQLiteException;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
@@ -36,6 +37,7 @@ import com.privacy.browser.MainActivity;
 import com.privacy.browser.R;
 import com.privacy.browser.ThemeManager;
 import com.privacy.browser.favicon.FaviconManager;
+import com.privacy.browser.images.ImageBinding;
 import com.privacy.browser.search.SearchEngineManager;
 
 import java.text.SimpleDateFormat;
@@ -48,8 +50,8 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.Stack;
 import java.util.concurrent.ExecutorService;
-import com.privacy.browser.ThemeManager;
 import java.util.concurrent.Executors;
+import java.util.function.BooleanSupplier;
 
 public class BookmarksActivity extends Activity {
 
@@ -101,8 +103,10 @@ public class BookmarksActivity extends Activity {
     private boolean isGridView = true; // Default to modern 2-column Card Grid
     private final Set<Long> selectedIds = new HashSet<>();
 
+    private static final int RECENT_BREADCRUMBS = 6;
     private final Stack<FolderCrumb> folderStack = new Stack<>();
-    private long currentFolderId = 0;
+    private long currentFolderId = BookmarkTree.ROOT;
+    private long loadRequest;
 
     private final List<BookmarkModel> allItems = new ArrayList<>();
     private final List<BookmarkModel> filteredItems = new ArrayList<>();
@@ -120,7 +124,7 @@ public class BookmarksActivity extends Activity {
 
         dbHelper = BookmarkDbHelper.getInstance(this);
 
-        folderStack.push(new FolderCrumb(0, "Bookmarks"));
+        folderStack.push(new FolderCrumb(BookmarkTree.ROOT, "Bookmarks"));
 
         initViews();
         loadItems();
@@ -182,6 +186,8 @@ public class BookmarksActivity extends Activity {
         adapter = new BookmarksAdapter();
         listView.setAdapter(adapter);
         gridView.setAdapter(adapter);
+        listView.setRecyclerListener(adapter::recycleImages);
+        gridView.setRecyclerListener(adapter::recycleImages);
 
         updateViewModeLayout();
 
@@ -262,10 +268,18 @@ public class BookmarksActivity extends Activity {
         super.onBackPressed();
     }
 
-    private void navigateToFolder(long folderId, String folderName) {
+    private void navigateToFolder(BookmarkModel item) {
+        long id = item.getId();
+        if (!item.isFolder() || id <= BookmarkTree.ROOT || item.getParentFolderId() != currentFolderId) return;
+        for (FolderCrumb crumb : folderStack) {
+            if (crumb.id == id) {
+                Toast.makeText(this, "This folder is already in the current path", Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
         if (isSelectionMode) exitSelectionMode();
-        folderStack.push(new FolderCrumb(folderId, folderName));
-        currentFolderId = folderId;
+        folderStack.push(new FolderCrumb(id, item.getTitle()));
+        currentFolderId = id;
         updateBreadcrumbView();
         loadItems();
     }
@@ -274,57 +288,76 @@ public class BookmarksActivity extends Activity {
         if (breadcrumbLayout == null) return;
         breadcrumbLayout.removeAllViews();
 
-        FolderCrumb current = folderStack.peek();
-        if (headerTitle != null) {
-            headerTitle.setText(current.name);
-        }
+        if (headerTitle != null) headerTitle.setText(folderStack.peek().name);
 
-        for (int i = 0; i < folderStack.size(); i++) {
+        boolean isDark = ThemeManager.isAppDarkTheme(this);
+        int activeColor = Color.parseColor(isDark ? "#00E5FF" : "#007AFF");
+        int inactiveColor = Color.parseColor(isDark ? "#8E8EA8" : "#6B7280");
+        int separatorColor = Color.parseColor(isDark ? "#44465E" : "#D1D5DB");
+
+        // Keep the full Back path without creating a view for every ancestor.
+        int last = folderStack.size() - 1;
+        int firstRecent = Math.max(1, folderStack.size() - RECENT_BREADCRUMBS);
+        for (int i = 0; i <= last; i = i == 0 ? firstRecent : i + 1) {
             final int index = i;
             FolderCrumb crumb = folderStack.get(i);
-
-            boolean isDark = ThemeManager.isAppDarkTheme(this);
-            int activeColor = isDark ? Color.parseColor("#00E5FF") : Color.parseColor("#007AFF");
-            int inactiveColor = isDark ? Color.parseColor("#8E8EA8") : Color.parseColor("#6B7280");
-
             TextView tv = new TextView(this);
             tv.setText(crumb.name);
             tv.setTextSize(11.5f);
-            tv.setTextColor(i == folderStack.size() - 1 ? activeColor : inactiveColor);
+            tv.setTextColor(i == last ? activeColor : inactiveColor);
             tv.setPadding(8, 0, 8, 0);
 
-            if (i < folderStack.size() - 1) {
+            if (i < last) {
                 tv.setOnClickListener(v -> {
-                    while (folderStack.size() > index + 1) {
-                        folderStack.pop();
-                    }
+                    if (isSelectionMode) exitSelectionMode();
+                    while (folderStack.size() > index + 1) folderStack.pop();
                     currentFolderId = folderStack.peek().id;
                     updateBreadcrumbView();
                     loadItems();
                 });
             }
-
             breadcrumbLayout.addView(tv);
 
-            if (i < folderStack.size() - 1) {
+            if (i < last) {
                 TextView sep = new TextView(this);
-                sep.setText(">");
+                sep.setText(i == 0 && firstRecent > 1 ? "› … ›" : "›");
                 sep.setTextSize(10f);
-                sep.setTextColor(isDark ? Color.parseColor("#44465E") : Color.parseColor("#D1D5DB"));
+                sep.setTextColor(separatorColor);
                 breadcrumbLayout.addView(sep);
             }
         }
     }
 
+    private boolean canUpdateUi() {
+        return !isFinishing() && !isDestroyed();
+    }
+
     private void loadItems() {
         final long folderId = currentFolderId;
+        final long request = ++loadRequest;
         dbExecutor.execute(() -> {
-            List<BookmarkModel> loaded = dbHelper.getItemsInFolder(folderId);
-            mainHandler.post(() -> {
-                allItems.clear();
-                allItems.addAll(loaded);
-                filterItems(editSearch.getText() != null ? editSearch.getText().toString().trim() : "");
-            });
+            try {
+                List<BookmarkModel> loaded = dbHelper.getItemsInFolder(folderId);
+                mainHandler.post(() -> {
+                    if (!canUpdateUi() || request != loadRequest) return;
+                    allItems.clear();
+                    allItems.addAll(loaded);
+                    if (isSelectionMode) {
+                        Set<Long> visibleIds = new HashSet<>();
+                        for (BookmarkModel item : loaded) visibleIds.add(item.getId());
+                        selectedIds.retainAll(visibleIds);
+                        if (selectedIds.isEmpty()) exitSelectionMode();
+                    }
+                    filterItems(editSearch.getText() != null ? editSearch.getText().toString().trim() : "");
+                    if (isSelectionMode) updateSelectionToolbar();
+                });
+            } catch (SQLiteException e) {
+                mainHandler.post(() -> {
+                    if (canUpdateUi() && request == loadRequest) {
+                        Toast.makeText(this, "Could not load bookmarks", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
         });
     }
 
@@ -434,26 +467,36 @@ public class BookmarksActivity extends Activity {
 
     private void confirmDeleteSelected() {
         if (selectedIds.isEmpty()) return;
-        int count = selectedIds.size();
+        List<Long> items = new ArrayList<>(selectedIds);
+        int count = items.size();
 
         new AlertDialog.Builder(this, ThemeManager.getDialogTheme(this))
                 .setTitle("Delete Selected Items")
                 .setMessage("Are you sure you want to delete " + count + " selected " + (count == 1 ? "item" : "items") + "? Folders will be removed along with their contents.")
-                .setPositiveButton("Delete", (dialog, which) -> {
-                    dbExecutor.execute(() -> {
-                        for (Long id : selectedIds) {
-                            BookmarkPreviewManager.getInstance(this).deletePreview(id);
-                        }
-                        dbHelper.deleteItems(new ArrayList<>(selectedIds));
-                        mainHandler.post(() -> {
-                            Toast.makeText(this, count + " items deleted", Toast.LENGTH_SHORT).show();
-                            exitSelectionMode();
-                            loadItems();
-                        });
-                    });
-                })
+                .setPositiveButton("Delete", (dialog, which) -> executeDeleteItems(items))
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    private void executeDeleteItems(List<Long> items) {
+        dbExecutor.execute(() -> {
+            Set<Long> result;
+            try {
+                result = dbHelper.deleteItems(items);
+            } catch (SQLiteException e) {
+                result = Collections.emptySet();
+            }
+            Set<Long> deleted = result;
+            int count = deleted.size();
+            mainHandler.post(() -> {
+                // One ordered maintenance task, even for a deep deleted subtree.
+                if (count > 0) BookmarkPreviewManager.getInstance(this).deletePreviews(deleted);
+                if (!canUpdateUi()) return;
+                Toast.makeText(this, count == 0 ? "Could not delete the selected items"
+                        : count + (count == 1 ? " item deleted" : " items deleted"), Toast.LENGTH_SHORT).show();
+                loadItems();
+            });
+        });
     }
 
     private void openBookmark(String url, boolean openInNewTab, boolean openInIncognito) {
@@ -472,6 +515,7 @@ public class BookmarksActivity extends Activity {
     }
 
     private void showNewFolderDialog() {
+        final long parentId = currentFolderId;
         AlertDialog.Builder builder = new AlertDialog.Builder(this, ThemeManager.getDialogTheme(this));
         builder.setTitle("New Folder");
 
@@ -488,9 +532,16 @@ public class BookmarksActivity extends Activity {
             if (folderName.isEmpty()) folderName = "New Folder";
             final String finalName = folderName;
             dbExecutor.execute(() -> {
-                dbHelper.createFolder(finalName, currentFolderId);
+                long folderId;
+                try {
+                    folderId = dbHelper.createFolder(finalName, parentId);
+                } catch (SQLiteException e) {
+                    folderId = -1;
+                }
+                boolean created = folderId > 0;
                 mainHandler.post(() -> {
-                    Toast.makeText(this, "Folder created", Toast.LENGTH_SHORT).show();
+                    if (!canUpdateUi()) return;
+                    Toast.makeText(this, created ? "Folder created" : "Could not create the folder here", Toast.LENGTH_SHORT).show();
                     loadItems();
                 });
             });
@@ -641,29 +692,28 @@ public class BookmarksActivity extends Activity {
                 });
             }
 
-            // Load Preview Snapshot
+            BookmarkPreviewManager previews = BookmarkPreviewManager.getInstance(this);
+            ImageBinding cover = new ImageBinding();
+            showEditCover(previewImg, previewFallback, btnRemovePreview, null);
+            dialog.setOnDismissListener(d -> cover.clear());
             if (previewImg != null) {
-                Bitmap preview = BookmarkPreviewManager.getInstance(this).getCachedPreview(item.getId());
-                if (preview != null) {
-                    previewImg.setImageBitmap(preview);
-                    previewImg.setVisibility(View.VISIBLE);
-                    if (previewFallback != null) previewFallback.setVisibility(View.GONE);
-                    if (btnRemovePreview != null) btnRemovePreview.setVisibility(View.VISIBLE);
-                } else {
-                    previewImg.setVisibility(View.GONE);
-                    if (previewFallback != null) previewFallback.setVisibility(View.VISIBLE);
-                    if (btnRemovePreview != null) btnRemovePreview.setVisibility(View.GONE);
-                }
+                dialog.setOnShowListener(d -> previews.loadPreview(item.getId(), cover.bind().whileCurrent(
+                        () -> canUpdateUi() && dialog.isShowing(),
+                        bitmap -> showEditCover(previewImg, previewFallback, btnRemovePreview, bitmap))));
             }
 
             if (btnRemovePreview != null) {
                 btnRemovePreview.setOnClickListener(v -> {
-                    BookmarkPreviewManager.getInstance(this).deletePreview(item.getId());
-                    if (previewImg != null) previewImg.setVisibility(View.GONE);
-                    if (previewFallback != null) previewFallback.setVisibility(View.VISIBLE);
-                    btnRemovePreview.setVisibility(View.GONE);
-                    Toast.makeText(this, "Cover reset", Toast.LENGTH_SHORT).show();
-                    loadItems();
+                    cover.clear();
+                    v.setEnabled(false);
+                    previews.deletePreview(item.getId(), removed -> {
+                        if (!canUpdateUi()) return;
+                        if (removed) loadItems();
+                        if (!dialog.isShowing()) return;
+                        v.setEnabled(true);
+                        if (removed) showEditCover(previewImg, previewFallback, btnRemovePreview, null);
+                        Toast.makeText(this, removed ? "Cover reset" : "Could not reset the cover", Toast.LENGTH_SHORT).show();
+                    });
                 });
             }
 
@@ -709,87 +759,65 @@ public class BookmarksActivity extends Activity {
         dialog.show();
     }
 
+    private static void showEditCover(ImageView image, View fallback, View reset, Bitmap bitmap) {
+        if (image != null) {
+            image.setImageBitmap(bitmap);
+            image.setVisibility(bitmap != null ? View.VISIBLE : View.GONE);
+        }
+        if (fallback != null) fallback.setVisibility(bitmap == null ? View.VISIBLE : View.GONE);
+        if (reset != null) reset.setVisibility(bitmap != null ? View.VISIBLE : View.GONE);
+    }
+
     private void showMoveDestinationPicker(List<Long> itemIds) {
-        if (itemIds == null || itemIds.isEmpty()) return;
+        if (itemIds.isEmpty()) return;
+        final long folderId = currentFolderId;
         dbExecutor.execute(() -> {
-            List<BookmarkModel> folders = dbHelper.getAllFolders();
+            List<BookmarkModel> folders;
+            try {
+                folders = dbHelper.getMoveDestinations(itemIds);
+            } catch (SQLiteException e) {
+                folders = Collections.emptyList();
+            }
+            List<BookmarkModel> destinations = folders;
             mainHandler.post(() -> {
-                AlertDialog.Builder builder = new AlertDialog.Builder(this, ThemeManager.getDialogTheme(this));
-                View sheetView = LayoutInflater.from(this).inflate(R.layout.dialog_context_menu_sheet, null);
-                builder.setView(sheetView);
-
-                AlertDialog dialog = builder.create();
-                if (dialog.getWindow() != null) {
-                    dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-                    int width = (int) (getResources().getDisplayMetrics().widthPixels * 0.92);
-                    dialog.getWindow().setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT);
+                if (!canUpdateUi() || currentFolderId != folderId) return;
+                if (destinations.isEmpty()) {
+                    Toast.makeText(this, "Could not load destinations for this selection", Toast.LENGTH_SHORT).show();
+                    loadItems();
+                    return;
                 }
-
-                ImageView headerIcon = sheetView.findViewById(R.id.ctx_header_icon);
-                if (headerIcon != null) {
-                    headerIcon.setImageResource(R.drawable.ic_bookmarks_folder);
-                    headerIcon.setColorFilter(Color.parseColor("#FFB300"));
-                }
-
-                TextView title = sheetView.findViewById(R.id.ctx_header_title);
-                if (title != null) {
-                    title.setText("Move to Folder (" + itemIds.size() + (itemIds.size() == 1 ? " item)" : " items)"));
-                }
-
-                LinearLayout container = sheetView.findViewById(R.id.ctx_actions_container);
-                if (container != null) {
-                    // 1. Root Folder destination option
-                    addFolderDestinationRow(container, "Bookmarks (Root)", 0L, () -> {
-                        dialog.dismiss();
-                        executeMoveItems(itemIds, 0L);
-                    });
-
-                    // 2. Subfolders (excluding any items currently being moved)
-                    for (BookmarkModel f : folders) {
-                        if (!itemIds.contains(f.getId())) {
-                            addFolderDestinationRow(container, f.getTitle(), f.getId(), () -> {
-                                dialog.dismiss();
-                                executeMoveItems(itemIds, f.getId());
-                            });
-                        }
-                    }
-                }
-
-                Button btnDismiss = sheetView.findViewById(R.id.ctx_btn_dismiss);
-                if (btnDismiss != null) {
-                    btnDismiss.setOnClickListener(v -> dialog.dismiss());
-                }
-
-                dialog.show();
+                CharSequence[] titles = new CharSequence[destinations.size()];
+                for (int i = 0; i < titles.length; i++) titles[i] = destinations.get(i).getTitle();
+                new AlertDialog.Builder(this, ThemeManager.getDialogTheme(this))
+                        .setTitle("Move to Folder (" + itemIds.size() + (itemIds.size() == 1 ? " item)" : " items)"))
+                        .setItems(titles, (dialog, which) -> executeMoveItems(itemIds, destinations.get(which).getId()))
+                        .setNegativeButton("Cancel", null)
+                        .show();
             });
         });
     }
 
-    private void addFolderDestinationRow(LinearLayout parent, String folderTitle, long folderId, Runnable action) {
-        View row = LayoutInflater.from(this).inflate(R.layout.item_context_menu_action, parent, false);
-        TextView tv = row.findViewById(R.id.ctx_item_text);
-        ImageView iv = row.findViewById(R.id.ctx_item_icon);
-        ImageView chevron = row.findViewById(R.id.ctx_item_chevron);
-
-        tv.setText(folderTitle);
-        if (iv != null) {
-            iv.setImageResource(R.drawable.ic_bookmarks_folder);
-            iv.setColorFilter(Color.parseColor("#FFB300"));
-        }
-        if (chevron != null) {
-            chevron.setVisibility(View.VISIBLE);
-        }
-
-        row.setOnClickListener(v -> action.run());
-        parent.addView(row);
-    }
-
     private void executeMoveItems(List<Long> itemIds, long targetFolderId) {
         dbExecutor.execute(() -> {
-            dbHelper.moveToFolder(itemIds, targetFolderId);
+            int result;
+            try {
+                result = dbHelper.moveItemsToFolder(itemIds, targetFolderId);
+            } catch (SQLiteException e) {
+                result = BookmarkDbHelper.MOVE_REJECTED;
+            }
+            int moved = result;
             mainHandler.post(() -> {
-                Toast.makeText(this, itemIds.size() + (itemIds.size() == 1 ? " item moved" : " items moved"), Toast.LENGTH_SHORT).show();
-                exitSelectionMode();
+                if (!canUpdateUi()) return;
+                String message;
+                if (moved < 0) {
+                    message = "Could not move items to this folder";
+                } else if (moved == 0) {
+                    message = itemIds.size() == 1 ? "Item is already in this folder" : "Items are already in this folder";
+                } else {
+                    message = moved + (moved == 1 ? " item moved" : " items moved");
+                    if (isSelectionMode && selectedIds.equals(new HashSet<>(itemIds))) exitSelectionMode();
+                }
+                Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
                 loadItems();
             });
         });
@@ -981,14 +1009,7 @@ public class BookmarksActivity extends Activity {
 
             addContextAction(container, item.isFolder() ? "Delete Folder" : "Delete Bookmark", R.drawable.ic_trash, () -> {
                 dialog.dismiss();
-                dbExecutor.execute(() -> {
-                    BookmarkPreviewManager.getInstance(this).deletePreview(item.getId());
-                    dbHelper.deleteItems(Collections.singletonList(item.getId()));
-                    mainHandler.post(() -> {
-                        Toast.makeText(this, item.isFolder() ? "Folder deleted" : "Bookmark deleted", Toast.LENGTH_SHORT).show();
-                        loadItems();
-                    });
-                });
+                executeDeleteItems(Collections.singletonList(item.getId()));
             });
         }
 
@@ -1042,6 +1063,24 @@ public class BookmarksActivity extends Activity {
             }
         }
 
+        void recycleImages(View view) {
+            if (view.getTag() instanceof ImageRow) ((ImageRow) view.getTag()).recycle();
+        }
+
+        private void bindFavicon(BookmarkModel item, String domain, ImageRow holder,
+                                 ImageBinding.Bound binding, BooleanSupplier visible) {
+            String label = domain.isEmpty() ? item.getTitle() : domain;
+            holder.monogram.setText(label == null || label.isEmpty() ? "?" : label.substring(0, 1).toUpperCase(Locale.US));
+            holder.monogram.setTextColor(MONOGRAM_COLORS[Math.floorMod(domain.hashCode(), MONOGRAM_COLORS.length)]);
+            holder.monogram.setVisibility(View.VISIBLE);
+            FaviconManager.getInstance(BookmarksActivity.this).loadCachedFavicon(domain,
+                    binding.whileCurrent(visible, bitmap -> {
+                        holder.favicon.setImageBitmap(bitmap);
+                        holder.favicon.setVisibility(View.VISIBLE);
+                        holder.monogram.setVisibility(View.GONE);
+                    }));
+        }
+
         private View getCardView(int position, View convertView, ViewGroup parent) {
             CardViewHolder holder;
             if (convertView == null || !(convertView.getTag() instanceof CardViewHolder)) {
@@ -1067,58 +1106,34 @@ public class BookmarksActivity extends Activity {
             final boolean isSelected = selectedIds.contains(itemId);
 
             holder.title.setText(item.getTitle());
+            ImageBinding.Bound binding = holder.images.bind();
+            holder.preview.setImageDrawable(null);
+            holder.preview.setVisibility(View.GONE);
+            holder.fallbackContainer.setVisibility(View.VISIBLE);
+            holder.favicon.setImageDrawable(null);
+            holder.favicon.setVisibility(View.GONE);
+            holder.monogram.setVisibility(View.GONE);
 
             if (item.isFolder()) {
                 holder.subtitle.setText(item.getItemCount() + (item.getItemCount() == 1 ? " item" : " items"));
-                holder.preview.setVisibility(View.GONE);
-                holder.fallbackContainer.setVisibility(View.VISIBLE);
                 holder.iconFolder.setVisibility(View.VISIBLE);
-                holder.favicon.setVisibility(View.GONE);
-                holder.monogram.setVisibility(View.GONE);
             } else {
                 holder.iconFolder.setVisibility(View.GONE);
-                String domainKey = FaviconManager.extractDomain(item.getUrl());
-                holder.subtitle.setText(domainKey.isEmpty() ? item.getUrl() : domainKey);
+                String domain = FaviconManager.extractDomain(item.getUrl());
+                holder.subtitle.setText(domain.isEmpty() ? item.getUrl() : domain);
 
-                // 480p Screenshot Preview with Favicon Fallback
-                Bitmap preview = BookmarkPreviewManager.getInstance(BookmarksActivity.this).getCachedPreview(itemId);
-                if (preview != null) {
-                    holder.preview.setImageBitmap(preview);
-                    holder.preview.setVisibility(View.VISIBLE);
-                    holder.fallbackContainer.setVisibility(View.GONE);
+                BookmarkPreviewManager previews = BookmarkPreviewManager.getInstance(BookmarksActivity.this);
+                Bitmap cached = previews.peekPreview(itemId);
+                if (cached != null) {
+                    showCardCover(holder, cached);
                 } else {
-                    holder.preview.setVisibility(View.GONE);
-                    holder.fallbackContainer.setVisibility(View.VISIBLE);
-
-                    Bitmap cachedFavicon = FaviconManager.getInstance(BookmarksActivity.this).getCachedFavicon(domainKey);
-                    if (cachedFavicon != null) {
-                        holder.favicon.setImageBitmap(cachedFavicon);
-                        holder.favicon.setVisibility(View.VISIBLE);
-                        holder.monogram.setVisibility(View.GONE);
-                    } else {
-                        holder.favicon.setVisibility(View.GONE);
-                        holder.monogram.setVisibility(View.VISIBLE);
-                        String initial = domainKey.isEmpty() ? "?" : domainKey.substring(0, 1).toUpperCase(Locale.US);
-                        holder.monogram.setText(initial);
-                        int colorIndex = Math.abs(domainKey.hashCode()) % MONOGRAM_COLORS.length;
-                        holder.monogram.setTextColor(MONOGRAM_COLORS[colorIndex]);
-
-                        FaviconManager.getInstance(BookmarksActivity.this).loadFaviconAsync(item.getUrl(), (d, bmp) -> {
-                            if (domainKey.equals(d) && holder.preview.getVisibility() != View.VISIBLE) {
-                                holder.favicon.setImageBitmap(bmp);
-                                holder.favicon.setVisibility(View.VISIBLE);
-                                holder.monogram.setVisibility(View.GONE);
-                            }
-                        });
+                    // Prefer the cover even when its callback arrives before the favicon's.
+                    previews.loadPreview(itemId, binding.whileCurrent(
+                            () -> canUpdateUi() && isGridView, bitmap -> showCardCover(holder, bitmap)));
+                    if (holder.preview.getVisibility() != View.VISIBLE) {
+                        bindFavicon(item, domain, holder, binding,
+                                () -> canUpdateUi() && isGridView && holder.preview.getVisibility() != View.VISIBLE);
                     }
-
-                    BookmarkPreviewManager.getInstance(BookmarksActivity.this).loadPreviewAsync(itemId, (id, bmp) -> {
-                        if (itemId == id) {
-                            holder.preview.setImageBitmap(bmp);
-                            holder.preview.setVisibility(View.VISIBLE);
-                            holder.fallbackContainer.setVisibility(View.GONE);
-                        }
-                    });
                 }
             }
 
@@ -1128,7 +1143,7 @@ public class BookmarksActivity extends Activity {
                 holder.checkBox.setOnClickListener(v -> toggleItemSelection(itemId));
                 holder.btnMore.setVisibility(View.GONE);
                 boolean isDarkTheme = ThemeManager.isAppDarkTheme(BookmarksActivity.this);
-holder.root.setBackgroundResource(isSelected ? (isDarkTheme ? R.drawable.bg_bookmark_card_selected : R.drawable.bg_bookmark_card_selected_light) : (isDarkTheme ? R.drawable.bg_bookmark_card : R.drawable.bg_bookmark_card_light));
+                holder.root.setBackgroundResource(isSelected ? (isDarkTheme ? R.drawable.bg_bookmark_card_selected : R.drawable.bg_bookmark_card_selected_light) : (isDarkTheme ? R.drawable.bg_bookmark_card : R.drawable.bg_bookmark_card_light));
 
                 convertView.setOnClickListener(v -> toggleItemSelection(itemId));
                 convertView.setOnLongClickListener(v -> {
@@ -1140,11 +1155,11 @@ holder.root.setBackgroundResource(isSelected ? (isDarkTheme ? R.drawable.bg_book
                 holder.btnMore.setVisibility(View.VISIBLE);
                 holder.btnMore.setOnClickListener(v -> showItemOptions(item));
                 boolean isDarkTheme = ThemeManager.isAppDarkTheme(BookmarksActivity.this);
-holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_bookmark_card : R.drawable.bg_bookmark_card_light);
+                holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_bookmark_card : R.drawable.bg_bookmark_card_light);
 
                 convertView.setOnClickListener(v -> {
                     if (item.isFolder()) {
-                        navigateToFolder(item.getId(), item.getTitle());
+                        navigateToFolder(item);
                     } else {
                         openBookmark(item.getUrl(), false, false);
                     }
@@ -1157,6 +1172,13 @@ holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_bookmark_card : R.
             }
 
             return convertView;
+        }
+
+        private void showCardCover(CardViewHolder holder, Bitmap bitmap) {
+            holder.preview.setImageBitmap(bitmap);
+            holder.preview.setVisibility(View.VISIBLE);
+            holder.fallbackContainer.setVisibility(View.GONE);
+            holder.favicon.setImageDrawable(null);
         }
 
         private View getListView(int position, View convertView, ViewGroup parent) {
@@ -1184,13 +1206,15 @@ holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_bookmark_card : R.
             final boolean isSelected = selectedIds.contains(itemId);
 
             holder.title.setText(item.getTitle());
+            ImageBinding.Bound binding = holder.images.bind();
+            holder.favicon.setImageDrawable(null);
+            holder.favicon.setVisibility(View.GONE);
+            holder.monogram.setVisibility(View.GONE);
 
             if (item.isFolder()) {
                 holder.url.setText(item.getItemCount() + (item.getItemCount() == 1 ? " item" : " items"));
                 holder.date.setText("");
                 holder.iconFolder.setVisibility(View.VISIBLE);
-                holder.favicon.setVisibility(View.GONE);
-                holder.monogram.setVisibility(View.GONE);
             } else {
                 holder.iconFolder.setVisibility(View.GONE);
                 String cleanUrl = item.getUrl();
@@ -1203,35 +1227,9 @@ holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_bookmark_card : R.
                 holder.url.setText(cleanUrl);
                 holder.date.setText(dateFormat.format(new Date(item.getCreatedAt())));
 
-                String domainKey = FaviconManager.extractDomain(item.getUrl());
-                holder.favicon.setTag(domainKey);
-                Bitmap cachedFavicon = FaviconManager.getInstance(BookmarksActivity.this).getCachedFavicon(domainKey);
-
-                if (cachedFavicon != null) {
-                    holder.favicon.setImageBitmap(cachedFavicon);
-                    holder.favicon.setVisibility(View.VISIBLE);
-                    holder.monogram.setVisibility(View.GONE);
-                } else {
-                    holder.favicon.setVisibility(View.GONE);
-                    holder.monogram.setVisibility(View.VISIBLE);
-
-                    String initial = "?";
-                    if (!domainKey.isEmpty()) {
-                        initial = domainKey.substring(0, 1).toUpperCase(Locale.US);
-                    } else if (item.getTitle() != null && !item.getTitle().isEmpty()) {
-                        initial = item.getTitle().substring(0, 1).toUpperCase(Locale.US);
-                    }
-                    holder.monogram.setText(initial);
-                    int colorIndex = Math.abs(domainKey.hashCode()) % MONOGRAM_COLORS.length;
-                    holder.monogram.setTextColor(MONOGRAM_COLORS[colorIndex]);
-
-                    FaviconManager.getInstance(BookmarksActivity.this).loadFaviconAsync(item.getUrl(), (domain, bmp) -> {
-                        if (domainKey.equals(holder.favicon.getTag())) {
-                            holder.favicon.setImageBitmap(bmp);
-                            holder.favicon.setVisibility(View.VISIBLE);
-                            holder.monogram.setVisibility(View.GONE);
-                        }
-                    });
+                if (!isSelectionMode) {
+                    bindFavicon(item, FaviconManager.extractDomain(item.getUrl()), holder, binding,
+                            () -> canUpdateUi() && !isGridView && !isSelectionMode);
                 }
             }
 
@@ -1246,7 +1244,7 @@ holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_bookmark_card : R.
 
                 if (isSelected) {
                     boolean isDarkTheme = ThemeManager.isAppDarkTheme(BookmarksActivity.this);
-holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_history_selected_row : R.drawable.bg_history_selected_row_light);
+                    holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_history_selected_row : R.drawable.bg_history_selected_row_light);
                 } else {
                     holder.root.setBackgroundColor(Color.TRANSPARENT);
                 }
@@ -1267,7 +1265,7 @@ holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_history_selected_r
 
                 convertView.setOnClickListener(v -> {
                     if (item.isFolder()) {
-                        navigateToFolder(item.getId(), item.getTitle());
+                        navigateToFolder(item);
                     } else {
                         openBookmark(item.getUrl(), false, false);
                     }
@@ -1285,25 +1283,37 @@ holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_history_selected_r
             return convertView;
         }
 
-        private class CardViewHolder {
+        private class ImageRow {
+            final ImageBinding images = new ImageBinding();
+            ImageView favicon;
+            TextView monogram;
+
+            void recycle() {
+                images.clear();
+                favicon.setImageDrawable(null);
+            }
+        }
+
+        private class CardViewHolder extends ImageRow {
             View root;
             ImageView preview;
             View fallbackContainer;
             ImageView iconFolder;
-            ImageView favicon;
-            TextView monogram;
             CheckBox checkBox;
             ImageView btnMore;
             TextView title;
             TextView subtitle;
+
+            @Override void recycle() {
+                super.recycle();
+                preview.setImageDrawable(null);
+            }
         }
 
-        private class ListViewHolder {
+        private class ListViewHolder extends ImageRow {
             View root;
             FrameLayout leadingContainer;
             ImageView iconFolder;
-            ImageView favicon;
-            TextView monogram;
             CheckBox checkBox;
             TextView title;
             TextView url;

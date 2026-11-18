@@ -78,17 +78,11 @@
         android:layout_marginTop="8dp">
 
         <TextView
-            android:id="@+id/site_info_btn_clear_cookies"
+            android:id="@+id/site_info_data_note"
             android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:text="Clear Site Cookies"
-            android:textColor="#FF5252"
-            android:textSize="13sp"
-            android:fontFamily="sans-serif-medium"
-            android:gravity="center_vertical"
-            android:background="?android:attr/selectableItemBackground"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp" />
+            android:layout_height="wrap_content"
+            android:textColor="?attr/textSecondary"
+            android:textSize="13sp" />
 
         <View
             android:layout_width="match_parent"
@@ -98,10 +92,10 @@
             android:layout_marginBottom="4dp" />
 
         <TextView
-            android:id="@+id/site_info_btn_clear_storage"
+            android:id="@+id/site_info_btn_clear_browser"
             android:layout_width="match_parent"
             android:layout_height="40dp"
-            android:text="Clear Cache &amp; Local Storage (Origin)"
+            android:text="Review all-sites cleanup"
             android:textColor="#FF5252"
             android:textSize="13sp"
             android:fontFamily="sans-serif-medium"

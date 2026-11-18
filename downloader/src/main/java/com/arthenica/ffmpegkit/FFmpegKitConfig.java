@@ -6,7 +6,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Direct JNI bridge to libffmpegkit.so for seamless HLS/DASH native stream downloading and muxing.
+ * Direct JNI bridge to libffmpegkit.so for FFmpeg operations on local stream inputs.
  */
 public class FFmpegKitConfig {
     private static final String TAG = "FFmpegKit";
@@ -37,7 +37,7 @@ public class FFmpegKitConfig {
             isNativeLoaded = true;
             Log.i(TAG, "FFmpegKit native libraries loaded successfully");
         } catch (Throwable t) {
-            Log.e(TAG, "Failed to load FFmpegKit native libraries: " + t.getMessage(), t);
+            Log.e(TAG, "Failed to load FFmpegKit native libraries: " + t.getClass().getSimpleName());
         }
     }
 
@@ -68,15 +68,11 @@ public class FFmpegKitConfig {
 
     // Callbacks invoked by libffmpegkit.so JNI
     private static void log(long sessionId, int level, byte[] message) {
-        if (message != null && message.length > 0) {
-            String text = new String(message, StandardCharsets.UTF_8);
-            Log.d(TAG, "[" + sessionId + "] " + text);
-            LogCallback cb = logCallbacks.get(sessionId);
-            if (cb != null) {
-                try {
-                    cb.onLog(sessionId, level, text);
-                } catch (Exception ignored) {}
-            }
+        LogCallback cb = logCallbacks.get(sessionId);
+        if (cb != null && message != null && message.length > 0) {
+            try {
+                cb.onLog(sessionId, level, new String(message, StandardCharsets.UTF_8));
+            } catch (Exception ignored) {}
         }
     }
 

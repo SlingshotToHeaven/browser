@@ -2,20 +2,22 @@ package com.privacy.browser.adblock.picker;
 
 import androidx.annotation.NonNull;
 
+import org.json.JSONObject;
+
 /**
  * JavaScript injection engine powering the interactive Element Picker and Element Zapper.
  * Provides touch/pointer tracking, node hierarchy extraction, live CSS preview, and DOM deletion.
  */
 public class ElementPickerEngine {
 
-    public static String getInjectionScript(boolean isZapper) {
+    public static String getInjectionScript(boolean isZapper, String ticket) {
         return "(function() {" +
             "  if (window.__uBlockPickerActive) {" +
             "    if (window.__uBlockPickerCleanup) window.__uBlockPickerCleanup();" +
-            "    return;" +
             "  }" +
             "  window.__uBlockPickerActive = true;" +
             "  var isZapper = " + isZapper + ";" +
+            "  var pickerTicket = " + JSONObject.quote(ticket) + ";" +
             "  var style = document.createElement('style');" +
             "  style.id = '__ublock_picker_style';" +
             "  style.textContent = " +
@@ -53,6 +55,7 @@ public class ElementPickerEngine {
             "    }" +
             "  }" +
             "  function onClick(e) {" +
+            "    if(!e.isTrusted) return;" +
             "    e.preventDefault();" +
             "    e.stopPropagation();" +
             "    e.stopImmediatePropagation();" +
@@ -63,9 +66,6 @@ public class ElementPickerEngine {
             "    if (isZapper) {" +
             "      el.remove();" +
             "      clearHighlight();" +
-            "      if (window.PrivacyElementPickerBridge && typeof window.PrivacyElementPickerBridge.onElementZapped === 'function') {" +
-            "        window.PrivacyElementPickerBridge.onElementZapped();" +
-            "      }" +
             "      cleanup();" +
             "      return;" +
             "    }" +
@@ -76,12 +76,12 @@ public class ElementPickerEngine {
             "    var curr = el;" +
             "    while (curr && curr !== document.body && curr !== document.documentElement && nodes.length < 5) {" +
             "      var tag = curr.tagName.toLowerCase();" +
-            "      var id = curr.id ? curr.id.trim() : '';" +
+            "      var id = curr.id && curr.id.length <= 120 ? curr.id.trim() : '';" +
             "      var classes = [];" +
             "      if (curr.classList) {" +
-            "        for (var i = 0; i < curr.classList.length; i++) {" +
+            "        for (var i = 0; i < Math.min(curr.classList.length, 8); i++) {" +
             "          var c = curr.classList[i];" +
-            "          if (c && !c.startsWith('__ublock_')) classes.push(c);" +
+            "          if (c && c.length <= 120 && !c.startsWith('__ublock_')) classes.push(c);" +
             "        }" +
             "      }" +
             "      var textSnippet = (curr.innerText || curr.textContent || '').trim().substring(0, 40).replace(/\\s+/g, ' ');" +
@@ -95,9 +95,7 @@ public class ElementPickerEngine {
             "      });" +
             "      curr = curr.parentElement;" +
             "    }" +
-            "    if (window.PrivacyElementPickerBridge && typeof window.PrivacyElementPickerBridge.onElementPicked === 'function') {" +
-            "      window.PrivacyElementPickerBridge.onElementPicked(JSON.stringify(nodes));" +
-            "    }" +
+            "    if (window.__privacyPageReport) window.__privacyPageReport('element', nodes, pickerTicket);" +
             "  }" +
             "  function generateCandidateSelectors(node, tag, id, classes) {" +
             "    var list = [];" +
@@ -172,8 +170,7 @@ public class ElementPickerEngine {
     }
 
     public static String getPreviewScript(@NonNull String selector) {
-        String clean = selector.replace("'", "\\'");
-        return "if (window.__uBlockPickerPreview) { window.__uBlockPickerPreview('" + clean + "'); }";
+        return "if (window.__uBlockPickerPreview) { window.__uBlockPickerPreview(" + JSONObject.quote(selector) + "); }";
     }
 
     public static String getHighlightNodeScript(int depthIndex) {

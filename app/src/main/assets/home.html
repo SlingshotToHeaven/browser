@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="color-scheme" content="light dark">
+  <meta name="home-delivery" content="__HOME_DELIVERY_TOKEN__">
   <title>Privacy Browser</title>
   <style>
     :root {
@@ -790,7 +791,7 @@
         <div class="action-icon-circle">
           <svg viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 5a3 3 0 0 1 6 0v3H9V7zm3 7a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></svg>
         </div>
-        <span class="action-name">Incognito</span>
+        <span class="action-name">Private tabs</span>
       </div>
     </div>
 
@@ -853,6 +854,7 @@
 
   </div>
 
+  <noscript>JavaScript is disabled. Use the browser address bar and menu for search and browser actions.</noscript>
   <script>
     let activeEngine = 'ddg';
 
@@ -875,62 +877,36 @@
       const q = input.value.trim();
       if (!q) return;
 
-      if (window.AndroidInterface && typeof window.AndroidInterface.searchOrNavigate === 'function') {
-        window.AndroidInterface.searchOrNavigate(q, activeEngine);
+      let url;
+      if (q.startsWith('http://') || q.startsWith('https://')) {
+        url = q;
+      } else if (q.includes('.') && !q.includes(' ')) {
+        url = 'https://' + q;
       } else {
-        let url;
-        if (q.startsWith('http://') || q.startsWith('https://')) {
-          url = q;
-        } else if (q.includes('.') && !q.includes(' ')) {
-          url = 'https://' + q;
-        } else {
-          if (activeEngine === 'google') url = 'https://www.google.com/search?q=' + encodeURIComponent(q);
-          else if (activeEngine === 'brave') url = 'https://search.brave.com/search?q=' + encodeURIComponent(q);
-          else if (activeEngine === 'searx') url = 'https://searx.be/search?q=' + encodeURIComponent(q);
-          else if (activeEngine === 'startpage') url = 'https://www.startpage.com/sp/search?query=' + encodeURIComponent(q);
-          else url = 'https://duckduckgo.com/?q=' + encodeURIComponent(q);
-        }
-        window.location.href = url;
+        if (activeEngine === 'google') url = 'https://www.google.com/search?q=' + encodeURIComponent(q);
+        else if (activeEngine === 'brave') url = 'https://search.brave.com/search?q=' + encodeURIComponent(q);
+        else if (activeEngine === 'searx') url = 'https://searx.be/search?q=' + encodeURIComponent(q);
+        else if (activeEngine === 'startpage') url = 'https://www.startpage.com/sp/search?query=' + encodeURIComponent(q);
+        else url = 'https://duckduckgo.com/?q=' + encodeURIComponent(q);
       }
+      window.location.href = url;
     }
 
-    function openBookmarks() {
-      if (window.AndroidInterface && typeof window.AndroidInterface.openBookmarks === 'function') {
-        window.AndroidInterface.openBookmarks();
-      }
+    function postHome(kind) {
+      const token = window.__privacyHomeToken;
+      const endpoint = window.PrivacyHome;
+      const delivery = document.querySelector('meta[name="home-delivery"]').content;
+      if (token && endpoint) endpoint.postMessage(JSON.stringify({kind, token, delivery}));
     }
 
-    function openHistory() {
-      if (window.AndroidInterface && typeof window.AndroidInterface.openHistory === 'function') {
-        window.AndroidInterface.openHistory();
-      }
-    }
-
-    function openDownloads() {
-      if (window.AndroidInterface && typeof window.AndroidInterface.openDownloads === 'function') {
-        window.AndroidInterface.openDownloads();
-      }
-    }
-
-    function openIncognito() {
-      if (window.AndroidInterface && typeof window.AndroidInterface.openIncognito === 'function') {
-        window.AndroidInterface.openIncognito();
-      }
-    }
-
-    function openSettings() {
-      if (window.AndroidInterface && typeof window.AndroidInterface.openSettings === 'function') {
-        window.AndroidInterface.openSettings();
-      }
-    }
-
+    function openBookmarks() { postHome('bookmarks'); }
+    function openHistory() { postHome('history'); }
+    function openDownloads() { postHome('downloads'); }
+    function openIncognito() { postHome('private'); }
+    function openSettings() { postHome('settings'); }
     function toggleTheme() {
-      if (window.AndroidInterface && typeof window.AndroidInterface.toggleTheme === 'function') {
-        window.AndroidInterface.toggleTheme();
-      } else {
-        const cur = document.documentElement.getAttribute('data-theme') || 'dark';
-        applyTheme(cur === 'dark' ? 'light' : 'dark');
-      }
+      if (window.__privacyHomeToken && window.PrivacyHome) postHome('theme');
+      else applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
     }
 
     function applyTheme(theme) {
@@ -959,7 +935,7 @@
     }
 
     function formatNumber(num) {
-      return num.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+      return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     }
 
     function refreshHomeData(count) {
@@ -993,43 +969,48 @@
         }
       }
 
-      // Populate recent bookmarks if available
-      try {
-        if (window.AndroidInterface && typeof window.AndroidInterface.getRecentBookmarksJson === 'function') {
-          const jsonStr = window.AndroidInterface.getRecentBookmarksJson();
-          const items = JSON.parse(jsonStr || '[]');
-          const container = document.getElementById('bookmarks-container');
-          const title = document.getElementById('saved-section-title');
-          if (container && items && items.length > 0) {
-            container.innerHTML = '';
-            items.forEach(item => {
-              const a = document.createElement('a');
-              a.className = 'bm-chip';
-              a.href = item.url;
-              a.innerHTML = '<span class="bm-chip-title">' + escapeHtml(item.title || item.url) + '</span><span class="bm-chip-url">' + escapeHtml(item.url) + '</span>';
-              container.appendChild(a);
-            });
-            container.style.display = 'flex';
-            if (title) title.style.display = 'flex';
-          }
-        }
-      } catch (err) {}
     }
 
-    function escapeHtml(str) {
-      if (!str) return '';
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    function renderBookmarks(items) {
+      const container = document.getElementById('bookmarks-container');
+      const heading = document.getElementById('saved-section-title');
+      container.textContent = '';
+      for (const item of Array.isArray(items) ? items.slice(0, 6) : []) {
+        let target;
+        try { target = new URL(item.url); } catch (_) { continue; }
+        if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) continue;
+        const a = document.createElement('a');
+        a.className = 'bm-chip';
+        a.href = target.href;
+        a.rel = 'noreferrer';
+        const name = document.createElement('span');
+        name.className = 'bm-chip-title';
+        name.textContent = item.title || item.url;
+        const address = document.createElement('span');
+        address.className = 'bm-chip-url';
+        address.textContent = item.url;
+        a.append(name, address);
+        container.appendChild(a);
+      }
+      container.style.display = heading.style.display = container.childElementCount ? 'flex' : 'none';
     }
 
     document.addEventListener('DOMContentLoaded', function() {
-      if (window.AndroidInterface) {
-        if (typeof window.AndroidInterface.getAppTheme === 'function') {
-          applyTheme(window.AndroidInterface.getAppTheme());
-        }
-        if (typeof window.AndroidInterface.getTotalBlockedCount === 'function') {
-          refreshHomeData(window.AndroidInterface.getTotalBlockedCount());
-        }
+      const endpoint = window.PrivacyHome;
+      if (!endpoint) {
+        document.querySelectorAll('.action-card, .insights-card').forEach(el => el.style.display = 'none');
+        return; // Search and ordinary links do not need a native bridge.
       }
+      endpoint.onmessage = function(event) {
+        try {
+          const data = JSON.parse(event.data);
+          applyTheme(data.theme);
+          refreshHomeData(data.blocked);
+          renderBookmarks(data.bookmarks);
+        } catch (_) {}
+      };
+      window.__privacyHomeReady = () => postHome('init');
+      window.__privacyHomeReady();
     });
   </script>
 </body>

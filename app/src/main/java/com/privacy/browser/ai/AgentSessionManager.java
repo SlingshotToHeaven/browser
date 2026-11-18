@@ -3,82 +3,176 @@ package com.privacy.browser.ai;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
-import android.webkit.WebView;
 
 import com.privacy.browser.MainActivity;
-import com.privacy.browser.TabsManager;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 public class AgentSessionManager {
 
-    private static final String TAG = "AgentSessionManager";
+    private static final int MAX_CONTEXT = 96 * 1024;
+    private static final int MAX_TOOL_TURNS = 3;
+    private static final long ACTION_TIMEOUT_MS = 80_000L;
 
     public interface SessionCallback {
         void onMessageAdded(AiChatAdapter.ChatMessage message);
-        void onToolStatusUpdated(String text, boolean inProgress);
+        boolean canReview();
         void onThinkingState(boolean isThinking, String text);
         void onSessionLoaded(String sessionId, String title, List<AiChatAdapter.ChatMessage> messages);
         void onSessionStateChanged(int state);
+    }
+
+    // Instance-local ports; production binds the Android queue, SQLite, Gemini and native reviews.
+    interface MainQueue {
+        void post(Runnable task);
+        void postDelayed(Runnable task, long delayMs);
+        void removeCallbacks(Runnable task);
+    }
+
+    interface Provider {
+        interface ResponseCallback {
+            void onSuccess(GeminiProtocol.Response response);
+            void onError(String message);
+        }
+
+        void generateContent(GeminiSettings selection, JSONArray contents, ResponseCallback callback);
+        void cancelCurrentRequest();
+    }
+
+    interface Reviews {
+        MainActivity owner();
+        void attach(MainActivity owner);
+        void detach(MainActivity owner);
+        AssistantApproval.Page page();
+        void cancelReview();
+        void review(AssistantAction action, AssistantApproval.Source source, AssistantApproval.Scope expected,
+                    Supplier<AssistantApproval.Scope> live, ToolDispatcher.ExecutionCallback result);
+    }
+
+    interface Transcript {
+        String getActiveSessionId();
+        void createSession(String sessionId, String title);
+        void setActiveSession(String sessionId);
+        List<AiChatAdapter.ChatMessage> getMessages(String sessionId);
+        String getSessionTitle(String sessionId);
+        void updateSessionTitle(String sessionId, String title);
+        void deleteSession(String sessionId);
+        void insertMessage(String sessionId, AiChatAdapter.ChatMessage message);
     }
 
     private static AgentSessionManager instance;
 
     public static synchronized AgentSessionManager getInstance(Context context) {
         if (instance == null) {
-            instance = new AgentSessionManager(context.getApplicationContext());
+            instance = createForAndroid(context.getApplicationContext());
         }
         return instance;
     }
 
-    private final Context context;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final AgentDbHelper dbHelper;
-    private final GeminiClient geminiClient;
-    private final ToolDispatcher toolDispatcher;
+    private final MainQueue mainQueue;
+    private final Transcript transcript;
+    private final Provider provider;
+    private final Reviews reviews;
+    private final Supplier<GeminiSettings> connectionSettings;
+    private final BooleanSupplier agentEnabled;
 
     private String currentSessionId;
     private String currentTitle = "New Conversation";
     private int sessionState = AiFloatingButtonView.STATE_IDLE;
     private long currentRunToken = 0;
 
-    private JSONArray conversationContents = new JSONArray();
-    private JSONObject pendingModelContent = null;
+    // Provider context is bounded and in-memory. The durable transcript remains readable after restart.
+    private final Deque<JSONArray> exchanges = new ArrayDeque<>();
+    private GeminiSettings contextConnection;
+    private Run activeRun;
+
+    private static final class Run {
+        final String session;
+        final GeminiSettings connection;
+        final long token;
+        final AssistantApproval.Scope originalScope;
+        final JSONArray turns = new JSONArray();
+        int toolTurns, providerRequest;
+        boolean awaitingProvider;
+        Runnable actionTimeout;
+        Run(String session, GeminiSettings connection, long token, AssistantApproval.Page originalPage) {
+            this.session = session; this.connection = connection; this.token = token;
+            originalScope = new AssistantApproval.Scope(session, token, originalPage);
+        }
+    }
     private final List<AiChatAdapter.ChatMessage> activeMessages = new ArrayList<>();
 
     private SessionCallback sessionCallback;
     private AiFloatingButtonView floatingButton;
 
-    private AgentSessionManager(Context context) {
-        this.context = context;
-        this.dbHelper = AgentDbHelper.getInstance(context);
-        this.geminiClient = new GeminiClient(context);
-        this.toolDispatcher = new ToolDispatcher(context);
+    private static AgentSessionManager createForAndroid(Context context) {
+        Handler handler = new Handler(Looper.getMainLooper());
+        MainQueue queue = new MainQueue() {
+            @Override public void post(Runnable task) { handler.post(task); }
+            @Override public void postDelayed(Runnable task, long delayMs) { handler.postDelayed(task, delayMs); }
+            @Override public void removeCallbacks(Runnable task) { handler.removeCallbacks(task); }
+        };
+        AiConfigManager config = new AiConfigManager(context);
+        return new AgentSessionManager(queue, AgentDbHelper.getInstance(context), new GeminiClient(context),
+                new ToolDispatcher(context), config::connection, config::isAgentEnabled);
     }
 
-    public void setSessionCallback(SessionCallback callback) {
-        this.sessionCallback = callback;
+    AgentSessionManager(MainQueue mainQueue, Transcript transcript, Provider provider, Reviews reviews,
+                        Supplier<GeminiSettings> connectionSettings, BooleanSupplier agentEnabled) {
+        this.mainQueue = mainQueue;
+        this.transcript = transcript;
+        this.provider = provider;
+        this.reviews = reviews;
+        this.connectionSettings = connectionSettings;
+        this.agentEnabled = agentEnabled;
     }
 
-    public void setFloatingButton(AiFloatingButtonView button) {
-        this.floatingButton = button;
-        if (this.floatingButton != null) {
-            this.floatingButton.setSessionState(sessionState);
+    void openSheet(MainActivity owner, SessionCallback sheet, AiFloatingButtonView button) {
+        if (reviews.owner() != owner || sessionCallback != sheet) {
+            if (activeRun != null) stopActiveSession();
+            reviews.attach(owner);
+        }
+        sessionCallback = sheet;
+        floatingButton = button;
+        if (floatingButton != null) floatingButton.setSessionState(sessionState);
+        if (currentSessionId == null) initialize();
+    }
+
+    void closeSheet(MainActivity owner, SessionCallback sheet) {
+        if (reviews.owner() != owner || sessionCallback != sheet) return;
+        sessionCallback = null;
+        stopActiveSession();
+    }
+
+    void detachActivity(MainActivity owner, SessionCallback sheet) {
+        closeSheet(owner, sheet);
+        if (reviews.owner() == owner) {
+            floatingButton = null;
+            reviews.detach(owner);
         }
     }
 
-    public void updateActiveContext(WebView webView, MainActivity activity, TabsManager tabsManager) {
-        if (toolDispatcher != null) {
-            toolDispatcher.setCurrentWebView(webView);
-            toolDispatcher.setActivityAndTabs(activity, tabsManager);
-        }
+    void pauseActivity(MainActivity owner) {
+        if (reviews.owner() == owner) stopActiveSession();
+    }
+
+    void pageChanged(MainActivity owner) {
+        if (reviews.owner() == owner) reviews.cancelReview();
+    }
+
+    void settingsChanged() {
+        stopActiveSession();
+        exchanges.clear();
+        contextConnection = null;
     }
 
     public int getSessionState() {
@@ -105,70 +199,62 @@ public class AgentSessionManager {
     // Session Initialization & Lifecycle
     // -------------------------------------------------------------------------
 
-    public void initialize() {
+    private void initialize() {
         // Cold start Option A: Restore the last active session, or create fresh
-        String activeId = dbHelper.getActiveSessionId();
+        String activeId = transcript.getActiveSessionId();
         if (activeId != null) {
             loadSession(activeId);
         } else {
             startNewSession();
         }
 
-        // Clean orphaned screenshot files in background
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    Set<String> referenced = dbHelper.getAllReferencedAttachmentPaths();
-                    AgentAttachmentManager.cleanOrphanedAttachments(context, referenced);
-                } catch (Exception e) {
-                    Log.e(TAG, "Error cleaning orphaned attachments", e);
-                }
-            }
-        }).start();
+        // Legacy storage cleanup is an explicit action, not a side effect of reopening Agent.
+    }
+
+    private void invalidateRun() {
+        currentRunToken++;
+        if (activeRun != null && activeRun.actionTimeout != null) mainQueue.removeCallbacks(activeRun.actionTimeout);
+        activeRun = null;
+        provider.cancelCurrentRequest();
+        reviews.cancelReview();
     }
 
     public void startNewSession() {
-        currentRunToken++;
+        invalidateRun();
+        exchanges.clear();
+        contextConnection = null;
         currentSessionId = UUID.randomUUID().toString();
         currentTitle = "New Conversation";
         activeMessages.clear();
-        conversationContents = new JSONArray();
-        pendingModelContent = null;
         notifyThinking(false, null);
         setSessionStateInternal(AiFloatingButtonView.STATE_IDLE);
 
-        dbHelper.createSession(currentSessionId, currentTitle);
-        dbHelper.saveContext(currentSessionId, conversationContents, null);
+        transcript.createSession(currentSessionId, currentTitle);
 
         notifySessionLoaded();
     }
 
     public void loadSession(String sessionId) {
         if (sessionId == null) return;
-        currentRunToken++;
+        invalidateRun();
+        exchanges.clear();
+        contextConnection = null;
         currentSessionId = sessionId;
-        dbHelper.setActiveSession(sessionId);
+        transcript.setActiveSession(sessionId);
 
         // Load messages from DB
-        List<AiChatAdapter.ChatMessage> loaded = dbHelper.getMessages(sessionId);
+        List<AiChatAdapter.ChatMessage> loaded = transcript.getMessages(sessionId);
         activeMessages.clear();
         activeMessages.addAll(loaded);
 
-        // Load conversation context for Gemini turn continuity
-        conversationContents = dbHelper.getContext(sessionId);
-        pendingModelContent = dbHelper.getPendingModelContent(sessionId);
+        // Legacy stored provider context can contain screenshots and unpaired calls.
+        // Keep the transcript, but never replay that context or mint approvals from it.
+        currentTitle = "Conversation";
 
         notifyThinking(false, null);
 
-        // Determine title
-        List<AgentDbHelper.SessionRecord> all = dbHelper.getAllSessions();
-        for (AgentDbHelper.SessionRecord s : all) {
-            if (s.sessionId.equals(sessionId)) {
-                currentTitle = s.title;
-                break;
-            }
-        }
+        String title = transcript.getSessionTitle(sessionId);
+        if (title != null) currentTitle = title;
 
         int newState = activeMessages.isEmpty() ? AiFloatingButtonView.STATE_IDLE : AiFloatingButtonView.STATE_ACTIVE;
         setSessionStateInternal(newState);
@@ -177,7 +263,8 @@ public class AgentSessionManager {
     }
 
     public void deleteSession(String sessionId) {
-        dbHelper.deleteSession(sessionId);
+        if (sessionId == null) return;
+        transcript.deleteSession(sessionId);
         if (sessionId.equals(currentSessionId)) {
             startNewSession();
         }
@@ -188,326 +275,194 @@ public class AgentSessionManager {
     // -------------------------------------------------------------------------
 
     public void sendUserPrompt(final String text, final String imagePath) {
-        if (currentSessionId == null) {
-            startNewSession();
-        }
-
-        // Auto-title session from the first prompt
-        if (activeMessages.isEmpty()) {
-            if (text != null && !text.trim().isEmpty()) {
-                String title = text.trim();
-                if (title.length() > 32) {
-                    title = title.substring(0, 29) + "...";
-                }
-                currentTitle = title;
-                dbHelper.updateSessionTitle(currentSessionId, title);
-            } else if (imagePath != null) {
-                currentTitle = "Visual Inspection";
-                dbHelper.updateSessionTitle(currentSessionId, currentTitle);
-            }
-        }
-
-        // 1. Add User Message with optional persistent attachment
-        AiChatAdapter.ChatMessage userMsg = new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_USER, text, imagePath);
-        addMessageInternal(userMsg);
-
-        // 2. Build Gemini contents turn
-        try {
-            JSONObject userContent = new JSONObject();
-            userContent.put("role", "user");
-            JSONArray parts = new JSONArray();
-
-            if (text != null && !text.isEmpty()) {
-                JSONObject textPart = new JSONObject();
-                textPart.put("text", text);
-                parts.put(textPart);
-            }
-
-            if (imagePath != null && !imagePath.isEmpty()) {
-                String base64Image = AgentAttachmentManager.getBase64FromPath(imagePath);
-                if (base64Image != null && !base64Image.isEmpty()) {
-                    String mimeType = AgentAttachmentManager.getMimeTypeFromPath(imagePath);
-                    JSONObject imagePart = new JSONObject();
-                    JSONObject inlineData = new JSONObject();
-                    inlineData.put("mime_type", mimeType);
-                    inlineData.put("data", base64Image);
-                    imagePart.put("inline_data", inlineData);
-                    parts.put(imagePart);
-                }
-            }
-
-            userContent.put("parts", parts);
-            conversationContents.put(userContent);
-            dbHelper.saveContext(currentSessionId, conversationContents, pendingModelContent);
-
-            // 3. Set processing state and invoke Gemini
-            final long runToken = ++currentRunToken;
-            final String runSessionId = currentSessionId;
-            setSessionStateInternal(AiFloatingButtonView.STATE_PROCESSING);
-            notifyThinking(true, "Agent is thinking...");
-
-            callGemini(runSessionId, runToken);
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error formulating request", e);
-            notifyThinking(false, null);
-            setSessionStateInternal(AiFloatingButtonView.STATE_ACTIVE);
-            addMessageInternal(new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_ERROR, "Error formulating request: " + e.getMessage()));
-        }
-    }
-
-    private void callGemini(final String runSessionId, final long runToken) {
-        geminiClient.generateContent(conversationContents, null, new GeminiClient.ResponseCallback() {
-            @Override
-            public void onSuccess(final GeminiClient.AiResponse response) {
-                mainHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        // Guard against race conditions when user switches or creates a new chat
-                        if (runToken != currentRunToken || !runSessionId.equals(currentSessionId)) {
-                            Log.d(TAG, "Ignoring Gemini response for superseded session: " + runSessionId);
-                            return;
-                        }
-
-                        notifyThinking(false, null);
-
-                        if (!response.text.isEmpty()) {
-                            AiChatAdapter.ChatMessage astMsg = new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_ASSISTANT, response.text);
-                            addMessageInternal(astMsg);
-                        }
-
-                        if (response.hasToolCalls()) {
-                            pendingModelContent = response.rawContent;
-                            dbHelper.saveContext(currentSessionId, conversationContents, pendingModelContent);
-
-                            for (GeminiClient.ToolCall tool : response.toolCalls) {
-                                if (toolDispatcher.isConfirmationRequired(tool.name)) {
-                                    AiChatAdapter.ChatMessage confirmMsg = new AiChatAdapter.ChatMessage(
-                                            AiChatAdapter.TYPE_CONFIRMATION,
-                                            "Tool '" + tool.name + "' wants to execute with: " + tool.arguments.toString(),
-                                            tool.name,
-                                            tool.arguments
-                                    );
-                                    addMessageInternal(confirmMsg);
-                                    setSessionStateInternal(AiFloatingButtonView.STATE_ACTIVE);
-                                } else {
-                                    executeApprovedTool(tool.name, tool.arguments, runSessionId, runToken);
-                                }
-                            }
-                        } else {
-                            // Normal model turn with no tools: commit to conversation context
-                            if (response.rawContent != null) {
-                                conversationContents.put(response.rawContent);
-                            } else if (!response.text.isEmpty()) {
-                                try {
-                                    JSONObject modelContent = new JSONObject();
-                                    modelContent.put("role", "model");
-                                    JSONArray parts = new JSONArray();
-                                    JSONObject textPart = new JSONObject();
-                                    textPart.put("text", response.text);
-                                    parts.put(textPart);
-                                    modelContent.put("parts", parts);
-                                    conversationContents.put(modelContent);
-                                } catch (Exception ignored) {
-                                }
-                            }
-                            dbHelper.saveContext(currentSessionId, conversationContents, null);
-                            setSessionStateInternal(AiFloatingButtonView.STATE_ACTIVE);
-                        }
-                    }
-                });
-            }
-
-            @Override
-            public void onError(final String errorMessage) {
-                mainHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (runToken != currentRunToken || !runSessionId.equals(currentSessionId)) {
-                            return;
-                        }
-                        notifyThinking(false, null);
-                        setSessionStateInternal(AiFloatingButtonView.STATE_ACTIVE);
-                        addMessageInternal(new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_ERROR, errorMessage));
-                    }
-                });
-            }
-        });
-    }
-
-    public void executeApprovedTool(final String name, final JSONObject args) {
-        executeApprovedTool(name, args, currentSessionId, currentRunToken);
-    }
-
-    public void executeApprovedTool(final String name, final JSONObject args, final String runSessionId, final long runToken) {
-        if (runToken != currentRunToken || !runSessionId.equals(currentSessionId)) {
+        if (currentSessionId == null) startNewSession();
+        if (activeRun != null) {
+            showError("Stop the current request before starting another.");
             return;
         }
+        if (!sheetShowing()) return;
+        GeminiSettings connection = connectionSettings.get();
+        if (connection == null) {
+            showError("Cloud chat is not configured. Select Gemini in Agent settings. Nothing was sent.");
+            return;
+        }
+        if (imagePath != null) { showError("Image attachments are unavailable. No image was sent."); return; }
+        if (text == null || text.trim().isEmpty() || text.length() > 8_192) { showError("Enter a prompt of 1–8192 characters."); return; }
+        if (!connection.matches(contextConnection)) {
+            exchanges.clear();
+            contextConnection = connection;
+        }
+        if (activeMessages.isEmpty()) {
+            currentTitle = text.length() > 32 ? text.substring(0, 29) + "..." : text;
+            transcript.updateSessionTitle(currentSessionId, currentTitle);
+        }
+        addMessageInternal(new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_USER, text));
+        Run run = new Run(currentSessionId, connection, ++currentRunToken, reviews.page());
+        activeRun = run;
+        try {
+            run.turns.put(new JSONObject().put("role", "user").put("parts", new JSONArray().put(new JSONObject().put("text", text))));
+            setSessionStateInternal(AiFloatingButtonView.STATE_PROCESSING);
+            callProvider(run);
+        } catch (Exception e) { finish(run, "Could not prepare the request.", false); }
+    }
 
-        setSessionStateInternal(AiFloatingButtonView.STATE_PROCESSING);
-        AiChatAdapter.ChatMessage toolRunningMsg = new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_TOOL, "Running " + name + "...", name, args, true);
-        addMessageInternal(toolRunningMsg);
+    private boolean isActive(Run run) { return run == activeRun && run.token == currentRunToken && run.session.equals(currentSessionId); }
+    private boolean sheetShowing() { return sessionCallback != null && sessionCallback.canReview(); }
+    private boolean sameConnection(Run run) { return run.connection.matches(connectionSettings.get()); }
 
-        toolDispatcher.executeTool(name, args, new ToolDispatcher.ExecutionCallback() {
-            @Override
-            public void onCompleted(final String resultJson) {
-                mainHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (runToken != currentRunToken || !runSessionId.equals(currentSessionId)) {
-                            Log.d(TAG, "Ignoring tool result for superseded session: " + runSessionId);
-                            return;
-                        }
-
-                        String summary = formatToolSummary(name, resultJson);
-                        updateToolStatusInternal(summary, false);
-
-                        try {
-                            if (pendingModelContent != null) {
-                                conversationContents.put(pendingModelContent);
-                                pendingModelContent = null;
-                            } else {
-                                JSONObject modelContent = new JSONObject();
-                                modelContent.put("role", "model");
-                                JSONArray modelParts = new JSONArray();
-                                JSONObject fnCallPart = new JSONObject();
-                                JSONObject fnCall = new JSONObject();
-                                fnCall.put("name", name);
-                                fnCall.put("args", args);
-                                fnCallPart.put("functionCall", fnCall);
-                                modelParts.put(fnCallPart);
-                                modelContent.put("parts", modelParts);
-                                conversationContents.put(modelContent);
-                            }
-
-                            JSONObject toolContent = new JSONObject();
-                            toolContent.put("role", "user");
-                            JSONArray toolParts = new JSONArray();
-                            JSONObject fnRespPart = new JSONObject();
-                            JSONObject fnResp = new JSONObject();
-                            fnResp.put("name", name);
-
-                            JSONObject responseObj;
-                            try {
-                                String trimmed = resultJson != null ? resultJson.trim() : "";
-                                if (trimmed.startsWith("{")) {
-                                    responseObj = new JSONObject(trimmed);
-                                } else if (trimmed.startsWith("[")) {
-                                    responseObj = new JSONObject();
-                                    responseObj.put("result", new JSONArray(trimmed));
-                                } else {
-                                    responseObj = new JSONObject();
-                                    responseObj.put("output", resultJson != null ? resultJson : "success");
-                                }
-                            } catch (Exception e) {
-                                responseObj = new JSONObject();
-                                responseObj.put("output", resultJson != null ? resultJson : "success");
-                            }
-
-                            fnResp.put("response", responseObj);
-                            fnRespPart.put("functionResponse", fnResp);
-                            toolParts.put(fnRespPart);
-                            toolContent.put("parts", toolParts);
-                            conversationContents.put(toolContent);
-
-                            dbHelper.saveContext(currentSessionId, conversationContents, null);
-
-                            // Trigger follow-up AI reasoning
-                            notifyThinking(true, "Agent is thinking...");
-                            callGemini(runSessionId, runToken);
-
-                        } catch (Exception e) {
-                            Log.e(TAG, "Tool response integration error", e);
-                            setSessionStateInternal(AiFloatingButtonView.STATE_ACTIVE);
-                            addMessageInternal(new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_ERROR, "Tool response error: " + e.getMessage()));
-                        }
-                    }
-                });
+    private void callProvider(Run run) {
+        if (!isActive(run)) return;
+        if (!sheetShowing() || !sameConnection(run)) { finish(run, "Agent settings or visibility changed. Nothing further was sent.", false); return; }
+        // Trim only completed prompt groups; never orphan a function call or response.
+        int length = run.turns.toString().length();
+        if (length > MAX_CONTEXT) { finish(run, "Assistant context limit reached. Send a new prompt to continue.", false); return; }
+        for (JSONArray old : exchanges) length += old.toString().length();
+        while (length > MAX_CONTEXT && !exchanges.isEmpty()) length -= exchanges.removeFirst().toString().length();
+        JSONArray input = new JSONArray();
+        for (JSONArray old : exchanges) append(input, old);
+        append(input, run.turns);
+        int request = ++run.providerRequest;
+        run.awaitingProvider = true;
+        notifyThinking(true, "Agent is thinking…");
+        provider.generateContent(run.connection, input, new Provider.ResponseCallback() {
+            @Override public void onSuccess(GeminiProtocol.Response response) {
+                mainQueue.post(() -> { if (takeProviderReply(run, request)) acceptResponse(run, response); });
             }
-
-            @Override
-            public void onError(final String error) {
-                mainHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (runToken != currentRunToken || !runSessionId.equals(currentSessionId)) {
-                            return;
-                        }
-                        updateToolStatusInternal("Error running " + name + ": " + error, false);
-                        setSessionStateInternal(AiFloatingButtonView.STATE_ACTIVE);
-                    }
-                });
+            @Override public void onError(String error) {
+                mainQueue.post(() -> { if (takeProviderReply(run, request)) finish(run, error, false); });
             }
         });
     }
 
-    public void cancelPendingTool(String toolName) {
-        pendingModelContent = null;
-        dbHelper.saveContext(currentSessionId, conversationContents, null);
-        addMessageInternal(new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_ASSISTANT, "Action cancelled by user: " + toolName));
-        setSessionStateInternal(AiFloatingButtonView.STATE_ACTIVE);
+    private boolean takeProviderReply(Run run, int request) {
+        // A duplicate callback or a late error from a previous request in the same run
+        // must not start another batch, end the follow-up, or produce more transcript rows.
+        if (!isActive(run) || !run.awaitingProvider || run.providerRequest != request) return false;
+        run.awaitingProvider = false;
+        return true;
+    }
+
+    private void acceptResponse(Run run, GeminiProtocol.Response response) {
+        if (!isActive(run)) return;
+        if (!sheetShowing() || !sameConnection(run)) { finish(run, "Agent settings or visibility changed. No actions ran from this response.", false); return; }
+        notifyThinking(false, null);
+        if (!response.text.isEmpty()) addMessageInternal(new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_ASSISTANT, response.text));
+        try {
+            AgentToolBatch batch = response.content == null ? null : new AgentToolBatch(response.content);
+            if (batch == null || batch.calls.isEmpty()) {
+                if (response.content != null) run.turns.put(response.content);
+                finish(run, null, true);
+                return;
+            }
+            if (!run.connection.tools) {
+                finish(run, "This mode does not execute provider actions.", false);
+                return;
+            }
+            if (++run.toolTurns > MAX_TOOL_TURNS) { finish(run, "Action review limit reached; no further tools ran.", false); return; }
+            reviewNext(run, batch, 0);
+        } catch (Exception invalid) { finish(run, "The provider returned an unsupported tool turn. No actions ran from it.", false); }
+    }
+
+    private AssistantApproval.Scope liveScope(Run run) {
+        if (!isActive(run) || !sameConnection(run) || !sheetShowing()) return null;
+        return new AssistantApproval.Scope(currentSessionId, currentRunToken, reviews.page());
+    }
+
+    private void reviewNext(Run run, AgentToolBatch batch, int index) {
+        if (!isActive(run)) return;
+        if (!sheetShowing() || !sameConnection(run)) { finish(run, "Review stopped. Approved effects may already have occurred.", false); return; }
+        if (index == batch.calls.size()) {
+            try {
+                JSONArray paired = batch.finish();
+                if (paired != null) { append(run.turns, paired); callProvider(run); }
+            } catch (Exception invalid) { finish(run, "Could not correlate the tool responses.", false); }
+            return;
+        }
+        AgentToolBatch.Call call = batch.calls.get(index);
+        AssistantAction.Kind kind = AssistantAction.Kind.find(call.name);
+        boolean pageBoundResult = kind != null && (kind.scripts || kind == AssistantAction.Kind.INFO || kind == AssistantAction.Kind.CLEAR);
+        final class Result implements ToolDispatcher.ExecutionCallback {
+            private final Runnable timer = () -> onStopped("timeout", "No result in time. An approved action may already have taken effect.");
+            @Override public void onCompleted(JSONObject outcome) { settle(outcome, null); }
+            @Override public void onStopped(String status, String reason) { settle(AgentToolBatch.terminal(status, reason), reason); }
+            private void settle(JSONObject value, String reason) {
+                // A queued result can outlive both its review dialog and the document that produced it.
+                mainQueue.post(() -> accept(value, reason));
+            }
+            private void accept(JSONObject value, String reason) {
+                mainQueue.removeCallbacks(timer);
+                if (!isActive(run)) return;
+                AssistantApproval.Scope live = liveScope(run);
+                if (live == null) { finish(run, "Review stopped. Approved effects may already have occurred.", false); return; }
+                // Keep effect receipts such as navigation_requested, which do not carry page data.
+                if (reason == null && pageBoundResult && !run.originalScope.matches(live)) {
+                    reason = "The page changed before its result was accepted. Approved effects may already have occurred.";
+                    value = AgentToolBatch.terminal("page_changed", reason);
+                }
+                try {
+                    if (!batch.complete(index, value)) return;
+                    if (run.actionTimeout == timer) run.actionTimeout = null;
+                    String name = call.name.replace('_', ' ');
+                    String status = value.optString("status", "result received").replace('_', ' ');
+                    String display = reason == null ? status.substring(0, Math.min(120, status.length())) : reason;
+                    addMessageInternal(new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_TOOL, name + ": " + display));
+                    reviewNext(run, batch, index + 1);
+                } catch (Exception e) { finish(run, "Could not record the tool outcome.", false); }
+            }
+        }
+        Result result = new Result();
+        try {
+            AssistantAction action = AssistantAction.parse(call.name, call.args(), false);
+            run.actionTimeout = result.timer;
+            mainQueue.postDelayed(result.timer, ACTION_TIMEOUT_MS);
+            reviews.review(action, AssistantApproval.Source.CHAT, run.originalScope, () -> liveScope(run), result);
+        } catch (Exception invalid) {
+            result.onStopped("unsupported", invalid instanceof IllegalArgumentException ? invalid.getMessage() : "Invalid action arguments.");
+        }
+    }
+
+    void reviewManualStep(MainActivity owner, BooleanSupplier showing, AssistantAction action, ToolDispatcher.ExecutionCallback result) {
+        if (!agentEnabled.getAsBoolean() || activeRun != null || currentSessionId == null || reviews.owner() != owner || !showing.getAsBoolean()) {
+            result.onStopped("unavailable", "Open the Agent and stop the current request before reviewing this step.");
+            return;
+        }
+        AssistantApproval.Scope expected = new AssistantApproval.Scope(currentSessionId, currentRunToken, reviews.page());
+        reviews.review(action, AssistantApproval.Source.MANUAL_RECIPE, expected,
+                () -> agentEnabled.getAsBoolean() && showing.getAsBoolean() && activeRun == null && reviews.owner() == owner
+                        ? new AssistantApproval.Scope(currentSessionId, currentRunToken, reviews.page()) : null, result);
     }
 
     public void stopActiveSession() {
-        // Invalidate active generation token so in-flight callbacks are dropped immediately
-        currentRunToken++;
-
-        // Disconnect active HTTP socket immediately
-        geminiClient.cancelCurrentRequest();
-
-        // Reset processing state and thinking UI
+        boolean hadRequest = activeRun != null;
+        invalidateRun();
         notifyThinking(false, null);
         setSessionStateInternal(AiFloatingButtonView.STATE_IDLE);
-
-        // Mark last in-progress message as stopped if present
-        if (!activeMessages.isEmpty()) {
-            int lastIdx = activeMessages.size() - 1;
-            AiChatAdapter.ChatMessage last = activeMessages.get(lastIdx);
-            if (last.inProgress) {
-                AiChatAdapter.ChatMessage stoppedMsg = new AiChatAdapter.ChatMessage(
-                        last.type,
-                        last.content + " (Stopped)",
-                        last.toolName,
-                        last.toolArgs,
-                        false,
-                        last.imagePath
-                );
-                activeMessages.set(lastIdx, stoppedMsg);
-                dbHelper.updateLastToolMessage(currentSessionId, last.content + " (Stopped)");
-                if (sessionCallback != null) {
-                    sessionCallback.onToolStatusUpdated(last.content + " (Stopped)", false);
-                }
-            }
-        }
-
-        // Clear pending model content and persist clean context
-        pendingModelContent = null;
-        dbHelper.saveContext(currentSessionId, conversationContents, null);
+        if (hadRequest) addMessageInternal(new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_TOOL,
+                "Stopped future actions. Already approved effects may still have occurred."));
     }
 
-    // -------------------------------------------------------------------------
-    // Internal Notifications & State Updates
-    // -------------------------------------------------------------------------
+    private void finish(Run run, String error, boolean keepContext) {
+        if (!isActive(run)) return;
+        invalidateRun();
+        if (keepContext && sameConnection(run) && run.turns.toString().length() <= MAX_CONTEXT) {
+            exchanges.addLast(run.turns);
+            int size = 0;
+            for (JSONArray group : exchanges) size += group.toString().length();
+            while (size > MAX_CONTEXT || exchanges.size() > 12) size -= exchanges.removeFirst().toString().length();
+        }
+        notifyThinking(false, null);
+        setSessionStateInternal(AiFloatingButtonView.STATE_ACTIVE);
+        if (error != null) showError(error);
+    }
+
+    private static void append(JSONArray to, JSONArray from) { for (int i = 0; i < from.length(); i++) to.put(from.opt(i)); }
+    private void showError(String error) { addMessageInternal(new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_ERROR, error)); }
 
     private void addMessageInternal(AiChatAdapter.ChatMessage message) {
         activeMessages.add(message);
-        dbHelper.insertMessage(currentSessionId, message);
+        transcript.insertMessage(currentSessionId, message);
         if (sessionCallback != null) {
             sessionCallback.onMessageAdded(message);
-        }
-    }
-
-    private void updateToolStatusInternal(String text, boolean inProgress) {
-        if (!activeMessages.isEmpty()) {
-            int lastIdx = activeMessages.size() - 1;
-            AiChatAdapter.ChatMessage last = activeMessages.get(lastIdx);
-            if (last.type == AiChatAdapter.TYPE_TOOL || last.type == AiChatAdapter.TYPE_THINKING) {
-                activeMessages.set(lastIdx, new AiChatAdapter.ChatMessage(AiChatAdapter.TYPE_TOOL, text, last.toolName, last.toolArgs, inProgress));
-            }
-        }
-        dbHelper.updateLastToolMessage(currentSessionId, text);
-        if (sessionCallback != null) {
-            sessionCallback.onToolStatusUpdated(text, inProgress);
         }
     }
 
@@ -533,61 +488,4 @@ public class AgentSessionManager {
         }
     }
 
-    private String formatToolSummary(String name, String resultJson) {
-        if (resultJson == null || resultJson.trim().isEmpty()) {
-            return "Executed " + name;
-        }
-        try {
-            String trimmed = resultJson.trim();
-            if (trimmed.startsWith("{")) {
-                JSONObject obj = new JSONObject(trimmed);
-                if (obj.has("count")) {
-                    int count = obj.getInt("count");
-                    String itemWord = "items";
-                    if (name.contains("bookmark")) itemWord = "bookmarks";
-                    else if (name.contains("history")) itemWord = "history entries";
-                    else if (name.contains("download")) itemWord = "downloads";
-                    else if (name.contains("tab")) itemWord = "tabs";
-                    return count == 0 ? "No " + itemWord + " found" : "Found " + count + " " + itemWord;
-                }
-                if (obj.has("status")) {
-                    String status = obj.getString("status");
-                    if ("clicked".equalsIgnoreCase(status)) return "Clicked element";
-                    if ("typed".equalsIgnoreCase(status)) return "Entered text";
-                    if ("scrolled".equalsIgnoreCase(status)) return "Scrolled page";
-                    if ("created".equalsIgnoreCase(status)) return "Created successfully";
-                    if ("deleted".equalsIgnoreCase(status)) {
-                        int c = obj.optInt("count", 1);
-                        return "Deleted " + c + " item(s)";
-                    }
-                    if ("not_found".equalsIgnoreCase(status)) return "Element not found";
-                    return "Status: " + status;
-                }
-                if (obj.has("headings")) {
-                    JSONArray h = obj.getJSONArray("headings");
-                    return "Found " + h.length() + " headings";
-                }
-                if (obj.has("links")) {
-                    JSONArray l = obj.getJSONArray("links");
-                    return "Found " + l.length() + " links";
-                }
-                if (obj.has("title")) {
-                    return "Page: " + obj.getString("title");
-                }
-                if (obj.has("text")) {
-                    return "Extracted page text";
-                }
-            } else if (trimmed.startsWith("[")) {
-                JSONArray arr = new JSONArray(trimmed);
-                return "Found " + arr.length() + " items";
-            }
-        } catch (Exception ignored) {
-        }
-
-        String clean = resultJson.replace("{", "").replace("}", "").replace("\"", "").replace("[", "").replace("]", "").trim();
-        if (clean.length() > 40) {
-            clean = clean.substring(0, 37) + "...";
-        }
-        return "Executed " + name + (clean.isEmpty() ? "" : " (" + clean + ")");
-    }
 }

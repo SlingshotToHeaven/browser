@@ -4,194 +4,177 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
+import com.privacy.browser.adblock.rules.FilterSnapshot;
+import com.privacy.downloader.net.RequestContext;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import static com.privacy.browser.adblock.cloud.RuleSnapshotWire.*;
 
-/**
- * Pure Java HTTP client communicating with the Cloudflare Worker AdBlock State Sync API.
- */
-public class AdBlockCloudClient {
-
-    private static final String TAG = "AdBlockCloudClient";
-    private static final String PREFS_NAME = "adblock_cloud_prefs";
-    private static final String KEY_ENDPOINT = "cloud_endpoint_url";
+final class AdBlockCloudClient implements AutoCloseable {
+    private static final String API = "/api/v2/states";
     private static final String DEFAULT_ENDPOINT = "https://adblock-state-sync.ishikawaadachi.workers.dev";
+    private final SharedPreferences prefs;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private volatile boolean closed;
+    private volatile HttpURLConnection active;
 
-    public static class StateSummary {
-        public final String stateId;
-        public final String description;
-        public final String author;
-        public final long timestamp;
-        public final int filesChanged;
-
-        public StateSummary(String stateId, String description, String author, long timestamp, int filesChanged) {
-            this.stateId = stateId;
-            this.description = description;
-            this.author = author;
-            this.timestamp = timestamp;
-            this.filesChanged = filesChanged;
+    static final class Summary {
+        final String id, description;
+        final long timestamp;
+        Summary(JSONObject object) throws Exception {
+            id = validId(object.getString("state_id"));
+            description = validDescription(object.getString("description"));
+            timestamp = object.getLong("timestamp");
         }
     }
 
-    public interface Callback<T> {
+    static final class Page {
+        final List<Summary> entries;
+        final long next;
+        Page(List<Summary> entries, long next) { this.entries = entries; this.next = next; }
+    }
+
+    interface Callback<T> {
         void onSuccess(T result);
         void onError(String message);
     }
 
-    private final Context context;
-    private final SharedPreferences prefs;
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-
-    public AdBlockCloudClient(@NonNull Context context) {
-        this.context = context.getApplicationContext();
-        this.prefs = this.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    AdBlockCloudClient(Context context) {
+        prefs = context.getSharedPreferences("adblock_cloud_prefs", Context.MODE_PRIVATE);
     }
 
-    public String getEndpointUrl() {
-        return prefs.getString(KEY_ENDPOINT, DEFAULT_ENDPOINT);
+    String getEndpointUrl() { return prefs.getString("cloud_endpoint_url", DEFAULT_ENDPOINT); }
+
+    void setEndpointUrl(String value) { prefs.edit().putString("cloud_endpoint_url", endpoint(value)).apply(); }
+
+    private static String endpoint(String value) {
+        String clean = value.trim();
+        String origin = RequestContext.origin(clean);
+        if (origin == null || !origin.startsWith("https://") || clean.length() > 250) {
+            throw new IllegalArgumentException("Enter an HTTPS Worker origin.");
+        }
+        URI uri = URI.create(clean);
+        if (uri.getRawQuery() != null || uri.getRawFragment() != null || !(uri.getRawPath().isEmpty() || uri.getRawPath().equals("/"))) {
+            throw new IllegalArgumentException("Use the Worker origin without an endpoint path or query.");
+        }
+        return origin;
     }
 
-    public void setEndpointUrl(String url) {
-        if (url != null) {
-            String clean = url.trim();
-            if (clean.endsWith("/")) clean = clean.substring(0, clean.length() - 1);
-            prefs.edit().putString(KEY_ENDPOINT, clean).apply();
+    void list(String source, long before, Callback<Page> callback) {
+        run(() -> {
+            JSONObject result = request(source, API + (before > 0 ? "?before=" + before : ""), null, 256 * 1024);
+            requireV2(result);
+            JSONArray array = result.getJSONArray("states");
+            if (array.length() > 100) throw new IOException("Catalog returned too many rows.");
+            List<Summary> entries = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) entries.add(new Summary(array.getJSONObject(i)));
+            long next = result.optLong("next_before", 0);
+            if (next < 0 || (before > 0 && next >= before)) throw new IOException("Invalid catalog cursor.");
+            return new Page(entries, next);
+        }, callback);
+    }
+
+    void download(String source, String id, Callback<FilterSnapshot> callback) {
+        run(() -> RuleSnapshotWire.decode(request(source, API + "/" + validId(id), null, MAX_BODY), id), callback);
+    }
+
+    void publish(String source, String description, FilterSnapshot snapshot, Callback<String> callback) {
+        run(() -> {
+            JSONObject body = RuleSnapshotWire.encode(description, snapshot);
+            JSONObject result = request(source, API, body.toString().getBytes(StandardCharsets.UTF_8), 16 * 1024);
+            requireV2(result);
+            if (!Boolean.TRUE.equals(result.opt("success"))) throw new IOException("Catalog did not confirm publication.");
+            return validId(result.getString("state_id"));
+        }, callback);
+    }
+
+    private JSONObject request(String source, String route, byte[] body, int maxBytes) throws Exception {
+        if (body != null && body.length > MAX_BODY) throw new IOException("Encoded snapshot is too large to publish.");
+        HttpURLConnection connection = (HttpURLConnection) new URL(endpoint(source) + route).openConnection();
+        active = connection;
+        try {
+            if (closed) throw new IOException("Catalog closed.");
+            connection.setInstanceFollowRedirects(false);
+            connection.setConnectTimeout(8000);
+            connection.setReadTimeout(10000);
+            connection.setUseCaches(false);
+            if (body != null) {
+                connection.setRequestMethod("POST");
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                connection.setFixedLengthStreamingMode(body.length);
+                try (OutputStream stream = connection.getOutputStream()) { stream.write(body); }
+            }
+            int status = connection.getResponseCode();
+            if (status != 200 && !(body != null && status == 201)) {
+                if (status == 404 || status == 410) throw new IOException("Snapshot or v2 endpoint not found. Check the Worker version.");
+                if (status == 403) throw new IOException("The catalog operator disabled publishing.");
+                if (status == 413) throw new IOException("The Worker rejected the snapshot size.");
+                if (status == 507) throw new IOException("The catalog is full. No new state was published.");
+                throw new IOException("Catalog request failed (HTTP " + status + ").");
+            }
+            if (connection.getContentLengthLong() > maxBytes) throw new IOException("Catalog response is too large.");
+            try (InputStream in = connection.getInputStream()) {
+                String text = FilterSnapshot.readText(in, maxBytes);
+                if (!boundedJson(text)) throw new IOException("Malformed catalog response.");
+                return new JSONObject(text);
+            }
+        } finally {
+            active = null;
+            connection.disconnect();
         }
     }
 
-    /**
-     * Lists the latest community state summaries from the cloud.
-     */
-    public void listStates(@NonNull Callback<List<StateSummary>> callback) {
-        executor.execute(() -> {
-            try {
-                String endpoint = getEndpointUrl() + "/api/states";
-                HttpURLConnection conn = (HttpURLConnection) new URL(endpoint).openConnection();
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-
-                int code = conn.getResponseCode();
-                if (code == 200) {
-                    String jsonStr = readStream(conn.getInputStream());
-                    JSONArray arr = new JSONArray(jsonStr);
-                    List<StateSummary> list = new ArrayList<>();
-                    for (int i = 0; i < arr.length(); i++) {
-                        JSONObject item = arr.getJSONObject(i);
-                        list.add(new StateSummary(
-                            item.optString("state_id", "unknown"),
-                            item.optString("description", "Untitled State"),
-                            item.optString("author", "Anonymous"),
-                            item.optLong("timestamp", 0),
-                            item.optInt("files_changed", 0)
-                        ));
-                    }
-                    mainHandler.post(() -> callback.onSuccess(list));
-                } else {
-                    String err = readStream(conn.getErrorStream());
-                    mainHandler.post(() -> callback.onError("Server returned " + code + ": " + err));
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed listing cloud states", e);
-                mainHandler.post(() -> callback.onError("Connection error: " + e.getMessage()));
-            }
-        });
-    }
-
-    /**
-     * Downloads a complete state payload (including diffs) by ID.
-     */
-    public void downloadState(@NonNull String stateId, @NonNull Callback<JSONObject> callback) {
-        executor.execute(() -> {
-            try {
-                String endpoint = getEndpointUrl() + "/api/states/" + stateId;
-                HttpURLConnection conn = (HttpURLConnection) new URL(endpoint).openConnection();
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-
-                int code = conn.getResponseCode();
-                if (code == 200) {
-                    String jsonStr = readStream(conn.getInputStream());
-                    JSONObject obj = new JSONObject(jsonStr);
-                    mainHandler.post(() -> callback.onSuccess(obj));
-                } else {
-                    String err = readStream(conn.getErrorStream());
-                    mainHandler.post(() -> callback.onError("Failed fetching state (" + code + "): " + err));
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed downloading state", e);
-                mainHandler.post(() -> callback.onError("Network error: " + e.getMessage()));
-            }
-        });
-    }
-
-    /**
-     * Commits/uploads a new state payload to the cloud.
-     */
-    public void commitState(@NonNull JSONObject statePayload, @NonNull Callback<String> callback) {
-        executor.execute(() -> {
-            try {
-                String endpoint = getEndpointUrl() + "/api/states";
-                HttpURLConnection conn = (HttpURLConnection) new URL(endpoint).openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                conn.setDoOutput(true);
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(10000);
-
-                byte[] postBytes = statePayload.toString().getBytes(StandardCharsets.UTF_8);
-                try (OutputStream os = conn.getOutputStream()) {
-                    os.write(postBytes);
-                    os.flush();
-                }
-
-                int code = conn.getResponseCode();
-                if (code == 200 || code == 201) {
-                    String jsonStr = readStream(conn.getInputStream());
-                    JSONObject res = new JSONObject(jsonStr);
-                    String stateId = res.optString("state_id", "state_uploaded");
-                    mainHandler.post(() -> callback.onSuccess(stateId));
-                } else {
-                    String err = readStream(conn.getErrorStream());
-                    mainHandler.post(() -> callback.onError("Upload failed (" + code + "): " + err));
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed uploading state commit", e);
-                mainHandler.post(() -> callback.onError("Upload error: " + e.getMessage()));
-            }
-        });
-    }
-
-    private static String readStream(@Nullable InputStream is) {
-        if (is == null) return "";
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                sb.append(line).append("\n");
-            }
-            return sb.toString().trim();
-        } catch (Exception e) {
-            return "";
+    private static boolean boundedJson(String text) {
+        int depth = 0;
+        boolean inside = false;
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (inside) {
+                if (ch == '\\') i++;
+                else if (ch == '"') inside = false;
+            } else if (ch == '"') inside = true;
+            else if (ch == '[' || ch == '{') { if (++depth > 5) return false; }
+            else if (ch == ']' || ch == '}') { if (--depth < 0) return false; }
+            else if (ch == '/' || ch == '\'' || ch == '#' || ch == '\\') return false;
         }
+        return !inside && depth == 0;
+    }
+
+    <T> void run(Callable<T> work, Callback<T> callback) {
+        if (closed) return;
+        executor.execute(() -> {
+            try {
+                T value = work.call();
+                main.post(() -> { if (!closed) callback.onSuccess(value); });
+            } catch (Exception e) {
+                String reason = e.getMessage();
+                String message = reason == null || reason.length() > 250 ? "Catalog operation failed." : reason;
+                main.post(() -> { if (!closed) callback.onError(message); });
+            }
+        });
+    }
+
+    @Override public void close() {
+        closed = true;
+        HttpURLConnection connection = active;
+        if (connection != null) connection.disconnect();
+        executor.shutdownNow();
     }
 }

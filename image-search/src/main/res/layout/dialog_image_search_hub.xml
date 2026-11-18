@@ -44,7 +44,7 @@
                 android:id="@+id/dialog_subtitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Reverse image lookup across 35+ engines"
+                android:text="Image URL search only. File and screenshot uploads are unavailable."
                 android:textColor="?attr/textSecondary"
                 android:textSize="11.5sp"
                 android:layout_marginTop="2dp" />
@@ -98,7 +98,7 @@
         android:layout_height="1dp"
         android:background="?attr/borderHairline" />
 
-    <!-- Actions / Modes Strip (5 Modes matching upstream extension) -->
+    <!-- URL selection only -->
     <LinearLayout
         android:id="@+id/container_actions_strip"
         android:layout_width="match_parent"
@@ -128,63 +128,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Select"
-                android:textColor="?attr/textPrimary"
-                android:textSize="10sp"
-                android:fontFamily="sans-serif-medium"
-                android:layout_marginTop="4dp" />
-        </LinearLayout>
-
-        <!-- Action 2: Capture Region / Crop -->
-        <LinearLayout
-            android:id="@+id/btn_capture_region"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="?android:attr/selectableItemBackground"
-            android:padding="4dp">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_crop"
-                android:tint="#FFA726"
-                android:scaleType="centerInside" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Capture"
-                android:textColor="?attr/textPrimary"
-                android:textSize="10sp"
-                android:fontFamily="sans-serif-medium"
-                android:layout_marginTop="4dp" />
-        </LinearLayout>
-
-        <!-- Action 3: Upload Local File (Browse) -->
-        <LinearLayout
-            android:id="@+id/btn_upload_file"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="?android:attr/selectableItemBackground"
-            android:padding="4dp">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_upload"
-                android:tint="#42A5F5"
-                android:scaleType="centerInside" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Upload"
+                android:text="Choose page image"
                 android:textColor="?attr/textPrimary"
                 android:textSize="10sp"
                 android:fontFamily="sans-serif-medium"
@@ -212,40 +156,14 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="URL"
+                android:text="Enter image URL"
                 android:textColor="?attr/textPrimary"
                 android:textSize="10sp"
                 android:fontFamily="sans-serif-medium"
                 android:layout_marginTop="4dp" />
         </LinearLayout>
 
-        <!-- Action 5: Search All Engines -->
-        <LinearLayout
-            android:id="@+id/btn_search_all_engines"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="?android:attr/selectableItemBackground"
-            android:padding="4dp">
 
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_share"
-                android:tint="#AB47BC"
-                android:scaleType="centerInside" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="All"
-                android:textColor="?attr/textPrimary"
-                android:textSize="10sp"
-                android:fontFamily="sans-serif-medium"
-                android:layout_marginTop="4dp" />
-        </LinearLayout>
     </LinearLayout>
 
     <View

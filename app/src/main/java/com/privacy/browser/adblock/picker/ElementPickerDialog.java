@@ -3,6 +3,7 @@ package com.privacy.browser.adblock.picker;
 import android.app.Dialog;
 import android.content.Context;
 import android.graphics.Color;
+import android.net.Uri;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
@@ -28,13 +29,16 @@ import androidx.annotation.Nullable;
 
 import com.privacy.browser.R;
 import com.privacy.browser.ThemeManager;
-import com.privacy.browser.adblock.AdBlockManager;
+import com.privacy.browser.adblock.rules.FilterSnapshot;
+import com.privacy.browser.adblock.rules.RuleWork;
 import com.privacy.browser.adblock.rules.UserFiltersManager;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Locale;
 import java.util.List;
 
 /**
@@ -51,13 +55,16 @@ public class ElementPickerDialog {
         public List<String> selectors = new ArrayList<>();
     }
 
-    public static void show(@NonNull Context context,
+    public static Dialog show(@NonNull Context context,
                             @NonNull WebView webView,
-                            @Nullable String domain,
-                            @NonNull String nodesJson,
-                            @Nullable Runnable onFilterApplied) {
+                            @NonNull String url,
+                            @NonNull JSONArray nodesJson,
+                            @NonNull java.util.function.BooleanSupplier current, @NonNull Runnable onSaved) {
         List<NodeInfo> nodes = parseNodes(nodesJson);
-        if (nodes.isEmpty()) return;
+        if (nodes.isEmpty() || !current.getAsBoolean()) return null;
+        java.util.function.Consumer<String> script = js -> {
+            if (current.getAsBoolean()) webView.evaluateJavascript(js, null);
+        };
 
         Dialog dialog = new Dialog(context);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -78,10 +85,10 @@ public class ElementPickerDialog {
             window.setDimAmount(0.0f);
         }
 
-        String cleanDomain = AdBlockManager.extractCleanHost(domain);
-        if (cleanDomain == null || cleanDomain.isEmpty()) {
-            cleanDomain = "example.com";
-        }
+        String host = Uri.parse(url).getHost();
+        if (host == null || host.isEmpty()) return null;
+        String cleanDomain = host.toLowerCase(Locale.ROOT);
+        if (cleanDomain.endsWith(".")) cleanDomain = cleanDomain.substring(0, cleanDomain.length() - 1);
 
         TextView tvDomain = view.findViewById(R.id.tv_picker_domain);
         tvDomain.setText(cleanDomain);
@@ -277,15 +284,22 @@ public class ElementPickerDialog {
                     editRule.setText(finalCleanDomain + "##" + sel);
                     refreshChipStyles.run();
                     if (isPreviewing[0]) {
-                        webView.evaluateJavascript(ElementPickerEngine.getPreviewScript(sel), null);
+                        script.accept(ElementPickerEngine.getPreviewScript(""));
+                        isPreviewing[0] = false;
+                        updatePreviewBtn.run();
                     }
                 });
                 llChips.addView(chip);
             }
             refreshChipStyles.run();
 
+            if (isPreviewing[0]) {
+                script.accept(ElementPickerEngine.getPreviewScript(""));
+                isPreviewing[0] = false;
+                updatePreviewBtn.run();
+            }
             // Highlight node in webView
-            webView.evaluateJavascript(ElementPickerEngine.getHighlightNodeScript(currentDepth[0]), null);
+            script.accept(ElementPickerEngine.getHighlightNodeScript(currentDepth[0]));
         };
 
         btnNarrow.setOnClickListener(v -> {
@@ -303,47 +317,55 @@ public class ElementPickerDialog {
         });
 
         btnPreview.setOnClickListener(v -> {
-            String fullRule = editRule.getText().toString().trim();
-            String selector = extractSelectorFromRule(fullRule);
-            if (isPreviewing[0]) {
-                // Clear preview
-                webView.evaluateJavascript(ElementPickerEngine.getPreviewScript(""), null);
-                isPreviewing[0] = false;
-            } else {
-                // Apply preview
-                webView.evaluateJavascript(ElementPickerEngine.getPreviewScript(selector), null);
-                isPreviewing[0] = true;
-            }
-            updatePreviewBtn.run();
+            if (!current.getAsBoolean()) return;
+            try {
+                String selector = isPreviewing[0] ? "" : FilterSnapshot.pickerSelector(editRule.getText().toString().trim(), finalCleanDomain);
+                script.accept(ElementPickerEngine.getPreviewScript(selector));
+                isPreviewing[0] = !isPreviewing[0];
+                updatePreviewBtn.run();
+            } catch (IllegalArgumentException e) { editRule.setError(e.getMessage()); }
         });
 
         btnCreate.setOnClickListener(v -> {
-            String rule = editRule.getText().toString().trim();
-            if (!TextUtils.isEmpty(rule)) {
-                UserFiltersManager.getInstance(context).addRule(rule);
-                String selector = extractSelectorFromRule(rule);
-                // Permanently inject hiding style
-                String hideJs = "var s = document.createElement('style');" +
-                        "s.textContent = '" + selector.replace("'", "\\'") + " { display: none !important; }';" +
-                        "(document.head || document.documentElement).appendChild(s);";
-                webView.evaluateJavascript(hideJs, null);
-                webView.evaluateJavascript(ElementPickerEngine.getCleanupScript(), null);
-
-                Toast.makeText(context, "Filter created: " + rule, Toast.LENGTH_SHORT).show();
-                dialog.dismiss();
-
-                if (onFilterApplied != null) {
-                    onFilterApplied.run();
-                }
+            if (!current.getAsBoolean()) {
+                editRule.setError("The selected page changed. Reopen the picker.");
+                return;
             }
+            UserFiltersManager manager = UserFiltersManager.getInstance(context);
+            FilterSnapshot before = manager.snapshot();
+            String rule = editRule.getText().toString().trim();
+            btnCreate.setEnabled(false);
+            RuleWork.run(() -> manager.prepareScopedRule(before, rule, finalCleanDomain), (next, error) -> {
+                if (!dialog.isShowing() || !current.getAsBoolean()) return;
+                btnCreate.setEnabled(true);
+                if (error != null) {
+                    editRule.setError("Not saved: " + RuleWork.message(error));
+                    return;
+                }
+                if (!rule.equals(editRule.getText().toString().trim())) {
+                    editRule.setError("Draft changed. Review and save it again.");
+                    return;
+                }
+                try {
+                    // The final local transaction follows the live-page guard on this same UI turn.
+                    manager.commit(before, next);
+                } catch (IOException | IllegalArgumentException failed) {
+                    editRule.setError("Not saved: " + RuleWork.message(failed));
+                    return;
+                }
+                script.accept(ElementPickerEngine.getCleanupScript());
+                dialog.dismiss();
+                Toast.makeText(context, "Filter saved", Toast.LENGTH_SHORT).show();
+                onSaved.run();
+            });
         });
 
         btnClose.setOnClickListener(v -> {
-            webView.evaluateJavascript(ElementPickerEngine.getCleanupScript(), null);
+            script.accept(ElementPickerEngine.getCleanupScript());
             dialog.dismiss();
         });
 
-        dialog.setOnCancelListener(d -> webView.evaluateJavascript(ElementPickerEngine.getCleanupScript(), null));
+        dialog.setOnDismissListener(d -> script.accept(ElementPickerEngine.getCleanupScript()));
 
         updateUI.run();
         dialog.show();
@@ -351,6 +373,7 @@ public class ElementPickerDialog {
             window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
             window.setDimAmount(0.0f);
         }
+        return dialog;
     }
 
     private static String extractSelectorFromRule(String rule) {
@@ -361,33 +384,32 @@ public class ElementPickerDialog {
         return rule;
     }
 
-    private static List<NodeInfo> parseNodes(String json) {
+    private static boolean validLine(String value, int limit) {
+        if (value.length() > limit) return false;
+        for (int i = 0; i < value.length(); i++) if (Character.isISOControl(value.charAt(i))) return false;
+        return true;
+    }
+
+    private static List<NodeInfo> parseNodes(JSONArray arr) {
         List<NodeInfo> list = new ArrayList<>();
+        if (arr.length() < 1 || arr.length() > 5) return list;
         try {
-            JSONArray arr = new JSONArray(json);
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject obj = arr.getJSONObject(i);
                 NodeInfo info = new NodeInfo();
                 info.tag = obj.optString("tag", "div");
                 info.id = obj.optString("id", "");
-                info.text = obj.optString("text", "");
-
-                JSONArray classesArr = obj.optJSONArray("classes");
-                if (classesArr != null) {
-                    for (int c = 0; c < classesArr.length(); c++) {
-                        info.classes.add(classesArr.getString(c));
-                    }
-                }
-
-                JSONArray selArr = obj.optJSONArray("selectors");
-                if (selArr != null) {
-                    for (int s = 0; s < selArr.length(); s++) {
-                        info.selectors.add(selArr.getString(s));
+                if (!info.tag.matches("[a-z0-9-]{1,32}") || !validLine(info.id, 120)) return java.util.Collections.emptyList();
+                JSONArray selectors = obj.optJSONArray("selectors");
+                if (selectors != null && selectors.length() <= 16) {
+                    for (int j = 0; j < selectors.length(); j++) {
+                        String selector = selectors.getString(j);
+                        if (validLine(selector, 500) && !selector.contains("##")) info.selectors.add(selector);
                     }
                 }
                 list.add(info);
             }
-        } catch (Exception ignored) {}
+        } catch (org.json.JSONException invalid) { return java.util.Collections.emptyList(); }
         return list;
     }
 }

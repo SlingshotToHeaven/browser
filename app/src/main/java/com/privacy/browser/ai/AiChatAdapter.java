@@ -1,9 +1,7 @@
 package com.privacy.browser.ai;
 
-import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.text.Spanned;
-import android.text.method.LinkMovementMethod;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -18,7 +16,6 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.privacy.browser.R;
 
-import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,48 +29,24 @@ public class AiChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder>
     public static final int TYPE_THINKING = 5;
     public static final int TYPE_ERROR = 6;
 
-    public interface OnConfirmationDecisionListener {
-        void onConfirmed(ChatMessage message);
-        void onCancelled(ChatMessage message);
-    }
-
     public static class ChatMessage {
         public final int type;
         public final String content;
         public final String toolName;
-        public final JSONObject toolArgs;
         public final boolean inProgress;
         public final String imagePath;
-        public boolean isResolved = false;
 
         private Spanned cachedFormattedText;
         private Boolean cachedIsDark;
 
         public ChatMessage(int type, String content) {
-            this(type, content, null, null, false, null);
+            this(type, content, null, false, null);
         }
 
-        public ChatMessage(int type, String content, String imagePath) {
-            this(type, content, null, null, false, imagePath);
-        }
-
-        public ChatMessage(int type, String content, boolean inProgress) {
-            this(type, content, null, null, inProgress, null);
-        }
-
-        public ChatMessage(int type, String content, String toolName, JSONObject toolArgs) {
-            this(type, content, toolName, toolArgs, false, null);
-        }
-
-        public ChatMessage(int type, String content, String toolName, JSONObject toolArgs, boolean inProgress) {
-            this(type, content, toolName, toolArgs, inProgress, null);
-        }
-
-        public ChatMessage(int type, String content, String toolName, JSONObject toolArgs, boolean inProgress, String imagePath) {
+        ChatMessage(int type, String content, String toolName, boolean inProgress, String imagePath) {
             this.type = type;
             this.content = content != null ? content : "";
             this.toolName = toolName;
-            this.toolArgs = toolArgs;
             this.inProgress = inProgress;
             this.imagePath = imagePath;
         }
@@ -90,14 +63,9 @@ public class AiChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder>
 
     private final List<ChatMessage> messages = new ArrayList<>();
     private final boolean isDark;
-    private OnConfirmationDecisionListener confirmationListener;
 
     public AiChatAdapter(boolean isDark) {
         this.isDark = isDark;
-    }
-
-    public void setOnConfirmationDecisionListener(OnConfirmationDecisionListener listener) {
-        this.confirmationListener = listener;
     }
 
     public void addMessage(ChatMessage message) {
@@ -123,12 +91,12 @@ public class AiChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder>
             int lastIdx = messages.size() - 1;
             ChatMessage last = messages.get(lastIdx);
             if (last.type == TYPE_THINKING) {
-                messages.set(lastIdx, new ChatMessage(TYPE_THINKING, text, true));
+                messages.set(lastIdx, new ChatMessage(TYPE_THINKING, text, null, true, null));
                 notifyItemChanged(lastIdx);
                 return;
             }
         }
-        messages.add(new ChatMessage(TYPE_THINKING, text, true));
+        messages.add(new ChatMessage(TYPE_THINKING, text, null, true, null));
         notifyItemInserted(messages.size() - 1);
     }
 
@@ -139,25 +107,6 @@ public class AiChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder>
                 notifyItemRemoved(i);
             }
         }
-    }
-
-    public void updateLastToolStatus(String text) {
-        updateLastToolStatus(text, false);
-    }
-
-    public void updateLastToolStatus(String text, boolean inProgress) {
-        if (!messages.isEmpty()) {
-            int lastIdx = messages.size() - 1;
-            ChatMessage last = messages.get(lastIdx);
-            if (last.type == TYPE_TOOL || last.type == TYPE_THINKING) {
-                messages.set(lastIdx, new ChatMessage(TYPE_TOOL, text, last.toolName, last.toolArgs, inProgress));
-                notifyItemChanged(lastIdx);
-            }
-        }
-    }
-
-    public List<ChatMessage> getMessages() {
-        return messages;
     }
 
     @Override
@@ -204,41 +153,7 @@ public class AiChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder>
         } else if (holder instanceof ToolViewHolder) {
             ((ToolViewHolder) holder).bind(msg, isDark);
         } else if (holder instanceof ConfirmationViewHolder) {
-            final ConfirmationViewHolder confirmHolder = (ConfirmationViewHolder) holder;
-            confirmHolder.bind(msg, isDark);
-
-            if (!msg.isResolved) {
-                if (confirmHolder.btnCancel != null) {
-                    confirmHolder.btnCancel.setOnClickListener(new View.OnClickListener() {
-                        @Override
-                        public void onClick(View v) {
-                            msg.isResolved = true;
-                            int pos = confirmHolder.getAdapterPosition();
-                            if (pos != RecyclerView.NO_POSITION) {
-                                notifyItemChanged(pos);
-                            }
-                            if (confirmationListener != null) {
-                                confirmationListener.onCancelled(msg);
-                            }
-                        }
-                    });
-                }
-                if (confirmHolder.btnExecute != null) {
-                    confirmHolder.btnExecute.setOnClickListener(new View.OnClickListener() {
-                        @Override
-                        public void onClick(View v) {
-                            msg.isResolved = true;
-                            int pos = confirmHolder.getAdapterPosition();
-                            if (pos != RecyclerView.NO_POSITION) {
-                                notifyItemChanged(pos);
-                            }
-                            if (confirmationListener != null) {
-                                confirmationListener.onConfirmed(msg);
-                            }
-                        }
-                    });
-                }
-            }
+            ((ConfirmationViewHolder) holder).bind(msg, isDark);
         } else if (holder instanceof ErrorViewHolder) {
             ((ErrorViewHolder) holder).bind(msg, isDark);
         }
@@ -248,6 +163,7 @@ public class AiChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder>
         final ImageView ivUserAttachment;
         final TextView tvUser;
         final int bottomMarginPx;
+        private long binding;
 
         public UserViewHolder(@NonNull View itemView) {
             super(itemView);
@@ -260,41 +176,45 @@ public class AiChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder>
         }
 
         public void bind(ChatMessage msg) {
-            boolean hasImage = false;
-            if (ivUserAttachment != null) {
-                if (msg.imagePath != null && !msg.imagePath.isEmpty()) {
-                    Bitmap bmp = AgentAttachmentManager.loadSampledBitmap(msg.imagePath, 480, 320);
-                    if (bmp != null) {
-                        ivUserAttachment.setImageBitmap(bmp);
-                        ivUserAttachment.setVisibility(View.VISIBLE);
-                        hasImage = true;
-                    } else {
-                        ivUserAttachment.setImageDrawable(null);
-                        ivUserAttachment.setVisibility(View.GONE);
-                    }
-                } else {
-                    ivUserAttachment.setImageDrawable(null);
-                    ivUserAttachment.setVisibility(View.GONE);
-                }
-            }
-
-            boolean hasText = msg.content != null && !msg.content.trim().isEmpty();
-            if (hasText) {
+            long requested = ++binding;
+            boolean hasText = !msg.content.trim().isEmpty();
+            tvUser.setText(msg.content);
+            tvUser.setVisibility(hasText ? View.VISIBLE : View.GONE);
+            if (ivUserAttachment == null) return;
+            ivUserAttachment.setImageDrawable(null);
+            ivUserAttachment.setVisibility(View.GONE);
+            if (msg.imagePath == null || msg.imagePath.isEmpty()) return;
+            if (!hasText) {
+                tvUser.setText("Saved image — local preview only");
                 tvUser.setVisibility(View.VISIBLE);
-                tvUser.setText(msg.content);
-            } else {
-                tvUser.setVisibility(View.GONE);
             }
-
-            if (ivUserAttachment != null && ivUserAttachment.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
-                ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) ivUserAttachment.getLayoutParams();
-                int targetMargin = (hasImage && hasText) ? bottomMarginPx : 0;
-                if (lp.bottomMargin != targetMargin) {
-                    lp.bottomMargin = targetMargin;
+            AgentAttachmentManager.preview(itemView.getContext(), msg.imagePath, bitmap -> {
+                if (binding != requested) return;
+                if (bitmap == null) {
+                    tvUser.setText((hasText ? msg.content + "\n" : "") + "Saved image preview unavailable");
+                    tvUser.setVisibility(View.VISIBLE);
+                    return;
+                }
+                ivUserAttachment.setImageBitmap(bitmap);
+                ivUserAttachment.setVisibility(View.VISIBLE);
+                if (!hasText) tvUser.setVisibility(View.GONE);
+                if (ivUserAttachment.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+                    ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) ivUserAttachment.getLayoutParams();
+                    lp.bottomMargin = hasText ? bottomMarginPx : 0;
                     ivUserAttachment.setLayoutParams(lp);
                 }
-            }
+            });
         }
+
+        void recycle() {
+            binding++;
+            if (ivUserAttachment != null) ivUserAttachment.setImageDrawable(null);
+        }
+    }
+
+    @Override public void onViewRecycled(@NonNull RecyclerView.ViewHolder holder) {
+        if (holder instanceof UserViewHolder) ((UserViewHolder) holder).recycle();
+        super.onViewRecycled(holder);
     }
 
     static class AssistantViewHolder extends RecyclerView.ViewHolder {
@@ -304,7 +224,6 @@ public class AiChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder>
             super(itemView);
             tvAssistant = itemView.findViewById(R.id.tv_assistant_message);
             if (tvAssistant != null) {
-                tvAssistant.setMovementMethod(LinkMovementMethod.getInstance());
                 tvAssistant.setLinkTextColor(isDark ? Color.parseColor("#60A5FA") : Color.parseColor("#2563EB"));
                 tvAssistant.setBackgroundResource(isDark ? R.drawable.bg_ai_assistant_bubble : R.drawable.bg_ai_assistant_bubble_light);
                 tvAssistant.setTextColor(isDark ? Color.parseColor("#E2E8F0") : Color.parseColor("#0F172A"));
@@ -365,37 +284,15 @@ public class AiChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder>
                 llConfirmationCard.setBackgroundResource(isDark ? R.drawable.bg_ai_confirmation_card : R.drawable.bg_ai_confirmation_card_light);
             }
             if (tvConfirmTitle != null) {
-                tvConfirmTitle.setText("Confirmation Required: " + (msg.toolName != null ? msg.toolName : "Action"));
+                tvConfirmTitle.setText("Expired review: " + (msg.toolName != null ? msg.toolName : "Action"));
                 tvConfirmTitle.setTextColor(isDark ? Color.parseColor("#F87171") : Color.parseColor("#DC2626"));
             }
             if (tvConfirmSummary != null) {
                 tvConfirmSummary.setText(msg.content);
                 tvConfirmSummary.setTextColor(isDark ? Color.parseColor("#E2E8F0") : Color.parseColor("#1E293B"));
             }
-            if (btnCancel != null) {
-                btnCancel.setBackgroundResource(isDark ? R.drawable.bg_agent_cancel_btn : R.drawable.bg_agent_cancel_btn_light);
-                btnCancel.setTextColor(isDark ? Color.parseColor("#CBD5E1") : Color.parseColor("#475569"));
-            }
-
-            if (msg.isResolved) {
-                if (btnCancel != null) {
-                    btnCancel.setEnabled(false);
-                    btnCancel.setOnClickListener(null);
-                }
-                if (btnExecute != null) {
-                    btnExecute.setEnabled(false);
-                    btnExecute.setText("Executed");
-                    btnExecute.setOnClickListener(null);
-                }
-            } else {
-                if (btnCancel != null) {
-                    btnCancel.setEnabled(true);
-                }
-                if (btnExecute != null) {
-                    btnExecute.setEnabled(true);
-                    btnExecute.setText("Confirm");
-                }
-            }
+            if (btnCancel != null) btnCancel.setVisibility(View.GONE);
+            if (btnExecute != null) btnExecute.setVisibility(View.GONE);
         }
     }
 

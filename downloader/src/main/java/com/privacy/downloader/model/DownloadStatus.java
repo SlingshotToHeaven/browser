@@ -9,10 +9,19 @@ public enum DownloadStatus {
     FAILED,
     CANCELLED,
     WAITING_FOR_WIFI,
-    WAITING_FOR_SCHEDULE;
+    WAITING_FOR_SCHEDULE,
+    WAITING_FOR_BATTERY;
+
+    public boolean isWaiting() {
+        return this == WAITING_FOR_WIFI || this == WAITING_FOR_SCHEDULE || this == WAITING_FOR_BATTERY;
+    }
 
     public boolean isActive() {
-        return this == PENDING || this == CONNECTING || this == RUNNING;
+        return this == PENDING || isTransferring();
+    }
+
+    public boolean isTransferring() {
+        return this == CONNECTING || this == RUNNING;
     }
 
     public boolean isFinished() {

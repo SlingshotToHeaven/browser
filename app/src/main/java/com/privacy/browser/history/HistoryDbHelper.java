@@ -65,11 +65,7 @@ public class HistoryDbHelper extends SQLiteOpenHelper {
     }
 
     public static boolean isInternalHomeUrl(String url) {
-        if (url == null) return false;
-        String trimmed = url.trim();
-        return trimmed.equals("file:///android_asset/home.html")
-                || trimmed.startsWith("file:///android_asset/home.html")
-                || trimmed.startsWith("file:///android_asset/");
+        return com.privacy.browser.InternalHome.ownsHost(url) || (url != null && url.startsWith("file:///android_asset/"));
     }
 
     public synchronized List<HistoryModel> getAllHistory(int limit) {

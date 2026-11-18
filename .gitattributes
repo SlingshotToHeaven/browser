@@ -1,0 +1,5 @@
+# Keep the Unix and Windows wrapper launchers usable on their respective platforms.
+/gradlew text eol=lf
+/gradlew.bat text eol=crlf
+# Nested unified patches preserve baseline context verbatim (including space-prefixed blank lines).
+/tests/fixtures/perf_baselines/*.patch text eol=lf -whitespace

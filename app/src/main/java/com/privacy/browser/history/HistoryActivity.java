@@ -32,6 +32,8 @@ import androidx.annotation.Nullable;
 import com.privacy.browser.MainActivity;
 import com.privacy.browser.R;
 import com.privacy.browser.ThemeManager;
+import com.privacy.browser.favicon.FaviconManager;
+import com.privacy.browser.images.ImageBinding;
 
 import java.net.URI;
 import java.text.SimpleDateFormat;
@@ -43,7 +45,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
-import com.privacy.browser.ThemeManager;
 import java.util.concurrent.Executors;
 
 public class HistoryActivity extends Activity {
@@ -227,6 +228,7 @@ public class HistoryActivity extends Activity {
 
         adapter = new HistoryAdapter();
         listView.setAdapter(adapter);
+        listView.setRecyclerListener(adapter::recycleImages);
 
         btnClearAll.setOnClickListener(v -> showClearHistoryScopeDialog());
 
@@ -866,6 +868,14 @@ public class HistoryActivity extends Activity {
             }
         }
 
+        void recycleImages(View view) {
+            if (view.getTag() instanceof EntryViewHolder) {
+                EntryViewHolder holder = (EntryViewHolder) view.getTag();
+                holder.images.clear();
+                holder.favicon.setImageDrawable(null);
+            }
+        }
+
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
             ListItem listItem = getItem(position);
@@ -952,37 +962,22 @@ public class HistoryActivity extends Activity {
             boolean isSearching = editSearch.getText() != null && !editSearch.getText().toString().trim().isEmpty();
             holder.date.setText(formatClusterTime(cluster, isSearching));
 
-            // Smart Favicon with Monogram Fallback
-            final String domainKey = com.privacy.browser.favicon.FaviconManager.extractDomain(cluster.url);
-            holder.favicon.setTag(domainKey);
-
-            android.graphics.Bitmap cachedFavicon = com.privacy.browser.favicon.FaviconManager.getInstance(HistoryActivity.this).getCachedFavicon(domainKey);
-            if (cachedFavicon != null) {
-                holder.favicon.setImageBitmap(cachedFavicon);
-                holder.favicon.setVisibility(View.VISIBLE);
-                holder.monogram.setVisibility(View.GONE);
-            } else {
-                holder.favicon.setVisibility(View.GONE);
+            ImageBinding.Bound binding = holder.images.bind();
+            holder.favicon.setImageDrawable(null);
+            holder.favicon.setVisibility(View.GONE);
+            holder.monogram.setVisibility(View.GONE);
+            if (!isSelectionMode) {
+                String label = host.isEmpty() ? title : host;
+                holder.monogram.setText(label == null || label.isEmpty() ? "?" : label.substring(0, 1).toUpperCase(Locale.US));
+                holder.monogram.setTextColor(MONOGRAM_COLORS[Math.floorMod(host.hashCode(), MONOGRAM_COLORS.length)]);
                 holder.monogram.setVisibility(View.VISIBLE);
 
-                String initial = "?";
-                if (!host.isEmpty()) {
-                    initial = host.substring(0, 1).toUpperCase(Locale.US);
-                } else if (title != null && !title.isEmpty()) {
-                    initial = title.substring(0, 1).toUpperCase(Locale.US);
-                }
-                holder.monogram.setText(initial);
-                int colorIndex = Math.abs(host.hashCode()) % MONOGRAM_COLORS.length;
-                holder.monogram.setTextColor(MONOGRAM_COLORS[colorIndex]);
-
-                // Asynchronously fetch icon for domain in background
-                com.privacy.browser.favicon.FaviconManager.getInstance(HistoryActivity.this).loadFaviconAsync(cluster.url, (loadedDomain, bmp) -> {
-                    if (domainKey.equals(holder.favicon.getTag())) {
-                        holder.favicon.setImageBitmap(bmp);
-                        holder.favicon.setVisibility(View.VISIBLE);
-                        holder.monogram.setVisibility(View.GONE);
-                    }
-                });
+                FaviconManager.getInstance(HistoryActivity.this).loadCachedFavicon(FaviconManager.extractDomain(cluster.url),
+                        binding.whileCurrent(() -> !isFinishing() && !isDestroyed() && !isSelectionMode, bitmap -> {
+                            holder.favicon.setImageBitmap(bitmap);
+                            holder.favicon.setVisibility(View.VISIBLE);
+                            holder.monogram.setVisibility(View.GONE);
+                        }));
             }
 
             if (isSelectionMode) {
@@ -999,7 +994,7 @@ public class HistoryActivity extends Activity {
                 }
                 if (isSelected) {
                     boolean isDarkTheme = ThemeManager.isAppDarkTheme(HistoryActivity.this);
-holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_history_selected_row : R.drawable.bg_history_selected_row_light);
+                    holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_history_selected_row : R.drawable.bg_history_selected_row_light);
                 } else {
                     holder.root.setBackgroundColor(Color.TRANSPARENT);
                 }
@@ -1015,13 +1010,6 @@ holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_history_selected_r
                 }
             } else {
                 if (holder.icon != null) holder.icon.setVisibility(View.GONE);
-                if (cachedFavicon != null) {
-                    holder.favicon.setVisibility(View.VISIBLE);
-                    holder.monogram.setVisibility(View.GONE);
-                } else {
-                    holder.favicon.setVisibility(View.GONE);
-                    holder.monogram.setVisibility(View.VISIBLE);
-                }
                 if (holder.checkBox != null) holder.checkBox.setVisibility(View.GONE);
                 if (holder.leadingContainer != null) holder.leadingContainer.setOnClickListener(null);
 
@@ -1069,6 +1057,7 @@ holder.root.setBackgroundResource(isDarkTheme ? R.drawable.bg_history_selected_r
         }
 
         private class EntryViewHolder {
+            final ImageBinding images = new ImageBinding();
             View root;
             FrameLayout leadingContainer;
             ImageView icon;

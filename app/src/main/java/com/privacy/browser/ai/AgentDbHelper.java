@@ -4,22 +4,26 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteException;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.util.Log;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
+import java.io.File;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-public class AgentDbHelper extends SQLiteOpenHelper {
+public class AgentDbHelper extends SQLiteOpenHelper implements AgentSessionManager.Transcript {
 
     private static final String TAG = "AgentDbHelper";
     private static final String DATABASE_NAME = "agent_chat.db";
-    private static final int DATABASE_VERSION = 1;
+    private static final int DATABASE_VERSION = 2;
+    private static final int MAX_PROJECTED_ATTACHMENTS = 32_768;
+    private static final int MESSAGE_EXCERPT_CHARS = 32_768;
+    static final String ADD_IMAGE_PATH = "ALTER TABLE messages ADD COLUMN image_path TEXT";
+    static final String DROP_RETIRED_CONTEXT = "DROP TABLE IF EXISTS contexts";
+    static final String CLEAR_RETIRED_ARGS = "UPDATE messages SET tool_args = NULL WHERE tool_args IS NOT NULL";
 
     // Table: sessions
     public static final String TABLE_SESSIONS = "sessions";
@@ -42,23 +46,21 @@ public class AgentDbHelper extends SQLiteOpenHelper {
     public static final String COL_MSG_IMAGE_PATH = "image_path";
     public static final String COL_MSG_CREATED_AT = "created_at";
 
-    // Table: contexts
-    public static final String TABLE_CONTEXTS = "contexts";
-    public static final String COL_CTX_SESSION_ID = "session_id";
-    public static final String COL_CTX_RAW_JSON = "raw_contents_json";
-    public static final String COL_CTX_PENDING_MODEL = "pending_model_content";
-
     private static AgentDbHelper instance;
+    private final File filesDir;
 
     public static synchronized AgentDbHelper getInstance(Context context) {
         if (instance == null) {
-            instance = new AgentDbHelper(context.getApplicationContext());
+            Context app = context.getApplicationContext();
+            instance = new AgentDbHelper(app, DATABASE_NAME, app.getFilesDir());
         }
         return instance;
     }
 
-    private AgentDbHelper(Context context) {
-        super(context, DATABASE_NAME, null, DATABASE_VERSION);
+    // The instrumentation fixture opens an isolated legacy database and attachment directory.
+    AgentDbHelper(Context context, String databaseName, File filesDir) {
+        super(context, databaseName, null, DATABASE_VERSION);
+        this.filesDir = filesDir;
     }
 
     @Override
@@ -86,51 +88,24 @@ public class AgentDbHelper extends SQLiteOpenHelper {
 
         String createIndex = "CREATE INDEX idx_msg_session ON " + TABLE_MESSAGES + " (" + COL_MSG_SESSION_ID + ");";
 
-        String createContexts = "CREATE TABLE " + TABLE_CONTEXTS + " ("
-                + COL_CTX_SESSION_ID + " TEXT PRIMARY KEY, "
-                + COL_CTX_RAW_JSON + " TEXT NOT NULL, "
-                + COL_CTX_PENDING_MODEL + " TEXT"
-                + ");";
-
         db.execSQL(createSessions);
         db.execSQL(createMessages);
         db.execSQL(createIndex);
-        db.execSQL(createContexts);
-    }
-
-    @Override
-    public void onOpen(SQLiteDatabase db) {
-        super.onOpen(db);
-        // Ensure backwards compatibility for existing tables
-        Cursor cursor = null;
-        try {
-            cursor = db.rawQuery("PRAGMA table_info(" + TABLE_MESSAGES + ")", null);
-            boolean hasImagePath = false;
-            if (cursor != null) {
-                int nameIdx = cursor.getColumnIndex("name");
-                while (cursor.moveToNext()) {
-                    if (COL_MSG_IMAGE_PATH.equalsIgnoreCase(cursor.getString(nameIdx))) {
-                        hasImagePath = true;
-                        break;
-                    }
-                }
-            }
-            if (!hasImagePath) {
-                db.execSQL("ALTER TABLE " + TABLE_MESSAGES + " ADD COLUMN " + COL_MSG_IMAGE_PATH + " TEXT;");
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to check or alter image_path column", e);
-        } finally {
-            if (cursor != null) cursor.close();
-        }
+        // Fresh installs do not create the retired provider context table.
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_MESSAGES);
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_CONTEXTS);
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_SESSIONS);
-        onCreate(db);
+        if (oldVersion != 1 || newVersion != 2) throw new SQLiteException("Unsupported assistant database upgrade");
+        // Some v1 installs created messages before the image_path column existed. Do not
+        // drop or rebuild either transcript table; the owner can remove old replay data later.
+        try (Cursor columns = db.rawQuery("PRAGMA table_info(messages)", null)) {
+            int name = columns.getColumnIndexOrThrow("name");
+            while (columns.moveToNext()) {
+                if (COL_MSG_IMAGE_PATH.equalsIgnoreCase(columns.getString(name))) return;
+            }
+        }
+        db.execSQL(ADD_IMAGE_PATH);
     }
 
     public static class SessionRecord {
@@ -154,7 +129,7 @@ public class AgentDbHelper extends SQLiteOpenHelper {
     // Session Operations
     // -------------------------------------------------------------------------
 
-    public synchronized void createSession(String sessionId, String title) {
+    @Override public synchronized void createSession(String sessionId, String title) {
         SQLiteDatabase db = getWritableDatabase();
         long now = System.currentTimeMillis();
 
@@ -173,7 +148,7 @@ public class AgentDbHelper extends SQLiteOpenHelper {
         db.insertWithOnConflict(TABLE_SESSIONS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
-    public synchronized void updateSessionTitle(String sessionId, String title) {
+    @Override public synchronized void updateSessionTitle(String sessionId, String title) {
         if (sessionId == null || title == null) return;
         SQLiteDatabase db = getWritableDatabase();
         ContentValues values = new ContentValues();
@@ -182,7 +157,7 @@ public class AgentDbHelper extends SQLiteOpenHelper {
         db.update(TABLE_SESSIONS, values, COL_SESSION_ID + " = ?", new String[]{sessionId});
     }
 
-    public synchronized void setActiveSession(String sessionId) {
+    @Override public synchronized void setActiveSession(String sessionId) {
         if (sessionId == null) return;
         SQLiteDatabase db = getWritableDatabase();
         ContentValues deactive = new ContentValues();
@@ -195,7 +170,7 @@ public class AgentDbHelper extends SQLiteOpenHelper {
         db.update(TABLE_SESSIONS, active, COL_SESSION_ID + " = ?", new String[]{sessionId});
     }
 
-    public synchronized String getActiveSessionId() {
+    @Override public synchronized String getActiveSessionId() {
         SQLiteDatabase db = getReadableDatabase();
         Cursor cursor = null;
         try {
@@ -268,61 +243,92 @@ public class AgentDbHelper extends SQLiteOpenHelper {
         return 0;
     }
 
-    public synchronized Set<String> getAllReferencedAttachmentPaths() {
-        Set<String> set = new HashSet<>();
-        SQLiteDatabase db = getReadableDatabase();
-        Cursor cursor = null;
-        try {
-            cursor = db.query(TABLE_MESSAGES, new String[]{COL_MSG_IMAGE_PATH},
-                    COL_MSG_IMAGE_PATH + " IS NOT NULL", null, null, null, null);
-            if (cursor != null && cursor.moveToFirst()) {
-                do {
-                    String path = cursor.getString(0);
-                    if (path != null && !path.isEmpty()) {
-                        set.add(path);
-                    }
-                } while (cursor.moveToNext());
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error querying referenced image paths", e);
-        } finally {
-            if (cursor != null) cursor.close();
+    @Override public void deleteSession(String sessionId) {
+        if (sessionId == null) return;
+        String[] args = {sessionId};
+        Set<String> candidates;
+        synchronized (this) {
+            SQLiteDatabase db = getWritableDatabase();
+            db.beginTransaction();
+            try {
+                candidates = attachmentNames(db, sessionId);
+                db.delete(TABLE_MESSAGES, COL_MSG_SESSION_ID + " = ?", args);
+                try (Cursor row = db.rawQuery("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'contexts'", null)) {
+                    if (row.moveToFirst()) db.delete("contexts", COL_SESSION_ID + " = ?", args);
+                }
+                db.delete(TABLE_SESSIONS, COL_SESSION_ID + " = ?", args);
+                db.setTransactionSuccessful();
+            } finally { db.endTransaction(); }
         }
-        return set;
+        // No file disappears before the corresponding row deletion commits. Other chats
+        // can reference the same file under a different spelling of the private path.
+        if (candidates != null && !candidates.isEmpty()) AgentAttachmentManager.pruneDeletedSession(this, candidates);
     }
 
-    public synchronized void deleteSession(String sessionId) {
-        if (sessionId == null) return;
-        SQLiteDatabase db = getWritableDatabase();
-
-        // Delete associated image files from disk
-        Cursor cursor = null;
-        try {
-            cursor = db.query(TABLE_MESSAGES, new String[]{COL_MSG_IMAGE_PATH},
-                    COL_MSG_SESSION_ID + " = ? AND " + COL_MSG_IMAGE_PATH + " IS NOT NULL",
-                    new String[]{sessionId}, null, null, null);
-            if (cursor != null && cursor.moveToFirst()) {
-                do {
-                    String path = cursor.getString(0);
-                    AgentAttachmentManager.deleteAttachment(path);
-                } while (cursor.moveToNext());
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error cleaning image attachments for session: " + sessionId, e);
-        } finally {
-            if (cursor != null) cursor.close();
+    @Override public synchronized String getSessionTitle(String sessionId) {
+        try (Cursor row = getReadableDatabase().query(TABLE_SESSIONS, new String[]{COL_TITLE},
+                COL_SESSION_ID + " = ?", new String[]{sessionId}, null, null, null, "1")) {
+            return row.moveToFirst() ? row.getString(0) : null;
         }
+    }
 
-        db.delete(TABLE_MESSAGES, COL_MSG_SESSION_ID + " = ?", new String[]{sessionId});
-        db.delete(TABLE_CONTEXTS, COL_CTX_SESSION_ID + " = ?", new String[]{sessionId});
-        db.delete(TABLE_SESSIONS, COL_SESSION_ID + " = ?", new String[]{sessionId});
+    static final class LegacyCleanup {
+        final boolean replayCleared;
+        final AgentLegacyFiles.Sweep files;
+
+        LegacyCleanup(boolean replayCleared, AgentLegacyFiles.Sweep files) {
+            this.replayCleared = replayCleared;
+            this.files = files;
+        }
+    }
+
+    /** Explicit local maintenance, called off the UI thread. Never reads old JSON or image bytes. */
+    LegacyCleanup clearLegacyData() {
+        boolean replayCleared = false;
+        try {
+            SQLiteDatabase db = getWritableDatabase();
+            db.beginTransaction();
+            try {
+                db.execSQL(DROP_RETIRED_CONTEXT);
+                db.execSQL(CLEAR_RETIRED_ARGS);
+                db.setTransactionSuccessful();
+            } finally { db.endTransaction(); }
+            replayCleared = true;
+            return new LegacyCleanup(true, pruneUnusedImages(null));
+        } catch (RuntimeException unavailable) {
+            // Acknowledge only operations that completed, without logging stored data or paths.
+            return new LegacyCleanup(replayCleared, new AgentLegacyFiles.Sweep(0, false));
+        }
+    }
+
+    AgentLegacyFiles.Sweep pruneUnusedImages(Set<String> candidates) {
+        // New messages never add attachment references, so a complete snapshot is conservative
+        // even if a chat is deleted after this read. No file work is inside a DB transaction.
+        return AgentLegacyFiles.removeUnused(filesDir, attachmentNames(getReadableDatabase(), null), candidates);
+    }
+
+    private static Set<String> attachmentNames(SQLiteDatabase db, String sessionId) {
+        // Project at most a filename per row, even for old/corrupt multi-megabyte values.
+        String sql = "SELECT DISTINCT substr(rtrim(image_path, '/'), -" + AgentLegacyFiles.MAX_NAME_LENGTH
+                + ") FROM messages WHERE image_path IS NOT NULL"
+                + (sessionId == null ? "" : " AND session_id = ?") + " LIMIT " + (MAX_PROJECTED_ATTACHMENTS + 1);
+        Set<String> names = new HashSet<>();
+        try (Cursor rows = db.rawQuery(sql, sessionId == null ? null : new String[]{sessionId})) {
+            int count = 0;
+            while (rows.moveToNext()) {
+                if (++count > MAX_PROJECTED_ATTACHMENTS) return null;
+                String name = AgentLegacyFiles.referenceName(rows.getString(0));
+                if (name != null) names.add(name);
+            }
+        }
+        return names;
     }
 
     // -------------------------------------------------------------------------
     // Message Operations
     // -------------------------------------------------------------------------
 
-    public synchronized void insertMessage(String sessionId, AiChatAdapter.ChatMessage message) {
+    @Override public synchronized void insertMessage(String sessionId, AiChatAdapter.ChatMessage message) {
         if (sessionId == null || message == null) return;
         // Do not persist transient thinking state
         if (message.type == AiChatAdapter.TYPE_THINKING) return;
@@ -335,10 +341,9 @@ public class AgentDbHelper extends SQLiteOpenHelper {
         values.put(COL_MSG_TYPE, message.type);
         values.put(COL_MSG_CONTENT, message.content);
         values.put(COL_MSG_TOOL_NAME, message.toolName);
-        values.put(COL_MSG_TOOL_ARGS, message.toolArgs != null ? message.toolArgs.toString() : null);
         values.put(COL_MSG_IN_PROGRESS, message.inProgress ? 1 : 0);
-        values.put(COL_MSG_IS_RESOLVED, message.isResolved ? 1 : 0);
-        values.put(COL_MSG_IMAGE_PATH, message.imagePath);
+        values.put(COL_MSG_IS_RESOLVED, 1); // legacy column; saved messages never authorize an action
+        // Existing paths are read-only legacy references. No new attachment can be saved.
         values.put(COL_MSG_CREATED_AT, now);
 
         db.insert(TABLE_MESSAGES, null, values);
@@ -349,131 +354,46 @@ public class AgentDbHelper extends SQLiteOpenHelper {
         db.update(TABLE_SESSIONS, sVal, COL_SESSION_ID + " = ?", new String[]{sessionId});
     }
 
-    public synchronized void updateLastToolMessage(String sessionId, String summaryText) {
-        if (sessionId == null) return;
-        SQLiteDatabase db = getWritableDatabase();
-        Cursor cursor = null;
-        try {
-            cursor = db.query(TABLE_MESSAGES, new String[]{COL_MSG_ID},
-                    COL_MSG_SESSION_ID + " = ? AND " + COL_MSG_TYPE + " = ?",
-                    new String[]{sessionId, String.valueOf(AiChatAdapter.TYPE_TOOL)},
-                    null, null, COL_MSG_ID + " DESC", "1");
-            if (cursor != null && cursor.moveToFirst()) {
-                long lastId = cursor.getLong(0);
-                ContentValues v = new ContentValues();
-                v.put(COL_MSG_CONTENT, summaryText);
-                v.put(COL_MSG_IN_PROGRESS, 0);
-                db.update(TABLE_MESSAGES, v, COL_MSG_ID + " = ?", new String[]{String.valueOf(lastId)});
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error updating last tool message in DB", e);
-        } finally {
-            if (cursor != null) cursor.close();
-        }
-    }
-
-    public synchronized List<AiChatAdapter.ChatMessage> getMessages(String sessionId) {
+    @Override public synchronized List<AiChatAdapter.ChatMessage> getMessages(String sessionId) {
         List<AiChatAdapter.ChatMessage> list = new ArrayList<>();
         if (sessionId == null) return list;
 
         SQLiteDatabase db = getReadableDatabase();
         Cursor cursor = null;
         try {
-            cursor = db.query(TABLE_MESSAGES, null, COL_MSG_SESSION_ID + " = ?",
+            // Avoid reading an oversized legacy row into CursorWindow. Stored text is unchanged.
+            String[] projection = {COL_MSG_TYPE, "substr(content, 1, " + (MESSAGE_EXCERPT_CHARS + 1) + ") AS content",
+                    "substr(tool_name, 1, 64) AS tool_name", COL_MSG_IN_PROGRESS,
+                    "CASE WHEN length(image_path) <= 1024 THEN image_path ELSE NULL END AS image_path"};
+            cursor = db.query(TABLE_MESSAGES, projection, COL_MSG_SESSION_ID + " = ?",
                     new String[]{sessionId}, null, null, COL_MSG_ID + " ASC");
             if (cursor != null && cursor.moveToFirst()) {
                 int typeIdx = cursor.getColumnIndexOrThrow(COL_MSG_TYPE);
                 int contentIdx = cursor.getColumnIndexOrThrow(COL_MSG_CONTENT);
                 int toolNameIdx = cursor.getColumnIndexOrThrow(COL_MSG_TOOL_NAME);
-                int toolArgsIdx = cursor.getColumnIndexOrThrow(COL_MSG_TOOL_ARGS);
                 int inProgressIdx = cursor.getColumnIndexOrThrow(COL_MSG_IN_PROGRESS);
-                int resolvedIdx = cursor.getColumnIndexOrThrow(COL_MSG_IS_RESOLVED);
                 int imagePathIdx = cursor.getColumnIndex(COL_MSG_IMAGE_PATH);
 
                 do {
                     int type = cursor.getInt(typeIdx);
                     String content = cursor.getString(contentIdx);
+                    if (content != null && content.codePointCount(0, content.length()) > MESSAGE_EXCERPT_CHARS) {
+                        content = content.substring(0, content.offsetByCodePoints(0, MESSAGE_EXCERPT_CHARS)) + "\n[Message excerpt]";
+                    }
                     String toolName = cursor.getString(toolNameIdx);
-                    String toolArgsStr = cursor.getString(toolArgsIdx);
                     boolean inProgress = cursor.getInt(inProgressIdx) == 1;
-                    boolean isResolved = cursor.getInt(resolvedIdx) == 1;
+                    if (inProgress) content = (content == null ? "" : content + " — ") + "Interrupted; outcome unknown";
                     String imagePath = imagePathIdx != -1 ? cursor.getString(imagePathIdx) : null;
 
-                    JSONObject toolArgs = null;
-                    if (toolArgsStr != null && !toolArgsStr.isEmpty()) {
-                        try {
-                            toolArgs = new JSONObject(toolArgsStr);
-                        } catch (Exception ignored) {
-                        }
-                    }
-
-                    AiChatAdapter.ChatMessage msg = new AiChatAdapter.ChatMessage(type, content, toolName, toolArgs, inProgress, imagePath);
-                    msg.isResolved = isResolved;
+                    AiChatAdapter.ChatMessage msg = new AiChatAdapter.ChatMessage(type, content, toolName, false, imagePath);
                     list.add(msg);
                 } while (cursor.moveToNext());
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error fetching messages for session", e);
+            Log.e(TAG, "Could not read assistant transcript: " + e.getClass().getSimpleName());
         } finally {
             if (cursor != null) cursor.close();
         }
         return list;
-    }
-
-    // -------------------------------------------------------------------------
-    // Context Operations (Raw Gemini conversationContents)
-    // -------------------------------------------------------------------------
-
-    public synchronized void saveContext(String sessionId, JSONArray conversationContents, JSONObject pendingModelContent) {
-        if (sessionId == null || conversationContents == null) return;
-        SQLiteDatabase db = getWritableDatabase();
-        ContentValues values = new ContentValues();
-        values.put(COL_CTX_SESSION_ID, sessionId);
-        values.put(COL_CTX_RAW_JSON, conversationContents.toString());
-        values.put(COL_CTX_PENDING_MODEL, pendingModelContent != null ? pendingModelContent.toString() : null);
-
-        db.insertWithOnConflict(TABLE_CONTEXTS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
-    }
-
-    public synchronized JSONArray getContext(String sessionId) {
-        if (sessionId == null) return new JSONArray();
-        SQLiteDatabase db = getReadableDatabase();
-        Cursor cursor = null;
-        try {
-            cursor = db.query(TABLE_CONTEXTS, new String[]{COL_CTX_RAW_JSON},
-                    COL_CTX_SESSION_ID + " = ?", new String[]{sessionId}, null, null, null);
-            if (cursor != null && cursor.moveToFirst()) {
-                String rawJson = cursor.getString(0);
-                if (rawJson != null && !rawJson.isEmpty()) {
-                    return new JSONArray(rawJson);
-                }
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error loading conversation context", e);
-        } finally {
-            if (cursor != null) cursor.close();
-        }
-        return new JSONArray();
-    }
-
-    public synchronized JSONObject getPendingModelContent(String sessionId) {
-        if (sessionId == null) return null;
-        SQLiteDatabase db = getReadableDatabase();
-        Cursor cursor = null;
-        try {
-            cursor = db.query(TABLE_CONTEXTS, new String[]{COL_CTX_PENDING_MODEL},
-                    COL_CTX_SESSION_ID + " = ?", new String[]{sessionId}, null, null, null);
-            if (cursor != null && cursor.moveToFirst()) {
-                String raw = cursor.getString(0);
-                if (raw != null && !raw.isEmpty()) {
-                    return new JSONObject(raw);
-                }
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error loading pending model content", e);
-        } finally {
-            if (cursor != null) cursor.close();
-        }
-        return null;
     }
 }

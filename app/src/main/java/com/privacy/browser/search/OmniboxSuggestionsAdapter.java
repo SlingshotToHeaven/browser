@@ -18,12 +18,14 @@ public class OmniboxSuggestionsAdapter extends BaseAdapter {
 
     private final Context context;
     private final List<OmniboxSuggestion> items = new ArrayList<>();
+    private long firstRowId;
 
     public OmniboxSuggestionsAdapter(Context context) {
         this.context = context;
     }
 
     public void updateItems(List<OmniboxSuggestion> newItems) {
+        firstRowId += items.size();
         items.clear();
         if (newItems != null) {
             items.addAll(newItems);
@@ -32,8 +34,17 @@ public class OmniboxSuggestionsAdapter extends BaseAdapter {
     }
 
     public void clear() {
-        items.clear();
-        notifyDataSetChanged();
+        updateItems(null);
+    }
+
+    /** A queued click must refer to the same list publication and the view bound to that row. */
+    public OmniboxSuggestion clickedItem(View view, int position, long id) {
+        if (position < 0 || position >= items.size() || id != getItemId(position) || view == null) return null;
+        Object tag = view.getTag();
+        if (!(tag instanceof ViewHolder)) return null;
+        ViewHolder holder = (ViewHolder) tag;
+        OmniboxSuggestion item = getItem(position);
+        return holder.id == id && holder.item == item ? item : null;
     }
 
     @Override
@@ -48,7 +59,7 @@ public class OmniboxSuggestionsAdapter extends BaseAdapter {
 
     @Override
     public long getItemId(int position) {
-        return position;
+        return firstRowId + position;
     }
 
     @Override
@@ -67,6 +78,8 @@ public class OmniboxSuggestionsAdapter extends BaseAdapter {
         }
 
         OmniboxSuggestion item = getItem(position);
+        holder.id = getItemId(position);
+        holder.item = item;
         holder.title.setText(item.getTitle());
         holder.subtitle.setText(item.getSubtitle());
 
@@ -107,6 +120,8 @@ public class OmniboxSuggestionsAdapter extends BaseAdapter {
     }
 
     private static class ViewHolder {
+        long id;
+        OmniboxSuggestion item;
         ImageView icon;
         TextView title;
         TextView subtitle;

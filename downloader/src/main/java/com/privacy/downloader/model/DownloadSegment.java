@@ -65,12 +65,8 @@ public class DownloadSegment implements Serializable {
     }
 
     public synchronized boolean isComplete() {
-        if (endByte < startByte && endByte > 0) {
-            return false;
-        }
-        if (endByte <= 0) {
-            return status == DownloadStatus.COMPLETED;
-        }
-        return currentByte > endByte || status == DownloadStatus.COMPLETED;
+        if (status != DownloadStatus.COMPLETED) return false;
+        return endByte == -1 ? currentByte > startByte
+                : endByte >= startByte && currentByte > startByte && currentByte - 1 == endByte;
     }
 }

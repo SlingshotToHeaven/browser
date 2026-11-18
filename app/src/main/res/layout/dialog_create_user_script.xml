@@ -200,7 +200,7 @@
                     android:id="@+id/tv_title_doc_start"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="document-start (Early / Pre-load)"
+                    android:text="After page commit"
                     android:textColor="?attr/textPrimary"
                     android:textSize="13sp"
                     android:fontFamily="sans-serif-medium" />
@@ -208,7 +208,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Runs before page scripts execute. Required for window.open, ytInitialPlayerResponse, adsbygoogle, and fetch hooks."
+                    android:text="Runs in the main frame after navigation commits. Page scripts may already have run."
                     android:textColor="?attr/textSecondary"
                     android:textSize="11sp"
                     android:layout_marginTop="2dp" />
@@ -247,7 +247,7 @@
                     android:id="@+id/tv_title_doc_end"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="document-end (DOM Ready / Page Loaded)"
+                    android:text="After page load"
                     android:textColor="?attr/textPrimary"
                     android:textSize="13sp"
                     android:fontFamily="sans-serif-medium" />
@@ -255,7 +255,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Runs after HTML is parsed and DOM is loaded. Best for MutationObserver, DOM banner pruning, and cosmetic tweaks."
+                    android:text="Runs in the main frame after the page finishes loading."
                     android:textColor="?attr/textSecondary"
                     android:textSize="11sp"
                     android:layout_marginTop="2dp" />

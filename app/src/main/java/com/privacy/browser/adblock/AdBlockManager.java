@@ -3,18 +3,11 @@ package com.privacy.browser.adblock;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.Uri;
-import android.util.Log;
+import android.os.Trace;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -24,28 +17,27 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * uBlock-grade central ad-blocking, cosmetic filtering, and anti-adblock coordination engine.
  */
 public class AdBlockManager {
 
-    private static final String TAG = "AdBlockManager";
     private static final String PREFS_NAME = "adblock_preferences";
     private static final String KEY_GLOBAL_ENABLED = "adblock_global_enabled";
     private static final String KEY_COSMETIC_ENABLED = "adblock_cosmetic_enabled";
     private static final String KEY_ANTI_ADBLOCK_ENABLED = "adblock_anti_adblock_enabled";
     private static final String KEY_ANNOYANCES_ENABLED = "adblock_annoyances_enabled";
     private static final String KEY_TOTAL_BLOCKED = "adblock_total_blocked";
-    private static final String KEY_TOTAL_REQUESTS = "adblock_total_requests";
     private static final String KEY_WHITELISTED_HOSTS = "adblock_whitelisted_hosts";
     private static final String KEY_SITE_NO_SCRIPT = "adblock_site_no_script";
     private static final String KEY_SITE_BLOCK_FONTS = "adblock_site_block_fonts";
     private static final String KEY_SITE_BLOCK_MEDIA = "adblock_site_block_media";
     private static final String KEY_SITE_BLOCK_POPUPS = "adblock_site_block_popups";
     private static final String KEY_SITE_DISABLE_COSMETIC = "adblock_site_disable_cosmetic";
-    private static final String HOSTS_FILE = "filters/hosts.txt";
 
     public static class AntiAdblockEvent {
         public final String name;
@@ -74,119 +66,78 @@ public class AdBlockManager {
 
     private final Context context;
     private final SharedPreferences prefs;
-    private volatile Set<String> blockedHosts = new HashSet<>(135000, 0.75f);
-    private final Set<String> whitelistedHosts = Collections.synchronizedSet(new HashSet<>());
+    private volatile SiteRequestPolicy.Settings requestSettings;
     private final Set<String> siteNoScriptHosts = Collections.synchronizedSet(new HashSet<>());
-    private final Set<String> siteBlockFontsHosts = Collections.synchronizedSet(new HashSet<>());
-    private final Set<String> siteBlockMediaHosts = Collections.synchronizedSet(new HashSet<>());
     private final Set<String> siteBlockPopupsHosts = Collections.synchronizedSet(new HashSet<>());
     private final Set<String> siteDisableCosmeticHosts = Collections.synchronizedSet(new HashSet<>());
-    private boolean isLoaded = false;
 
-    private final AtomicLong totalBlockedAllTime = new AtomicLong(0);
-    private final AtomicLong totalRequestsAllTime = new AtomicLong(0);
+    private static final ScheduledExecutorService COUNTER_WRITER = Executors.newSingleThreadScheduledExecutor(
+            task -> new Thread(task, "browser-filter-totals"));
+    private final AdBlockTally tally;
 
-    // Per-tab tracking
-    private final Map<String, AtomicInteger> tabBlockedCounts = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> tabTotalRequests = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, Integer>> tabBlockedHosts = new ConcurrentHashMap<>();
-    private final Map<String, List<AntiAdblockEvent>> tabAntiAdblockEvents = new ConcurrentHashMap<>();
+    private static final class PageStats {
+        final AtomicInteger blocked = new AtomicInteger();
+        final AtomicInteger requests = new AtomicInteger();
+        private final Map<String, Integer> hosts = new HashMap<>();
+
+        void block(String host) {
+            blocked.incrementAndGet();
+            synchronized (hosts) {
+                // The admission check and insertion must share the lock, even for different hosts.
+                if (hosts.size() < 512 || hosts.containsKey(host)) hosts.merge(host, 1, Integer::sum);
+            }
+        }
+
+        Map<String, Integer> hostSnapshot() {
+            synchronized (hosts) { return new HashMap<>(hosts); }
+        }
+    }
+
+    private final Map<String, PageStats> pages = new ConcurrentHashMap<>();
 
     private AdBlockManager(@NonNull Context context) {
         this.context = context;
         this.prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        this.totalBlockedAllTime.set(prefs.getLong(KEY_TOTAL_BLOCKED, 0));
-        this.totalRequestsAllTime.set(prefs.getLong(KEY_TOTAL_REQUESTS, 0));
-        Set<String> savedWhitelist = prefs.getStringSet(KEY_WHITELISTED_HOSTS, null);
-        if (savedWhitelist != null) {
-            whitelistedHosts.addAll(savedWhitelist);
-        }
+        requestSettings = new SiteRequestPolicy.Settings(prefs.getBoolean(KEY_GLOBAL_ENABLED, true),
+                prefs.getStringSet(KEY_WHITELISTED_HOSTS, null), prefs.getStringSet(KEY_SITE_BLOCK_FONTS, null),
+                prefs.getStringSet(KEY_SITE_BLOCK_MEDIA, null));
+        tally = new AdBlockTally(prefs.getLong(KEY_TOTAL_BLOCKED, 0),
+                (task, delay) -> COUNTER_WRITER.schedule(task, delay, TimeUnit.MILLISECONDS), this::saveTally);
         Set<String> savedNoScript = prefs.getStringSet(KEY_SITE_NO_SCRIPT, null);
         if (savedNoScript != null) siteNoScriptHosts.addAll(savedNoScript);
-        Set<String> savedFonts = prefs.getStringSet(KEY_SITE_BLOCK_FONTS, null);
-        if (savedFonts != null) siteBlockFontsHosts.addAll(savedFonts);
-        Set<String> savedMedia = prefs.getStringSet(KEY_SITE_BLOCK_MEDIA, null);
-        if (savedMedia != null) siteBlockMediaHosts.addAll(savedMedia);
         Set<String> savedPopups = prefs.getStringSet(KEY_SITE_BLOCK_POPUPS, null);
         if (savedPopups != null) siteBlockPopupsHosts.addAll(savedPopups);
         Set<String> savedCosmetic = prefs.getStringSet(KEY_SITE_DISABLE_COSMETIC, null);
         if (savedCosmetic != null) siteDisableCosmeticHosts.addAll(savedCosmetic);
     }
 
-    public synchronized void initialize() {
-        if (isLoaded) return;
-        reloadRules();
-    }
-
-    @Nullable
-    private static String parseHostLine(@NonNull String raw) {
-        String line = raw.trim().toLowerCase(Locale.US);
-        if (line.isEmpty() || line.startsWith("#") || line.startsWith("!")) {
-            return null;
-        }
-        if (line.startsWith("127.0.0.1 ") || line.startsWith("127.0.0.1\t")) {
-            line = line.substring(9).trim();
-        } else if (line.startsWith("0.0.0.0 ") || line.startsWith("0.0.0.0\t")) {
-            line = line.substring(7).trim();
-        }
-        int commentIdx = line.indexOf('#');
-        if (commentIdx != -1) {
-            line = line.substring(0, commentIdx).trim();
-        }
-        if (line.isEmpty() || line.contains(" ") || line.contains("/")) {
-            return null;
-        }
-        if ("canyoublockit.com".equals(line) || line.endsWith(".canyoublockit.com")
-                || "adblock-tester.com".equals(line) || line.endsWith(".adblock-tester.com")
-                || "d3ward.github.io".equals(line)) {
-            return null;
-        }
-        return line;
-    }
-
-    public synchronized void reloadRules() {
-        Set<String> newBlockedHosts = new HashSet<>(135000, 0.75f);
-        AdBlockFileManager fileManager = AdBlockFileManager.getInstance(context);
-        File hostsFile = fileManager.getFile(AdBlockFileManager.Category.NETWORK, AdBlockFileManager.FILE_HOSTS);
-        if (hostsFile.exists()) {
-            try (FileInputStream fis = new FileInputStream(hostsFile);
-                 BufferedReader reader = new BufferedReader(new InputStreamReader(fis, StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    String parsed = parseHostLine(line);
-                    if (parsed != null) {
-                        newBlockedHosts.add(parsed);
-                    }
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed reading " + hostsFile.getAbsolutePath(), e);
+    /** Warm the exact filter index and first-page script inputs on the browser startup worker. */
+    public void initialize() {
+        AdBlockFileManager.prepareForBrowsing(context);
+        if (!hasNoScriptRules() && isGlobalEnabled()) {
+            if (isAntiAdblockDefuserEnabled()) {
+                YouTubeAdDefuser.prepare(context);
+                AntiAdblockDefuser.getScriptletJs(context);
             }
-        } else {
-            // Fallback to bundled asset
-            try (InputStream is = context.getAssets().open(HOSTS_FILE);
-                 BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    String parsed = parseHostLine(line);
-                    if (parsed != null) {
-                        newBlockedHosts.add(parsed);
-                    }
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed fallback load of " + HOSTS_FILE, e);
-            }
+            if (isCosmeticFilteringEnabled()) AntiAdblockDefuser.getCosmeticJs(context);
+            PopupClickDefuser.getDefuserJs(context);
+            UserScriptManager.getInstance(context).getLoadedScripts();
         }
-        blockedHosts = newBlockedHosts;
-        isLoaded = true;
-        Log.i(TAG, "AdBlock engine loaded " + blockedHosts.size() + " network filtering rules from file.");
     }
 
-    public boolean isGlobalEnabled() {
-        return prefs.getBoolean(KEY_GLOBAL_ENABLED, true);
-    }
+    public boolean isGlobalEnabled() { return requestSettings.enabled; }
 
-    public void setGlobalEnabled(boolean enabled) {
+    public synchronized void setGlobalEnabled(boolean enabled) {
+        SiteRequestPolicy.Settings before = requestSettings;
+        if (before.enabled == enabled) return;
+        requestSettings = new SiteRequestPolicy.Settings(enabled, before.exceptions, before.fonts, before.media);
         prefs.edit().putBoolean(KEY_GLOBAL_ENABLED, enabled).apply();
+        WebScriptPolicy.changed();
+    }
+
+    public SiteRequestPolicy.Cache requestPolicies(@Nullable String topUrl) {
+        AdBlockFileManager files = AdBlockFileManager.getInstance(context);
+        return new SiteRequestPolicy.Cache(topUrl, () -> requestSettings, files::ruleSnapshot, AdBlockManager::extractCleanHost);
     }
 
     public boolean isCosmeticFilteringEnabled() {
@@ -194,7 +145,9 @@ public class AdBlockManager {
     }
 
     public void setCosmeticFilteringEnabled(boolean enabled) {
+        if (prefs.getBoolean(KEY_COSMETIC_ENABLED, true) == enabled) return;
         prefs.edit().putBoolean(KEY_COSMETIC_ENABLED, enabled).apply();
+        WebScriptPolicy.changed();
     }
 
     public boolean isAntiAdblockDefuserEnabled() {
@@ -202,7 +155,9 @@ public class AdBlockManager {
     }
 
     public void setAntiAdblockDefuserEnabled(boolean enabled) {
+        if (prefs.getBoolean(KEY_ANTI_ADBLOCK_ENABLED, true) == enabled) return;
         prefs.edit().putBoolean(KEY_ANTI_ADBLOCK_ENABLED, enabled).apply();
+        WebScriptPolicy.changed();
     }
 
     public boolean isAnnoyanceBlockingEnabled() {
@@ -214,34 +169,35 @@ public class AdBlockManager {
     }
 
     public boolean isAdBlockActiveForSite(@Nullable String urlOrHost) {
-        if (!isGlobalEnabled()) {
-            return false;
-        }
-        if (urlOrHost == null || urlOrHost.trim().isEmpty() || "about:blank".equalsIgnoreCase(urlOrHost.trim())) {
-            return true;
-        }
-        return !isSiteWhitelisted(urlOrHost);
+        SiteRequestPolicy.Settings config = requestSettings;
+        return config.enabled && config.active(urlOrHost, extractCleanHost(urlOrHost));
     }
 
     public boolean isSiteWhitelisted(@Nullable String urlOrHost) {
-        if (urlOrHost == null) return false;
-        String cleanHost = extractCleanHost(urlOrHost);
-        if (cleanHost == null) return false;
-        return whitelistedHosts.contains(cleanHost);
+        String host = extractCleanHost(urlOrHost);
+        return host != null && requestSettings.exceptions.contains(host);
     }
 
-    public void setSiteWhitelisted(@Nullable String urlOrHost, boolean whitelisted) {
-        if (urlOrHost == null) return;
-        String cleanHost = extractCleanHost(urlOrHost);
-        if (cleanHost == null) return;
-
-        if (whitelisted) {
-            whitelistedHosts.add(cleanHost);
-        } else {
-            whitelistedHosts.remove(cleanHost);
-        }
-        prefs.edit().putStringSet(KEY_WHITELISTED_HOSTS, new HashSet<>(whitelistedHosts)).apply();
+    public synchronized void setSiteWhitelisted(@Nullable String urlOrHost, boolean whitelisted) {
+        String host = extractCleanHost(urlOrHost);
+        SiteRequestPolicy.Settings before = requestSettings;
+        Set<String> next = update(before.exceptions, host, whitelisted);
+        if (next == before.exceptions) return;
+        requestSettings = new SiteRequestPolicy.Settings(before.enabled, next, before.fonts, before.media);
+        prefs.edit().putStringSet(KEY_WHITELISTED_HOSTS, next).apply();
+        WebScriptPolicy.changed();
     }
+
+    private static Set<String> update(Set<String> before, String host, boolean present) {
+        if (host == null || before.contains(host) == present) return before;
+        Set<String> next = new HashSet<>(before);
+        if (present) next.add(host);
+        else next.remove(host);
+        return next;
+    }
+
+    boolean hasSiteExceptions() { return !requestSettings.exceptions.isEmpty(); }
+    boolean hasCosmeticExceptions() { return !siteDisableCosmeticHosts.isEmpty(); }
 
     public static String extractCleanHost(String urlOrHost) {
         if (urlOrHost == null) return null;
@@ -260,151 +216,67 @@ public class AdBlockManager {
         return host;
     }
 
-    /**
-     * Determines whether a given subresource request should be blocked.
-     */
+    /** Used by native link actions. Intercepted requests use the view's cached policy. */
     public boolean isBlocked(@Nullable Uri uri, @Nullable String topPageUrl) {
-        if (!isAdBlockActiveForSite(topPageUrl)) return false;
-        if (uri == null || !isLoaded) return false;
-
-        String host = uri.getHost();
-        if (host == null) return false;
-        host = host.toLowerCase(Locale.US);
-
-        if ("localhost".equals(host) || "127.0.0.1".equals(host) || host.startsWith("192.168.") || host.startsWith("10.") || "0.0.0.0".equals(host)) {
-            return false;
-        }
-
-        if ("canyoublockit.com".equals(host) || host.endsWith(".canyoublockit.com")
-                || "adblock-tester.com".equals(host) || host.endsWith(".adblock-tester.com")
-                || "d3ward.github.io".equals(host)) {
-            return false;
-        }
-
-        // Check custom user filters
-        com.privacy.browser.adblock.rules.UserFiltersManager ufm = com.privacy.browser.adblock.rules.UserFiltersManager.getInstance(context);
-        if (ufm.isHostWhitelisted(host)) {
-            return false;
-        }
-        if (ufm.shouldBlockHost(host)) {
-            return true;
-        }
-
-        if (isYouTubeAdRequest(uri, host)) {
-            return true;
-        }
-
-        if (blockedHosts.contains(host)) {
-            return true;
-        }
-
-        int index = host.indexOf('.');
-        while (index != -1 && index < host.length() - 1) {
-            String parent = host.substring(index + 1);
-            if (blockedHosts.contains(parent)) {
-                return true;
-            }
-            index = host.indexOf('.', index + 1);
-        }
-
-        return false;
+        SiteRequestPolicy.Settings config = requestSettings;
+        if (uri == null || !config.enabled) return false;
+        String host = extractCleanHost(topPageUrl);
+        return config.active(topPageUrl, host) && new SiteRequestPolicy(config,
+                AdBlockFileManager.getInstance(context).ruleSnapshot(), topPageUrl, host).blocksNetwork(uri);
     }
 
-    public static boolean isYouTubeAdRequest(@NonNull Uri uri, @NonNull String host) {
-        if (host.contains("youtube.com") || host.contains("youtube-nocookie.com")) {
-            String path = uri.getPath();
-            if (path != null) {
-                String lower = path.toLowerCase(Locale.US);
-                if (lower.contains("/api/stats/ads")
-                        || lower.contains("/pagead/")
-                        || lower.contains("/ptracking")
-                        || lower.contains("/get_midroll_info")) {
-                    return true;
-                }
-            }
-            String query = uri.getQuery();
-            if (query != null && (query.contains("adformat=") || query.contains("ad_cpn="))) {
-                return true;
-            }
-        }
-        return false;
+    private void saveTally(long blocked) {
+        Trace.beginSection("Browser.filters.persistTotals");
+        try {
+            // Only the existing aggregate is durable. Page counts and request denominators stay in memory.
+            prefs.edit().putLong(KEY_TOTAL_BLOCKED, blocked).commit();
+        } finally { Trace.endSection(); }
     }
 
-    public void recordBlockedHost(@Nullable String tabId, @NonNull String host) {
-        totalBlockedAllTime.incrementAndGet();
-        prefs.edit().putLong(KEY_TOTAL_BLOCKED, totalBlockedAllTime.get()).apply();
-
-        if (tabId != null) {
-            tabBlockedCounts.computeIfAbsent(tabId, k -> new AtomicInteger(0)).incrementAndGet();
-            Map<String, Integer> hostMap = tabBlockedHosts.computeIfAbsent(tabId, k -> new ConcurrentHashMap<>());
-            hostMap.put(host, hostMap.getOrDefault(host, 0) + 1);
-        }
-    }
-
-    public void recordNeutralizedAntiAdblock(@Nullable String tabId, @NonNull String detectorName, @NonNull String detail) {
-        if (tabId != null) {
-            List<AntiAdblockEvent> events = tabAntiAdblockEvents.computeIfAbsent(tabId, k -> Collections.synchronizedList(new ArrayList<>()));
-            // Avoid duplicates of the same detector name on the page
-            boolean exists = false;
-            synchronized (events) {
-                for (AntiAdblockEvent ev : events) {
-                    if (ev.name.equalsIgnoreCase(detectorName)) {
-                        exists = true;
-                        break;
-                    }
-                }
-                if (!exists) {
-                    events.add(new AntiAdblockEvent(detectorName, detail));
-                }
-            }
-        }
+    /** Returns true only if the count belongs to a tracked page. */
+    public boolean recordBlockedHost(@Nullable String pageKey, @NonNull String host) {
+        tally.block();
+        PageStats page = pageKey == null ? null : pages.get(pageKey);
+        if (page == null) return false;
+        page.block(host);
+        return true;
     }
 
     public int getPageBlockedCount(@Nullable String tabId) {
-        if (tabId == null) return 0;
-        AtomicInteger count = tabBlockedCounts.get(tabId);
-        return count != null ? count.get() : 0;
+        PageStats page = tabId == null ? null : pages.get(tabId);
+        return page == null ? 0 : page.blocked.get();
     }
 
     public long getTotalBlockedCount() {
-        return totalBlockedAllTime.get();
+        return tally.blocked();
     }
 
     public Map<String, Integer> getBlockedHostsForPage(@Nullable String tabId) {
-        if (tabId == null) return Collections.emptyMap();
-        Map<String, Integer> map = tabBlockedHosts.get(tabId);
-        return map != null ? new HashMap<>(map) : Collections.emptyMap();
+        PageStats page = tabId == null ? null : pages.get(tabId);
+        return page == null ? Collections.emptyMap() : page.hostSnapshot();
     }
 
+    // Page-script telemetry is not a trustworthy signal. Do not retain it as native statistics.
     public List<AntiAdblockEvent> getNeutralizedAntiAdblockForPage(@Nullable String tabId) {
-        if (tabId == null) return Collections.emptyList();
-        List<AntiAdblockEvent> list = tabAntiAdblockEvents.get(tabId);
-        if (list == null) return Collections.emptyList();
-        synchronized (list) {
-            return new ArrayList<>(list);
-        }
+        return Collections.emptyList();
     }
 
-    public void resetPageStats(@Nullable String tabId) {
-        if (tabId != null) {
-            tabBlockedCounts.remove(tabId);
-            tabTotalRequests.remove(tabId);
-            tabBlockedHosts.remove(tabId);
-            tabAntiAdblockEvents.remove(tabId);
-        }
+    public void beginPageStats(String key) {
+        pages.put(key, new PageStats());
+    }
+
+    public void resetPageStats(String key) {
+        pages.remove(key);
     }
 
     public void recordRequest(@Nullable String tabId) {
-        totalRequestsAllTime.incrementAndGet();
-        if (tabId != null) {
-            tabTotalRequests.computeIfAbsent(tabId, k -> new AtomicInteger(0)).incrementAndGet();
-        }
+        PageStats page = tabId == null ? null : pages.get(tabId);
+        if (page != null) page.requests.incrementAndGet();
     }
 
     public int getPageRequestCount(@Nullable String tabId) {
-        if (tabId == null) return 0;
-        AtomicInteger count = tabTotalRequests.get(tabId);
-        return count != null ? count.get() : 0;
+        PageStats page = tabId == null ? null : pages.get(tabId);
+        return page == null ? 0 : page.requests.get();
     }
 
     public int getPageBlockedPercentage(@Nullable String tabId) {
@@ -412,6 +284,17 @@ public class AdBlockManager {
         int blocked = getPageBlockedCount(tabId);
         if (total <= 0) return 0;
         return Math.min(100, (int) Math.round(((double) blocked / (double) total) * 100.0));
+    }
+
+    public void clearNoScriptRules() {
+        if (siteNoScriptHosts.isEmpty()) return;
+        siteNoScriptHosts.clear();
+        prefs.edit().remove(KEY_SITE_NO_SCRIPT).apply();
+        WebScriptPolicy.changed();
+    }
+
+    public boolean hasNoScriptRules() {
+        return !siteNoScriptHosts.isEmpty();
     }
 
     public boolean isSiteJavaScriptEnabled(@Nullable String urlOrHost) {
@@ -423,37 +306,35 @@ public class AdBlockManager {
     public void setSiteJavaScriptEnabled(@Nullable String urlOrHost, boolean enabled) {
         String cleanHost = extractCleanHost(urlOrHost);
         if (cleanHost == null) return;
-        if (!enabled) siteNoScriptHosts.add(cleanHost);
-        else siteNoScriptHosts.remove(cleanHost);
+        if (!(enabled ? siteNoScriptHosts.remove(cleanHost) : siteNoScriptHosts.add(cleanHost))) return;
         prefs.edit().putStringSet(KEY_SITE_NO_SCRIPT, new HashSet<>(siteNoScriptHosts)).apply();
+        WebScriptPolicy.changed();
     }
 
     public boolean isSiteFontsBlocked(@Nullable String urlOrHost) {
-        String cleanHost = extractCleanHost(urlOrHost);
-        if (cleanHost == null) return false;
-        return siteBlockFontsHosts.contains(cleanHost);
+        String host = extractCleanHost(urlOrHost);
+        return host != null && requestSettings.fonts.contains(host);
     }
 
-    public void setSiteFontsBlocked(@Nullable String urlOrHost, boolean blocked) {
-        String cleanHost = extractCleanHost(urlOrHost);
-        if (cleanHost == null) return;
-        if (blocked) siteBlockFontsHosts.add(cleanHost);
-        else siteBlockFontsHosts.remove(cleanHost);
-        prefs.edit().putStringSet(KEY_SITE_BLOCK_FONTS, new HashSet<>(siteBlockFontsHosts)).apply();
+    public synchronized void setSiteFontsBlocked(@Nullable String urlOrHost, boolean blocked) {
+        SiteRequestPolicy.Settings before = requestSettings;
+        Set<String> next = update(before.fonts, extractCleanHost(urlOrHost), blocked);
+        if (next == before.fonts) return;
+        requestSettings = new SiteRequestPolicy.Settings(before.enabled, before.exceptions, next, before.media);
+        prefs.edit().putStringSet(KEY_SITE_BLOCK_FONTS, next).apply();
     }
 
     public boolean isSiteLargeMediaBlocked(@Nullable String urlOrHost) {
-        String cleanHost = extractCleanHost(urlOrHost);
-        if (cleanHost == null) return false;
-        return siteBlockMediaHosts.contains(cleanHost);
+        String host = extractCleanHost(urlOrHost);
+        return host != null && requestSettings.media.contains(host);
     }
 
-    public void setSiteLargeMediaBlocked(@Nullable String urlOrHost, boolean blocked) {
-        String cleanHost = extractCleanHost(urlOrHost);
-        if (cleanHost == null) return;
-        if (blocked) siteBlockMediaHosts.add(cleanHost);
-        else siteBlockMediaHosts.remove(cleanHost);
-        prefs.edit().putStringSet(KEY_SITE_BLOCK_MEDIA, new HashSet<>(siteBlockMediaHosts)).apply();
+    public synchronized void setSiteLargeMediaBlocked(@Nullable String urlOrHost, boolean blocked) {
+        SiteRequestPolicy.Settings before = requestSettings;
+        Set<String> next = update(before.media, extractCleanHost(urlOrHost), blocked);
+        if (next == before.media) return;
+        requestSettings = new SiteRequestPolicy.Settings(before.enabled, before.exceptions, before.fonts, next);
+        prefs.edit().putStringSet(KEY_SITE_BLOCK_MEDIA, next).apply();
     }
 
     public boolean isSitePopupsBlocked(@Nullable String urlOrHost) {
@@ -465,9 +346,9 @@ public class AdBlockManager {
     public void setSitePopupsBlocked(@Nullable String urlOrHost, boolean blocked) {
         String cleanHost = extractCleanHost(urlOrHost);
         if (cleanHost == null) return;
-        if (!blocked) siteBlockPopupsHosts.add(cleanHost);
-        else siteBlockPopupsHosts.remove(cleanHost);
+        if (!(blocked ? siteBlockPopupsHosts.remove(cleanHost) : siteBlockPopupsHosts.add(cleanHost))) return;
         prefs.edit().putStringSet(KEY_SITE_BLOCK_POPUPS, new HashSet<>(siteBlockPopupsHosts)).apply();
+        WebScriptPolicy.changed();
     }
 
     public boolean isSiteCosmeticEnabled(@Nullable String urlOrHost) {
@@ -480,16 +361,16 @@ public class AdBlockManager {
     public void setSiteCosmeticEnabled(@Nullable String urlOrHost, boolean enabled) {
         String cleanHost = extractCleanHost(urlOrHost);
         if (cleanHost == null) return;
-        if (!enabled) siteDisableCosmeticHosts.add(cleanHost);
-        else siteDisableCosmeticHosts.remove(cleanHost);
+        if (!(enabled ? siteDisableCosmeticHosts.remove(cleanHost) : siteDisableCosmeticHosts.add(cleanHost))) return;
         prefs.edit().putStringSet(KEY_SITE_DISABLE_COSMETIC, new HashSet<>(siteDisableCosmeticHosts)).apply();
+        WebScriptPolicy.changed();
     }
 
     public int getRuleCount() {
-        return blockedHosts.size();
+        return AdBlockFileManager.getInstance(context).ruleSnapshot().hostCount();
     }
 
     public int getBlockedHostsCount() {
-        return blockedHosts.size();
+        return AdBlockFileManager.getInstance(context).ruleSnapshot().hostCount();
     }
 }

@@ -35,6 +35,10 @@ Thumbs.db
 # Logs
 *.log
 
+# Python bytecode from the optional bridge and tests
+__pycache__/
+*.py[cod]
+
 # Node / Cloudflare worker temp (if applicable)
 node_modules/
 .wrangler/

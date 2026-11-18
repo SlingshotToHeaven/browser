@@ -9,17 +9,14 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
-import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.IBinder;
-import android.os.Process;
+import android.os.Trace;
 
 import androidx.core.app.NotificationCompat;
 
 import com.privacy.downloader.engine.DownloadEngine;
+import com.privacy.downloader.model.ActiveDownloads;
 import com.privacy.downloader.model.DownloadItem;
-
-import java.util.List;
 
 public class DownloadService extends Service implements DownloadEngine.DownloadListener {
 
@@ -31,84 +28,50 @@ public class DownloadService extends Service implements DownloadEngine.DownloadL
 
     private NotificationManager notificationManager;
     private DownloadEngine engine;
-    private HandlerThread bgThread;
-    private Handler bgHandler;
-    private volatile long sessionStartTime = 0;
-
-    private final Runnable notifTicker = new Runnable() {
-        @Override
-        public void run() {
-            if (engine == null || engine.getActiveTaskCount() == 0) {
-                sessionStartTime = 0;
-                stopForeground(true);
-                stopSelf();
-                return;
-            }
-            if (notificationManager != null) {
-                notificationManager.notify(NOTIFICATION_ID, buildProgressNotification());
-            }
-            if (bgHandler != null) {
-                bgHandler.postDelayed(this, 1000);
-            }
-        }
-    };
-
-    private void scheduleTicker() {
-        if (bgHandler != null) {
-            bgHandler.removeCallbacks(notifTicker);
-            bgHandler.postDelayed(notifTicker, 1000);
-        }
-    }
+    private ActiveDownloads rendered;
+    private PendingIntent openDownloads;
+    private int lastStartId;
+    private boolean foreground;
+    private long sessionStartTime;
 
     @Override
     public void onCreate() {
         super.onCreate();
         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         createNotificationChannel();
+        Intent launch = new Intent(this, com.privacy.downloader.ui.DownloadsActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        openDownloads = PendingIntent.getActivity(this, 0, launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         engine = DownloadEngine.getInstance(this);
         engine.addListener(this);
-
-        bgThread = new HandlerThread("DownloadNotifThread", Process.THREAD_PRIORITY_BACKGROUND);
-        bgThread.start();
-        bgHandler = new Handler(bgThread.getLooper());
-
-        // CRITICAL FOR ANDROID 12/13/14: Call startForeground IMMEDIATELY in onCreate()
-        // to prevent ForegroundServiceDidNotStartInTimeException crashes!
-        startForegroundNotification();
-        scheduleTicker();
+        // Satisfy Android's startForegroundService deadline without waiting for a queue or DB read.
+        enterForeground(engine.activeDownloads());
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        startForegroundNotification();
-        if (intent != null && "ACTION_STOP".equals(intent.getAction())) {
-            sessionStartTime = 0;
-            if (bgHandler != null) bgHandler.removeCallbacksAndMessages(null);
-            stopForeground(true);
-            stopSelf();
-            return START_NOT_STICKY;
-        }
-        scheduleTicker();
-        return START_NOT_STICKY;
+        lastStartId = startId;
+        if (!foreground) enterForeground(engine.activeDownloads());
+        if (intent == null) engine.reconcile(); // Android recreated a previously active service.
+        return stopIfIdle() ? START_NOT_STICKY : START_STICKY;
+    }
+
+    private boolean stopIfIdle() {
+        // A draining worker still owns a slot. Don't stop a newer Android start request.
+        if (lastStartId == 0 || !engine.activeDownloads().idle() || !stopSelfResult(lastStartId)) return false;
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Trace.setCounter("Downloads.notificationOwners", 0);
+        foreground = false;
+        sessionStartTime = 0;
+        return true;
     }
 
     @Override
     public void onDestroy() {
+        engine.removeListener(this);
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        foreground = false;
         super.onDestroy();
-        sessionStartTime = 0;
-        if (engine != null) {
-            engine.removeListener(this);
-        }
-        if (bgHandler != null) {
-            bgHandler.removeCallbacksAndMessages(null);
-        }
-        if (bgThread != null) {
-            bgThread.quitSafely();
-            bgThread = null;
-        }
-        try {
-            stopForeground(true);
-        } catch (Throwable ignored) {}
     }
 
     @Override
@@ -139,141 +102,74 @@ public class DownloadService extends Service implements DownloadEngine.DownloadL
         }
     }
 
-    private void startForegroundNotification() {
-        Notification notification = buildProgressNotification();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
-        }
-    }
-
-    private Notification buildProgressNotification() {
-        List<DownloadItem> all = engine.getAllDownloads();
-        int activeCount = 0;
-        long totalDownloaded = 0;
-        long totalExpected = 0;
-        long aggregateSpeed = 0;
-        DownloadItem sampleItem = null;
-
-        for (DownloadItem item : all) {
-            if (item.getStatus().isActive()) {
-                activeCount++;
-                sampleItem = item;
-                totalDownloaded += item.getDownloadedBytes();
-                if (item.getTotalBytes() > 0) {
-                    totalExpected += item.getTotalBytes();
-                }
-                aggregateSpeed += item.getSpeedBytesPerSec();
+    private void enterForeground(ActiveDownloads active) {
+        Trace.beginSection("Downloads.notification");
+        try {
+            Notification notification = buildProgressNotification(active);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
             }
+            foreground = true;
+            rendered = active;
+        } finally {
+            Trace.endSection();
         }
-
-        String title = (activeCount == 1 && sampleItem != null)
-                ? "Downloading " + sampleItem.getFileName()
-                : "Downloading " + activeCount + " files";
-
-        String speedText = DownloadItem.formatBytes(aggregateSpeed) + "/s";
-
-        int progress = 0;
-        boolean indeterminate = true;
-        if (totalExpected > 0) {
-            progress = (int) Math.min(100, (totalDownloaded * 100) / totalExpected);
-            indeterminate = false;
-        }
-
-        String contentText;
-        if (activeCount == 0) {
-            contentText = "Idle";
-        } else if (activeCount == 1 && sampleItem != null) {
-            contentText = sampleItem.getFormattedDownloadedSize() + " / " + sampleItem.getFormattedTotalSize()
-                    + " (" + sampleItem.getProgressPercentage() + "%) • " + speedText
-                    + " • ETA: " + sampleItem.getFormattedEta();
-        } else {
-            contentText = DownloadItem.formatBytes(totalDownloaded) + " / " + DownloadItem.formatBytes(totalExpected)
-                    + " (" + progress + "%) • " + speedText;
-        }
-
-        Intent launchIntent = new Intent(this, com.privacy.downloader.ui.DownloadsActivity.class);
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-                this,
-                0,
-                launchIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
-        );
-
-        if (sessionStartTime == 0 && activeCount > 0) {
-            sessionStartTime = System.currentTimeMillis();
-        } else if (activeCount == 0) {
-            sessionStartTime = 0;
-        }
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle(title)
-                .setContentText(contentText)
-                .setSubText(speedText)
-                .setSmallIcon(com.privacy.downloader.R.drawable.ic_download)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setWhen(sessionStartTime > 0 ? sessionStartTime : System.currentTimeMillis())
-                .setShowWhen(false)
-                .setProgress(100, progress, indeterminate)
-                .setContentIntent(pendingIntent);
-
-        return builder.build();
     }
 
     @Override
-    public void onDownloadProgress(DownloadItem item) {
-        // Handled cleanly by background notifTicker on DownloadNotifThread. Zero main thread overhead!
+    public void onActiveDownloadsChanged(ActiveDownloads active) {
+        if (active.idle()) {
+            stopIfIdle();
+            return;
+        }
+        if (!foreground || active.equals(rendered) || notificationManager == null) return;
+        Trace.beginSection("Downloads.notification");
+        try {
+            notificationManager.notify(NOTIFICATION_ID, buildProgressNotification(active));
+            rendered = active;
+        } finally {
+            Trace.endSection();
+        }
+    }
+
+    /** Formatting is constant work; the engine has already reduced the bounded owners to totals. */
+    private Notification buildProgressNotification(ActiveDownloads active) {
+        int count = active.transfers.size();
+        String title = count == 1 ? "Downloading " + active.transfers.get(0).name
+                : count == 0 ? "Download queue" : "Downloading " + count + " files";
+        String speed = DownloadItem.formatSpeed(active.speed);
+        int progress = DownloadItem.progressPercentage(active.downloadedBytes, active.totalBytes);
+        boolean indeterminate = active.totalBytes <= 0;
+        String text;
+        if (count == 0) {
+            text = !active.checked ? "Checking downloads…" : active.owners != 0 ? "Finishing download cleanup…" : "Idle";
+        } else {
+            text = DownloadItem.formatBytes(active.downloadedBytes) + " / "
+                    + (indeterminate ? "Unknown size" : DownloadItem.formatBytes(active.totalBytes) + " (" + progress + "%)")
+                    + " • " + speed;
+            if (count == 1) text += " • ETA: " + DownloadItem.formatEta(active.downloadedBytes, active.totalBytes, active.speed);
+        }
+        if (sessionStartTime == 0) sessionStartTime = System.currentTimeMillis();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Trace.setCounter("Downloads.notificationOwners", active.owners);
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setSubText(speed)
+                .setSmallIcon(com.privacy.downloader.R.drawable.ic_download)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setWhen(sessionStartTime)
+                .setShowWhen(false)
+                .setProgress(100, progress, indeterminate)
+                .setContentIntent(openDownloads)
+                .build();
     }
 
     @Override
     public void onDownloadCompleted(DownloadItem item) {
-        if (bgHandler != null) {
-            bgHandler.post(() -> {
-                if (notificationManager != null) {
-                    notificationManager.notify(NOTIFICATION_ID, buildProgressNotification());
-                }
-                showCompletionNotification(item);
-                if (engine == null || engine.getActiveTaskCount() == 0) {
-                    stopForeground(true);
-                    stopSelf();
-                }
-            });
-        }
-    }
-
-    @Override
-    public void onDownloadFailed(DownloadItem item, String error) {
-        if (bgHandler != null) {
-            bgHandler.post(() -> {
-                if (notificationManager != null) {
-                    notificationManager.notify(NOTIFICATION_ID, buildProgressNotification());
-                }
-                if (engine == null || engine.getActiveTaskCount() == 0) {
-                    stopForeground(true);
-                    stopSelf();
-                }
-            });
-        }
-    }
-
-    @Override
-    public void onQueueChanged() {
-        if (bgHandler != null) {
-            bgHandler.post(() -> {
-                if (engine == null || engine.getActiveTaskCount() == 0) {
-                    stopForeground(true);
-                    stopSelf();
-                } else {
-                    if (notificationManager != null) {
-                        notificationManager.notify(NOTIFICATION_ID, buildProgressNotification());
-                    }
-                    scheduleTicker();
-                }
-            });
-        }
+        showCompletionNotification(item);
     }
 
     private void showCompletionNotification(DownloadItem item) {

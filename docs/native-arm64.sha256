@@ -1,0 +1,8 @@
+04c4b155a47657a0a414838b01b897eb24f87991ef426dc64b6a5ac93e0e0797  downloader/src/main/jniLibs/arm64-v8a/libavcodec.so
+b51940d4d9da31d9866cdea9c361e054828b5cdd936de80d9897f0adc6faa1df  downloader/src/main/jniLibs/arm64-v8a/libavdevice.so
+397a3901475146ba0b86bafcea64425c3b8700140273f975ac177bc37f061838  downloader/src/main/jniLibs/arm64-v8a/libavfilter.so
+3bfeb0a230439e7bd65dd0f5d12c6f35952bc9d118bc109a1eb0962706c5b308  downloader/src/main/jniLibs/arm64-v8a/libavformat.so
+6632de5293cc8d5825d786206a600d065841de1e4ede18cf2fcc20bdbd1f5270  downloader/src/main/jniLibs/arm64-v8a/libavutil.so
+797618516ed8aa19f54d504bc5f2e763dd8d99ada3f823cdde3c7f882f6e3efd  downloader/src/main/jniLibs/arm64-v8a/libffmpegkit.so
+ba485b07bf1cf2d3d24874ca7d8b5c39fb6e7b9a5da5199eeb318c2707ba4801  downloader/src/main/jniLibs/arm64-v8a/libswresample.so
+3b458dad26d3b8949556e6d5959da2ca2afc9e865f8e79cb15660e8c14c24184  downloader/src/main/jniLibs/arm64-v8a/libswscale.so

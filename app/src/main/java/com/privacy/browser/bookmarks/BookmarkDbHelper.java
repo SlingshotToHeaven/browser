@@ -4,16 +4,22 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteException;
 import android.database.sqlite.SQLiteOpenHelper;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class BookmarkDbHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "bookmarks.db";
-    private static final int DATABASE_VERSION = 2;
+    private static final int DATABASE_VERSION = 3;
 
     public static final String TABLE_BOOKMARKS = "bookmarks";
     public static final String COLUMN_ID = "id";
@@ -22,6 +28,13 @@ public class BookmarkDbHelper extends SQLiteOpenHelper {
     public static final String COLUMN_CREATED_AT = "created_at";
     public static final String COLUMN_PARENT_FOLDER_ID = "parent_folder_id";
     public static final String COLUMN_IS_FOLDER = "is_folder";
+
+    static final int MOVE_REJECTED = -1;
+
+    private static final String PARENT_COLUMN = COLUMN_PARENT_FOLDER_ID + " INTEGER NOT NULL DEFAULT 0";
+    private static final String FOLDER_COLUMN = COLUMN_IS_FOLDER + " INTEGER NOT NULL DEFAULT 0";
+    private static final String BY_ID = COLUMN_ID + " = ?";
+    private static final String[] LINK_COLUMNS = {COLUMN_ID, COLUMN_PARENT_FOLDER_ID, COLUMN_IS_FOLDER};
 
     private static BookmarkDbHelper instance;
 
@@ -33,7 +46,12 @@ public class BookmarkDbHelper extends SQLiteOpenHelper {
     }
 
     private BookmarkDbHelper(Context context) {
-        super(context, DATABASE_NAME, null, DATABASE_VERSION);
+        this(context, DATABASE_NAME);
+    }
+
+    // Also lets instrumentation open a disposable legacy database, never the singleton's data.
+    BookmarkDbHelper(Context context, String name) {
+        super(context, name, null, DATABASE_VERSION);
     }
 
     @Override
@@ -43,79 +61,112 @@ public class BookmarkDbHelper extends SQLiteOpenHelper {
                 + COLUMN_TITLE + " TEXT NOT NULL, "
                 + COLUMN_URL + " TEXT, "
                 + COLUMN_CREATED_AT + " INTEGER NOT NULL, "
-                + COLUMN_PARENT_FOLDER_ID + " INTEGER NOT NULL DEFAULT 0, "
-                + COLUMN_IS_FOLDER + " INTEGER NOT NULL DEFAULT 0"
-                + ");";
+                + PARENT_COLUMN + ", " + FOLDER_COLUMN + ");";
         db.execSQL(createTableQuery);
+        createParentIndex(db);
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion < 2) {
-            try {
-                db.execSQL("ALTER TABLE " + TABLE_BOOKMARKS + " ADD COLUMN " + COLUMN_PARENT_FOLDER_ID + " INTEGER NOT NULL DEFAULT 0;");
-                db.execSQL("ALTER TABLE " + TABLE_BOOKMARKS + " ADD COLUMN " + COLUMN_IS_FOLDER + " INTEGER NOT NULL DEFAULT 0;");
-            } catch (Exception ignored) {
-                // In case columns were partially added
+        if (oldVersion < 3) {
+            // SQLiteOpenHelper wraps this callback and the version bump in the same transaction.
+            // v2 may have been recorded even when the old shared try/catch skipped one ALTER.
+            Set<String> columns = new HashSet<>();
+            try (Cursor cursor = db.rawQuery("PRAGMA table_info(" + TABLE_BOOKMARKS + ")", null)) {
+                int name = cursor.getColumnIndexOrThrow("name");
+                while (cursor.moveToNext()) columns.add(cursor.getString(name));
             }
+            if (!columns.contains(COLUMN_PARENT_FOLDER_ID)) {
+                db.execSQL("ALTER TABLE " + TABLE_BOOKMARKS + " ADD COLUMN " + PARENT_COLUMN);
+            }
+            if (!columns.contains(COLUMN_IS_FOLDER)) {
+                db.execSQL("ALTER TABLE " + TABLE_BOOKMARKS + " ADD COLUMN " + FOLDER_COLUMN);
+            }
+
+            Map<Long, BookmarkTree.Link> links = new LinkedHashMap<>();
+            try (Cursor cursor = db.query(TABLE_BOOKMARKS, LINK_COLUMNS, null, null, null, null, COLUMN_ID)) {
+                while (cursor.moveToNext()) links.put(cursor.getLong(0), readLink(cursor));
+            }
+            ContentValues values = new ContentValues();
+            values.put(COLUMN_PARENT_FOLDER_ID, BookmarkTree.ROOT);
+            for (long id : BookmarkTree.linksToReset(links)) {
+                if (db.update(TABLE_BOOKMARKS, values, BY_ID, bindId(id)) != 1) {
+                    throw new SQLiteException("Could not repair a bookmark parent link");
+                }
+            }
+            createParentIndex(db);
+        }
+    }
+
+    private static void createParentIndex(SQLiteDatabase db) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS bookmarks_parent_idx ON " + TABLE_BOOKMARKS
+                + " (" + COLUMN_PARENT_FOLDER_ID + ")");
+    }
+
+    private static String[] bindId(long id) {
+        return new String[]{String.valueOf(id)};
+    }
+
+    private static long readParent(Cursor cursor, int index) {
+        // Don't let Cursor coerce a NULL, fractional or text parent to a real id (including root).
+        return cursor.getType(index) == Cursor.FIELD_TYPE_INTEGER ? cursor.getLong(index) : BookmarkTree.INVALID_PARENT;
+    }
+
+    private static boolean readIsFolder(Cursor cursor, int index) {
+        return cursor.getType(index) == Cursor.FIELD_TYPE_INTEGER && cursor.getLong(index) == 1;
+    }
+
+    private static BookmarkTree.Link readLink(Cursor cursor) {
+        return new BookmarkTree.Link(readParent(cursor, 1), readIsFolder(cursor, 2));
+    }
+
+    private static BookmarkTree.Link readLink(SQLiteDatabase db, long id) {
+        if (id <= BookmarkTree.ROOT) return null;
+        try (Cursor cursor = db.query(TABLE_BOOKMARKS, LINK_COLUMNS, BY_ID, bindId(id), null, null, null)) {
+            return cursor.moveToFirst() ? readLink(cursor) : null;
         }
     }
 
     public synchronized long addBookmarkAndGetId(String title, String url, long parentFolderId) {
         if (url == null || url.trim().isEmpty()) return -1;
         if (title == null || title.trim().isEmpty()) title = url;
-
-        SQLiteDatabase db = getWritableDatabase();
-        ContentValues values = new ContentValues();
-        values.put(COLUMN_TITLE, title.trim());
-        values.put(COLUMN_URL, url.trim());
-        values.put(COLUMN_CREATED_AT, System.currentTimeMillis());
-        values.put(COLUMN_PARENT_FOLDER_ID, parentFolderId);
-        values.put(COLUMN_IS_FOLDER, 0);
-
-        long result = db.insertWithOnConflict(TABLE_BOOKMARKS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
-        if (result == -1) {
-            Cursor c = db.query(TABLE_BOOKMARKS, new String[]{COLUMN_ID}, COLUMN_URL + " = ?", new String[]{url.trim()}, null, null, null);
-            if (c != null && c.moveToFirst()) {
-                result = c.getLong(0);
-                c.close();
-            }
-        }
-        return result;
+        return insertItem(title.trim(), url.trim(), parentFolderId, false);
     }
 
     public synchronized boolean addBookmark(String title, String url) {
-        return addBookmark(title, url, 0);
+        return addBookmark(title, url, BookmarkTree.ROOT);
     }
 
     public synchronized boolean addBookmark(String title, String url, long parentFolderId) {
-        if (url == null || url.trim().isEmpty()) return false;
-        if (title == null || title.trim().isEmpty()) title = url;
-
-        SQLiteDatabase db = getWritableDatabase();
-        ContentValues values = new ContentValues();
-        values.put(COLUMN_TITLE, title.trim());
-        values.put(COLUMN_URL, url.trim());
-        values.put(COLUMN_CREATED_AT, System.currentTimeMillis());
-        values.put(COLUMN_PARENT_FOLDER_ID, parentFolderId);
-        values.put(COLUMN_IS_FOLDER, 0);
-
-        long result = db.insertWithOnConflict(TABLE_BOOKMARKS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
-        return result != -1;
+        return addBookmarkAndGetId(title, url, parentFolderId) > 0;
     }
 
     public synchronized long createFolder(String folderName, long parentFolderId) {
         if (folderName == null || folderName.trim().isEmpty()) folderName = "New Folder";
+        return insertItem(folderName.trim(), "", parentFolderId, true);
+    }
 
+    private long insertItem(String title, String url, long parentId, boolean folder) {
         SQLiteDatabase db = getWritableDatabase();
-        ContentValues values = new ContentValues();
-        values.put(COLUMN_TITLE, folderName.trim());
-        values.put(COLUMN_URL, "");
-        values.put(COLUMN_CREATED_AT, System.currentTimeMillis());
-        values.put(COLUMN_PARENT_FOLDER_ID, parentFolderId);
-        values.put(COLUMN_IS_FOLDER, 1);
-
-        return db.insert(TABLE_BOOKMARKS, null, values);
+        db.beginTransaction();
+        try {
+            BookmarkTree.Destinations destinations = new BookmarkTree.Destinations(Collections.emptySet(), id -> readLink(db, id));
+            if (!destinations.allows(parentId)) return -1;
+            ContentValues values = new ContentValues();
+            values.put(COLUMN_TITLE, title);
+            values.put(COLUMN_URL, url);
+            values.put(COLUMN_CREATED_AT, System.currentTimeMillis());
+            values.put(COLUMN_PARENT_FOLDER_ID, parentId);
+            values.put(COLUMN_IS_FOLDER, folder ? 1 : 0);
+            // Unlike insert(), this doesn't log bookmark values on a failed write.
+            long id = db.insertOrThrow(TABLE_BOOKMARKS, null, values);
+            if (id > 0) db.setTransactionSuccessful();
+            return id;
+        } catch (SQLiteException e) {
+            return -1;
+        } finally {
+            db.endTransaction();
+        }
     }
 
     public synchronized boolean updateBookmark(long id, String newTitle, String newUrl) {
@@ -135,23 +186,62 @@ public class BookmarkDbHelper extends SQLiteOpenHelper {
                 new String[]{String.valueOf(folderId)}) > 0;
     }
 
+    private static Map<Long, BookmarkTree.Link> readSelection(SQLiteDatabase db, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return Collections.emptyMap();
+        Map<Long, BookmarkTree.Link> selected = new LinkedHashMap<>();
+        for (Long id : ids) {
+            if (id == null) return Collections.emptyMap();
+            if (selected.containsKey(id)) continue;
+            BookmarkTree.Link link = readLink(db, id);
+            if (link == null) return Collections.emptyMap();
+            selected.put(id, link);
+        }
+        return selected;
+    }
+
+    /** True only when at least one row changed and the entire move committed. */
     public synchronized boolean moveToFolder(List<Long> ids, long targetFolderId) {
-        if (ids == null || ids.isEmpty()) return false;
+        return moveItemsToFolder(ids, targetFolderId) > 0;
+    }
+
+    /** Returns the number of changed parents, zero for a no-op, or MOVE_REJECTED. */
+    synchronized int moveItemsToFolder(List<Long> ids, long targetFolderId) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            Map<Long, BookmarkTree.Link> selected = readSelection(db, ids);
+            if (selected.isEmpty()) return MOVE_REJECTED;
+            BookmarkTree.Destinations destinations = new BookmarkTree.Destinations(selected.keySet(), id -> readLink(db, id));
+            if (!destinations.allows(targetFolderId)) return MOVE_REJECTED;
+
             ContentValues values = new ContentValues();
             values.put(COLUMN_PARENT_FOLDER_ID, targetFolderId);
-            for (Long id : ids) {
-                // Prevent moving a folder into itself
-                if (id == targetFolderId) continue;
-                db.update(TABLE_BOOKMARKS, values, COLUMN_ID + " = ?", new String[]{String.valueOf(id)});
+            int moved = 0;
+            for (Map.Entry<Long, BookmarkTree.Link> source : selected.entrySet()) {
+                if (source.getValue().parent == targetFolderId) continue;
+                if (db.update(TABLE_BOOKMARKS, values, BY_ID, bindId(source.getKey())) != 1) return MOVE_REJECTED;
+                moved++;
             }
             db.setTransactionSuccessful();
-            return true;
+            return moved;
         } finally {
             db.endTransaction();
         }
+    }
+
+    /** Advisory picker contents; writes always check the current links again inside their transaction. */
+    synchronized List<BookmarkModel> getMoveDestinations(List<Long> ids) {
+        Map<Long, BookmarkTree.Link> selected = readSelection(getReadableDatabase(), ids);
+        if (selected.isEmpty()) return Collections.emptyList();
+        List<BookmarkModel> folders = getAllFolders();
+        Map<Long, BookmarkTree.Link> links = new HashMap<>();
+        for (BookmarkModel folder : folders) {
+            links.put(folder.getId(), new BookmarkTree.Link(folder.getParentFolderId(), true));
+        }
+        BookmarkTree.Destinations destinations = new BookmarkTree.Destinations(selected.keySet(), links::get);
+        folders.removeIf(folder -> folder.getId() <= BookmarkTree.ROOT || !destinations.allows(folder.getId()));
+        folders.add(0, new BookmarkModel(BookmarkTree.ROOT, "Bookmarks (Root)", null, 0, BookmarkTree.ROOT, true, 0));
+        return folders;
     }
 
     public synchronized boolean removeBookmark(String url) {
@@ -176,16 +266,19 @@ public class BookmarkDbHelper extends SQLiteOpenHelper {
         List<BookmarkModel> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
 
+        if (folderId != BookmarkTree.ROOT) {
+            BookmarkTree.Link folder = readLink(db, folderId);
+            if (folder == null || !folder.folder) return list;
+        }
+
         // Folders first (alphabetical), then bookmarks (latest first)
         String orderBy = COLUMN_IS_FOLDER + " DESC, " +
                 "CASE WHEN " + COLUMN_IS_FOLDER + " = 1 THEN " + COLUMN_TITLE + " END ASC, " +
                 COLUMN_CREATED_AT + " DESC";
 
-        Cursor cursor = db.query(TABLE_BOOKMARKS, null,
+        try (Cursor cursor = db.query(TABLE_BOOKMARKS, null,
                 COLUMN_PARENT_FOLDER_ID + " = ?",
-                new String[]{String.valueOf(folderId)}, null, null, orderBy);
-
-        if (cursor != null && cursor.moveToFirst()) {
+                bindId(folderId), null, null, orderBy)) {
             int idIdx = cursor.getColumnIndexOrThrow(COLUMN_ID);
             int titleIdx = cursor.getColumnIndexOrThrow(COLUMN_TITLE);
             int urlIdx = cursor.getColumnIndexOrThrow(COLUMN_URL);
@@ -193,9 +286,9 @@ public class BookmarkDbHelper extends SQLiteOpenHelper {
             int parentIdx = cursor.getColumnIndexOrThrow(COLUMN_PARENT_FOLDER_ID);
             int isFolderIdx = cursor.getColumnIndexOrThrow(COLUMN_IS_FOLDER);
 
-            do {
+            while (cursor.moveToNext()) {
                 long id = cursor.getLong(idIdx);
-                boolean isFolder = cursor.getInt(isFolderIdx) == 1;
+                boolean isFolder = readIsFolder(cursor, isFolderIdx);
                 int childCount = isFolder ? countFolderChildren(db, id) : 0;
 
                 list.add(new BookmarkModel(
@@ -203,55 +296,52 @@ public class BookmarkDbHelper extends SQLiteOpenHelper {
                         cursor.getString(titleIdx),
                         cursor.getString(urlIdx),
                         cursor.getLong(createdIdx),
-                        cursor.getLong(parentIdx),
+                        readParent(cursor, parentIdx),
                         isFolder,
                         childCount
                 ));
-            } while (cursor.moveToNext());
-            cursor.close();
+            }
         }
         return list;
     }
 
     private int countFolderChildren(SQLiteDatabase db, long folderId) {
-        Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_BOOKMARKS + " WHERE " + COLUMN_PARENT_FOLDER_ID + " = ?",
-                new String[]{String.valueOf(folderId)});
-        int count = 0;
-        if (c != null && c.moveToFirst()) {
-            count = c.getInt(0);
-            c.close();
+        try (Cursor cursor = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_BOOKMARKS
+                + " WHERE " + COLUMN_PARENT_FOLDER_ID + " = ?", bindId(folderId))) {
+            return cursor.moveToFirst() ? cursor.getInt(0) : 0;
         }
-        return count;
     }
 
     public synchronized List<BookmarkModel> getAllFolders() {
         List<BookmarkModel> list = new ArrayList<>();
-        SQLiteDatabase db = getReadableDatabase();
-        Cursor cursor = db.query(TABLE_BOOKMARKS, null,
-                COLUMN_IS_FOLDER + " = 1",
-                null, null, null, COLUMN_TITLE + " ASC");
-
-        if (cursor != null && cursor.moveToFirst()) {
+        try (Cursor cursor = getReadableDatabase().query(TABLE_BOOKMARKS, null,
+                COLUMN_IS_FOLDER + " = 1", null, null, null, COLUMN_TITLE + " ASC")) {
             int idIdx = cursor.getColumnIndexOrThrow(COLUMN_ID);
             int titleIdx = cursor.getColumnIndexOrThrow(COLUMN_TITLE);
             int urlIdx = cursor.getColumnIndexOrThrow(COLUMN_URL);
             int createdIdx = cursor.getColumnIndexOrThrow(COLUMN_CREATED_AT);
             int parentIdx = cursor.getColumnIndexOrThrow(COLUMN_PARENT_FOLDER_ID);
-
-            do {
-                list.add(new BookmarkModel(
-                        cursor.getLong(idIdx),
-                        cursor.getString(titleIdx),
-                        cursor.getString(urlIdx),
-                        cursor.getLong(createdIdx),
-                        cursor.getLong(parentIdx),
-                        true,
-                        0
-                ));
-            } while (cursor.moveToNext());
-            cursor.close();
+            int folderIdx = cursor.getColumnIndexOrThrow(COLUMN_IS_FOLDER);
+            while (cursor.moveToNext()) {
+                if (!readIsFolder(cursor, folderIdx)) continue;
+                list.add(new BookmarkModel(cursor.getLong(idIdx), cursor.getString(titleIdx), cursor.getString(urlIdx),
+                        cursor.getLong(createdIdx), readParent(cursor, parentIdx), true, 0));
+            }
         }
         return list;
+    }
+
+    public synchronized List<BookmarkModel> getRecentBookmarks(int limit) {
+        List<BookmarkModel> result = new ArrayList<>();
+        try (Cursor cursor = getReadableDatabase().query(TABLE_BOOKMARKS,
+                new String[] { COLUMN_ID, COLUMN_TITLE, COLUMN_URL, COLUMN_CREATED_AT }, COLUMN_IS_FOLDER + " = 0",
+                null, null, null, COLUMN_CREATED_AT + " DESC", String.valueOf(Math.max(1, Math.min(6, limit))))) {
+            while (cursor.moveToNext()) {
+                result.add(new BookmarkModel(cursor.getLong(0), cursor.getString(1), cursor.getString(2),
+                        cursor.getLong(3), 0, false, 0));
+            }
+        }
+        return result;
     }
 
     public synchronized List<BookmarkModel> getAllBookmarks() {
@@ -289,7 +379,7 @@ public class BookmarkDbHelper extends SQLiteOpenHelper {
 
             do {
                 long id = cursor.getLong(idIdx);
-                boolean isFolder = cursor.getInt(isFolderIdx) == 1;
+                boolean isFolder = readIsFolder(cursor, isFolderIdx);
                 int childCount = isFolder ? countFolderChildren(db, id) : 0;
 
                 list.add(new BookmarkModel(
@@ -297,7 +387,7 @@ public class BookmarkDbHelper extends SQLiteOpenHelper {
                         cursor.getString(titleIdx),
                         cursor.getString(urlIdx),
                         cursor.getLong(createdIdx),
-                        cursor.getLong(parentIdx),
+                        readParent(cursor, parentIdx),
                         isFolder,
                         childCount
                 ));
@@ -307,35 +397,33 @@ public class BookmarkDbHelper extends SQLiteOpenHelper {
         return list;
     }
 
-    public synchronized void deleteItems(List<Long> ids) {
-        if (ids == null || ids.isEmpty()) return;
+    /** Delete only committed subtrees; callers use the returned ids to clear previews afterwards. */
+    public synchronized Set<Long> deleteItems(List<Long> ids) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            for (Long id : ids) {
-                deleteItemRecursive(db, id);
+            Map<Long, BookmarkTree.Link> roots = readSelection(db, ids);
+            if (roots.isEmpty()) return Collections.emptySet();
+            Set<Long> deletion = BookmarkTree.subtree(roots.keySet(), id -> folderChildren(db, id));
+            for (long id : deletion) {
+                if (db.delete(TABLE_BOOKMARKS, BY_ID, bindId(id)) != 1) return Collections.emptySet();
             }
             db.setTransactionSuccessful();
+            return deletion;
         } finally {
             db.endTransaction();
         }
     }
 
-    private void deleteItemRecursive(SQLiteDatabase db, long id) {
-        // Find children if folder
-        Cursor c = db.query(TABLE_BOOKMARKS, new String[]{COLUMN_ID},
-                COLUMN_PARENT_FOLDER_ID + " = ?", new String[]{String.valueOf(id)}, null, null, null);
-        if (c != null) {
-            List<Long> children = new ArrayList<>();
-            while (c.moveToNext()) {
-                children.add(c.getLong(0));
-            }
-            c.close();
-            for (Long childId : children) {
-                deleteItemRecursive(db, childId);
-            }
+    private static List<Long> folderChildren(SQLiteDatabase db, long id) {
+        List<Long> children = new ArrayList<>();
+        // Don't treat a reference to a bookmark (or a missing row) as ownership of a subtree.
+        try (Cursor cursor = db.rawQuery("SELECT child.id FROM bookmarks AS folder JOIN bookmarks AS child "
+                + "ON child.parent_folder_id = folder.id WHERE folder.id = ? AND folder.is_folder = 1",
+                bindId(id))) {
+            while (cursor.moveToNext()) children.add(cursor.getLong(0));
         }
-        db.delete(TABLE_BOOKMARKS, COLUMN_ID + " = ?", new String[]{String.valueOf(id)});
+        return children;
     }
 
     public synchronized String getFolderName(long folderId) {

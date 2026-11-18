@@ -6,157 +6,231 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Build;
-import android.util.Log;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-public class AutomationManager {
-    private static final String TAG = "AutomationManager";
+/** Schedules review reminders only. A receiver never dispatches tools or starts an Activity. */
+public final class AutomationManager {
     private static final String PREF_NAME = "agent_automations_pref";
-    private static final String KEY_TASKS = "automation_tasks_json";
+    private static final String KEY = "recipe_review_reminders_v2";
+    private static final String DUE = "com.privacy.browser.action.RECIPE_REVIEW_DUE_V2";
+    private static final String SCHEME = "privacy-recipe-reminder";
+    private static final int MAX_TASKS = 16;
+    private static final Object LOCK = new Object();
+    private static final ExecutorService BACKGROUND = Executors.newSingleThreadExecutor();
+    private static Boolean lastExactCapability;
 
-    public static class AutomationTask {
-        public final String id;
-        public final String title;
-        public final long triggerTimeEpochMs;
-        public final String recipeJson;
+    static final class Task {
+        final String id, title, recipe;
+        final long trigger;
+        final ReminderPlan.Status status;
 
-        public AutomationTask(String id, String title, long triggerTimeEpochMs, String recipeJson) {
-            this.id = id;
-            this.title = title;
-            this.triggerTimeEpochMs = triggerTimeEpochMs;
-            this.recipeJson = recipeJson;
+        Task(String id, String title, String recipe, long trigger, ReminderPlan.Status status) {
+            this.id = id; this.title = title; this.recipe = recipe; this.trigger = trigger; this.status = status;
         }
 
-        public JSONObject toJson() {
-            try {
-                JSONObject obj = new JSONObject();
-                obj.put("id", id);
-                obj.put("title", title);
-                obj.put("trigger_time_epoch_ms", triggerTimeEpochMs);
-                obj.put("recipe_json", recipeJson);
-                return obj;
-            } catch (Exception e) {
-                return new JSONObject();
-            }
+        Task withStatus(ReminderPlan.Status next) { return new Task(id, title, recipe, trigger, next); }
+
+        JSONObject summary() throws JSONException {
+            return new JSONObject().put("task_id", id).put("title", title).put("trigger_time_epoch_ms", trigger)
+                    .put("status", status.name().toLowerCase(java.util.Locale.ROOT)).put("background_execution", false);
         }
-    }
 
-    public static class AutomationAlarmReceiver extends BroadcastReceiver {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            String taskId = intent.getStringExtra("task_id");
-            String title = intent.getStringExtra("title");
-            String recipeJson = intent.getStringExtra("recipe_json");
-            Log.d(TAG, "Automation Alarm Fired! Task ID: " + taskId + " Title: " + title);
-
-            // Execute scheduled action by launching main activity with recipe
-            Intent launchIntent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
-            if (launchIntent != null) {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                launchIntent.putExtra("automation_recipe_json", recipeJson);
-                launchIntent.putExtra("automation_title", title);
-                context.startActivity(launchIntent);
+        String statusLabel() {
+            switch (status) {
+                case EXACT_REQUESTED: return "Exact alarm requested; delivery is not guaranteed";
+                case INEXACT_REQUESTED: return "Inexact alarm requested; Android may delay it";
+                case READY_FOR_REVIEW: return "Due for manual review";
+                default: return "Alarm unavailable; not scheduled";
             }
         }
     }
 
     private final Context context;
     private final SharedPreferences prefs;
+    private final AlarmManager manager;
 
     public AutomationManager(Context context) {
         this.context = context.getApplicationContext();
-        this.prefs = this.context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs = this.context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        manager = (AlarmManager) this.context.getSystemService(Context.ALARM_SERVICE);
     }
 
-    public synchronized void scheduleTask(AutomationTask task) {
-        List<AutomationTask> tasks = listTasks();
-        tasks.add(task);
-        saveTasks(tasks);
-
-        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        if (am == null) return;
-
-        Intent intent = new Intent(context, AutomationAlarmReceiver.class);
-        intent.putExtra("task_id", task.id);
-        intent.putExtra("title", task.title);
-        intent.putExtra("recipe_json", task.recipeJson);
-
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            flags |= PendingIntent.FLAG_IMMUTABLE;
-        }
-
-        int requestCode = task.id.hashCode();
-        PendingIntent pi = PendingIntent.getBroadcast(context, requestCode, intent, flags);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, task.triggerTimeEpochMs, pi);
-        } else {
-            am.setExact(AlarmManager.RTC_WAKEUP, task.triggerTimeEpochMs, pi);
+    Task schedule(String title, long trigger, RecipePlan recipe) throws IOException, JSONException {
+        synchronized (LOCK) {
+            long now = System.currentTimeMillis();
+            if (!ReminderPlan.validNewTime(trigger, now)) throw new IllegalArgumentException("Choose a future time within one year.");
+            List<Task> tasks = read();
+            if (tasks.size() >= MAX_TASKS) throw new IllegalArgumentException("Remove an old reminder first (limit 16).");
+            Task task = new Task(UUID.randomUUID().toString(), title, recipe.json, trigger, ReminderPlan.Status.UNAVAILABLE);
+            ReminderPlan.Alarms alarms = registration(task);
+            Task armed = task.withStatus(ReminderPlan.reconcile(task.status, trigger, now, alarms));
+            if (armed.status == ReminderPlan.Status.UNAVAILABLE) throw new IOException("Android did not accept an alarm. Nothing was scheduled.");
+            List<Task> next = new ArrayList<>(tasks);
+            next.add(armed);
+            try { write(next); }
+            catch (IOException | JSONException e) {
+                ReminderPlan.cancel(alarms);
+                try { write(tasks); } catch (IOException | JSONException ignored) { }
+                throw new IOException("Could not save the reminder. Registration was withdrawn.", e);
+            }
+            return armed;
         }
     }
 
-    public synchronized boolean cancelTask(String taskId) {
-        List<AutomationTask> tasks = listTasks();
-        AutomationTask found = null;
-        for (AutomationTask t : tasks) {
-            if (t.id.equals(taskId)) {
-                found = t;
-                break;
+    boolean cancel(String id) throws IOException, JSONException {
+        synchronized (LOCK) {
+            List<Task> tasks = read();
+            for (Task task : new ArrayList<>(tasks)) if (task.id.equals(id)) {
+                tasks.remove(task);
+                write(tasks); // A stale delivery has no record to mark due.
+                ReminderPlan.cancel(registration(task));
+                return true;
             }
+            return false;
         }
-        if (found == null) return false;
-
-        tasks.remove(found);
-        saveTasks(tasks);
-
-        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        if (am != null) {
-            Intent intent = new Intent(context, AutomationAlarmReceiver.class);
-            int flags = PendingIntent.FLAG_NO_CREATE;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                flags |= PendingIntent.FLAG_IMMUTABLE;
-            }
-            PendingIntent pi = PendingIntent.getBroadcast(context, found.id.hashCode(), intent, flags);
-            if (pi != null) {
-                am.cancel(pi);
-                pi.cancel();
-            }
-        }
-        return true;
     }
 
-    public synchronized List<AutomationTask> listTasks() {
-        List<AutomationTask> list = new ArrayList<>();
-        String jsonStr = prefs.getString(KEY_TASKS, "[]");
-        try {
-            JSONArray arr = new JSONArray(jsonStr);
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject obj = arr.getJSONObject(i);
-                list.add(new AutomationTask(
-                        obj.getString("id"),
-                        obj.getString("title"),
-                        obj.getLong("trigger_time_epoch_ms"),
-                        obj.getString("recipe_json")
-                ));
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed reading automations", e);
+    List<Task> list() throws IOException, JSONException {
+        synchronized (LOCK) {
+            // Also notices an overdue reminder even if Android suppressed its delivery.
+            reconcileLocked(false);
+            return read();
+        }
+    }
+
+    boolean hasLegacyRecipes() { return prefs.contains("automation_tasks_json"); }
+
+    private List<Task> read() throws IOException, JSONException {
+        String raw = prefs.getString(KEY, "[]");
+        if (raw == null || raw.length() > 512 * 1024 || !RecipePlan.boundedJson(raw, 3)) throw new IOException("Reminder data is unreadable.");
+        JSONArray array = new JSONArray(raw);
+        if (array.length() > MAX_TASKS) throw new IOException("Reminder data exceeds its limit.");
+        List<Task> list = new ArrayList<>();
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject item = array.getJSONObject(i);
+            String id = item.getString("task_id");
+            if (!ReminderPlan.validId(id)) throw new IOException("Invalid reminder ID.");
+            list.add(new Task(id, item.getString("title"), item.getString("recipe"), item.getLong("trigger_time_epoch_ms"),
+                    ReminderPlan.Status.valueOf(item.getString("status").toUpperCase(java.util.Locale.ROOT))));
         }
         return list;
     }
 
-    private void saveTasks(List<AutomationTask> tasks) {
-        JSONArray arr = new JSONArray();
-        for (AutomationTask t : tasks) {
-            arr.put(t.toJson());
+    private void write(List<Task> list) throws IOException, JSONException {
+        JSONArray array = new JSONArray();
+        for (Task task : list) array.put(task.summary().put("recipe", task.recipe));
+        if (!prefs.edit().putString(KEY, array.toString()).commit()) throw new IOException("Reminder storage write failed.");
+    }
+
+    private void reconcileLocked(boolean rearm) throws IOException, JSONException {
+        List<Task> tasks = read();
+        long now = System.currentTimeMillis();
+        boolean exact = canSetExact();
+        boolean changed = false;
+        for (int i = 0; i < tasks.size(); i++) {
+            Task task = tasks.get(i);
+            if (!rearm && task.trigger > now && !(task.status == ReminderPlan.Status.EXACT_REQUESTED && !exact)) continue;
+            ReminderPlan.Status next = ReminderPlan.reconcile(task.status, task.trigger, now, registration(task));
+            if (next != task.status) {
+                tasks.set(i, task.withStatus(next));
+                changed = true;
+            }
         }
-        prefs.edit().putString(KEY_TASKS, arr.toString()).apply();
+        if (changed) write(tasks);
+    }
+
+    private void delivered(String id) throws IOException, JSONException {
+        synchronized (LOCK) {
+            List<Task> tasks = read();
+            long now = System.currentTimeMillis();
+            for (int i = 0; i < tasks.size(); i++) {
+                Task task = tasks.get(i);
+                if (task.id.equals(id) && ReminderPlan.canMarkDue(task.status, task.trigger, now)) {
+                    tasks.set(i, task.withStatus(ReminderPlan.Status.READY_FOR_REVIEW));
+                    write(tasks);
+                    ReminderPlan.cancel(registration(task));
+                    return;
+                }
+            }
+        }
+    }
+
+    private boolean canSetExact() {
+        return manager != null && (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || manager.canScheduleExactAlarms());
+    }
+
+    private ReminderPlan.Alarms registration(Task task) {
+        Intent intent = new Intent(context, AutomationAlarmReceiver.class).setAction(DUE)
+                .setData(Uri.parse(SCHEME + "://" + task.id));
+        return new ReminderPlan.Alarms() {
+            private PendingIntent pending(int flags) {
+                return PendingIntent.getBroadcast(context, 0, intent, flags | PendingIntent.FLAG_IMMUTABLE);
+            }
+            @Override public boolean canSetExact() { return AutomationManager.this.canSetExact(); }
+            @Override public void setExact() {
+                if (manager == null) throw new IllegalStateException("No AlarmManager");
+                manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, task.trigger, pending(0));
+            }
+            @Override public void setInexact() {
+                if (manager == null) throw new IllegalStateException("No AlarmManager");
+                manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, task.trigger, pending(0));
+            }
+            @Override public void cancel() {
+                PendingIntent token = pending(PendingIntent.FLAG_NO_CREATE);
+                if (token != null) {
+                    try { if (manager != null) manager.cancel(token); }
+                    finally { token.cancel(); }
+                }
+            }
+        };
+    }
+
+    public static void onBrowserResume(Context context) {
+        Context app = context.getApplicationContext();
+        BACKGROUND.execute(() -> {
+            AutomationManager reminders = new AutomationManager(app);
+            synchronized (LOCK) {
+                try {
+                    boolean exact = reminders.canSetExact();
+                    reminders.reconcileLocked(lastExactCapability == null || lastExactCapability != exact);
+                    lastExactCapability = exact;
+                } catch (Exception ignored) { /* list exposes unreadable data */ }
+            }
+        });
+    }
+
+    public static final class AutomationAlarmReceiver extends BroadcastReceiver {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent == null) return;
+            String action = intent.getAction();
+            Uri data = intent.getData();
+            String id = DUE.equals(action) && data != null && SCHEME.equals(data.getScheme()) ? data.getHost() : null;
+            boolean rearm = Intent.ACTION_BOOT_COMPLETED.equals(action) || Intent.ACTION_TIME_CHANGED.equals(action)
+                    || AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED.equals(action);
+            if (!rearm && !ReminderPlan.validId(id)) return; // Includes all old recipe-bearing PendingIntents.
+            PendingResult result = goAsync();
+            Context app = context.getApplicationContext();
+            BACKGROUND.execute(() -> {
+                try {
+                    AutomationManager reminders = new AutomationManager(app);
+                    if (rearm) {
+                        synchronized (LOCK) { reminders.reconcileLocked(true); }
+                    } else reminders.delivered(id);
+                } catch (Exception ignored) { /* never execute or notify on failure */ }
+                finally { result.finish(); }
+            });
+        }
     }
 }

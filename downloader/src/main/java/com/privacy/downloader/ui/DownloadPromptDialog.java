@@ -21,15 +21,16 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.privacy.downloader.R;
-import com.privacy.downloader.db.DownloadDbHelper;
 import com.privacy.downloader.engine.DownloadEngine;
 import com.privacy.downloader.model.DownloadItem;
 import com.privacy.downloader.model.DownloadStatus;
+import com.privacy.downloader.net.RequestContext;
 
 import java.io.File;
-import java.util.List;
+import java.io.IOException;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 
 public class DownloadPromptDialog {
 
@@ -37,15 +38,45 @@ public class DownloadPromptDialog {
         void onConfirmed(DownloadItem item);
     }
 
-    public static void show(Context context, String url, String userAgent, String contentDisposition, String mimeType, String cookies, String referrer, OnDownloadConfirmedListener listener) {
-        show(context, url, userAgent, contentDisposition, mimeType, cookies, referrer, null, -1, listener);
+    public static void show(Context context, String url, RequestContext request, String contentDisposition,
+                            String mimeType, long knownSize) {
+        show(context, url, request, contentDisposition, mimeType, null, knownSize, null, -1, null);
     }
 
-    public static void show(Context context, String url, String userAgent, String contentDisposition, String mimeType, String cookies, String referrer, String customFileName, long knownSize, OnDownloadConfirmedListener listener) {
-        show(context, url, userAgent, contentDisposition, mimeType, cookies, referrer, customFileName, knownSize, null, -1, listener);
+    public static void show(Context context, String url, RequestContext request, String contentDisposition,
+                            String mimeType, String customFileName, long knownSize, String audioUrl, long audioBytes,
+                            OnDownloadConfirmedListener listener) {
+        if (request.isPrivate()) {
+            Toast.makeText(context, RequestContext.PRIVATE_UNAVAILABLE, Toast.LENGTH_LONG).show();
+            return;
+        }
+        showInternal(context, url, request, contentDisposition, mimeType,
+                customFileName, knownSize, audioUrl, audioBytes, listener, null, () -> true);
     }
 
-    public static void show(Context context, String url, String userAgent, String contentDisposition, String mimeType, String cookies, String referrer, String customFileName, long knownSize, String audioUrl, long audioBytes, OnDownloadConfirmedListener listener) {
+    /** This confirmation, unlike an explicit detached link list, belongs to a live document. */
+    public static AlertDialog showForPage(Context context, String url, RequestContext request, String mimeType,
+                                         String name, long size, String audio, long audioSize, BooleanSupplier current) {
+        if (request.isPrivate() || !current.getAsBoolean()) return null;
+        return showInternal(context, url, request, null, mimeType, name, size, audio, audioSize,
+                null, null, current);
+    }
+
+    public interface BlobConfirmation {
+        void enqueue(DownloadItem item) throws IOException;
+    }
+
+    public static AlertDialog showBlob(Context context, String url, String contentDisposition,
+                                       String mimeType, long knownSize, BlobConfirmation confirmation) {
+        return showInternal(context, url, RequestContext.anonymous(), contentDisposition, mimeType,
+                null, knownSize, null, -1, null, confirmation, () -> true);
+    }
+
+    private static AlertDialog showInternal(Context context, String url, RequestContext request, String contentDisposition,
+                                            String mimeType, String customFileName, long knownSize, String audioUrl,
+                                            long audioBytes, OnDownloadConfirmedListener listener,
+                                            BlobConfirmation blobConfirmation, BooleanSupplier current) {
+        boolean isBlob = blobConfirmation != null;
         AlertDialog.Builder builder = new AlertDialog.Builder(context, DownloaderThemeHelper.getDialogTheme(context));
         View view = LayoutInflater.from(context).inflate(R.layout.dialog_download_prompt, null);
         builder.setView(view);
@@ -56,6 +87,7 @@ public class DownloadPromptDialog {
         }
 
         EditText editFileName = view.findViewById(R.id.prompt_edit_filename);
+        EditText editSha256 = view.findViewById(R.id.prompt_edit_sha256);
         ImageView btnClearName = view.findViewById(R.id.prompt_btn_clear_name);
         TextView textFolderPath = view.findViewById(R.id.prompt_text_folder_path);
         TextView textFreeSpace = view.findViewById(R.id.prompt_text_free_space);
@@ -88,6 +120,7 @@ public class DownloadPromptDialog {
         // 2. URL and Copy
         textUrl.setText(url != null ? url : "");
         btnCopyUrl.setOnClickListener(v -> {
+            if (!dialog.isShowing() || !current.getAsBoolean()) return;
             if (url != null) {
                 ClipboardManager clipboard = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
                 ClipData clip = ClipData.newPlainText("Download URL", url);
@@ -102,6 +135,7 @@ public class DownloadPromptDialog {
 
         btnSwitchFolder.setText("Browse");
         btnSwitchFolder.setOnClickListener(v -> {
+            if (!dialog.isShowing() || !current.getAsBoolean()) return;
             showFolderChooserDialog(context, targetDir, textFolderPath, textFreeSpace);
         });
 
@@ -168,36 +202,19 @@ public class DownloadPromptDialog {
             });
         }
         updateThreadUI.run();
-
-        // 5. Incomplete / Duplicate Detection
-        DownloadDbHelper db = DownloadDbHelper.getInstance(context);
-        List<DownloadItem> existing = db.getAllDownloads();
-        DownloadItem matchedIncomplete = null;
-        for (DownloadItem it : existing) {
-            if (it.getFileName() != null && it.getFileName().equalsIgnoreCase(initialFileName) && it.getStatus() != DownloadStatus.COMPLETED) {
-                matchedIncomplete = it;
-                break;
-            }
+        if (isBlob) {
+            for (TextView pill : threadPills) pill.setVisibility(View.GONE);
+            textThreadDesc.setText("Keep the original tab on this page until the blob has been read.");
+            if (layoutThreadWarning != null) layoutThreadWarning.setVisibility(View.GONE);
         }
 
-        final DownloadItem duplicateItem = matchedIncomplete;
-        if (duplicateItem != null) {
-            layoutDuplicate.setVisibility(View.VISIBLE);
-            textDuplicateMsg.setText("Notice: An incomplete download for this file already exists (" + duplicateItem.getFormattedDownloadedSize() + " saved). You can update the link and resume directly.");
-            btnResumeExisting.setOnClickListener(v -> {
-                DownloadEngine.getInstance(context).updateUrl(duplicateItem.getId(), url);
-                Toast.makeText(context, "Link updated! Resuming partial download...", Toast.LENGTH_SHORT).show();
-                dialog.dismiss();
-            });
-        } else {
-            layoutDuplicate.setVisibility(View.GONE);
-        }
+        layoutDuplicate.setVisibility(View.GONE);
 
         CheckBox checkWifiOnly = view.findViewById(R.id.prompt_check_wifi_only);
         CheckBox checkSubfolders = view.findViewById(R.id.prompt_check_subfolders);
 
         DownloadEngine engine = DownloadEngine.getInstance(context);
-        checkWifiOnly.setChecked(engine.isWifiOnlyGlobal());
+        checkWifiOnly.setChecked(false); // This is a per-job requirement, independent of the global setting.
         checkSubfolders.setChecked(engine.isCategorySubfoldersEnabled());
 
         checkSubfolders.setOnCheckedChangeListener((buttonView, isChecked) -> {
@@ -210,45 +227,28 @@ public class DownloadPromptDialog {
         // 6. Action Listeners
         btnCancel.setOnClickListener(v -> dialog.dismiss());
 
-        String finalUserAgent = (userAgent == null || userAgent.trim().isEmpty()) ?
-                com.privacy.downloader.engine.DownloadTask.DEFAULT_USER_AGENT : userAgent;
-
         btnDownload.setOnClickListener(v -> {
+            if (!dialog.isShowing() || !current.getAsBoolean()) return;
             String fileName = editFileName.getText().toString().trim();
             if (fileName.isEmpty()) {
                 fileName = initialFileName;
             }
-            if (com.privacy.downloader.engine.StreamDetector.isStream(url, mimeType)) {
-                fileName = com.privacy.downloader.engine.StreamDetector.ensureMp4Extension(fileName);
-            }
-
-            File baseDir = targetDir[0];
-            boolean useSubfolders = checkSubfolders.isChecked();
-            File downloadsDir = com.privacy.downloader.util.CategoryOrganizer.getDestinationDirectory(baseDir, fileName, useSubfolders);
-            if (!downloadsDir.exists()) {
-                downloadsDir.mkdirs();
-            }
-
+            File downloadsDir = com.privacy.downloader.util.CategoryOrganizer.getDestinationDirectory(
+                    targetDir[0], fileName, checkSubfolders.isChecked());
             File destFile = new File(downloadsDir, fileName);
-            int count = 1;
-            while (destFile.exists()) {
-                int dot = fileName.lastIndexOf('.');
-                String base = (dot != -1) ? fileName.substring(0, dot) : fileName;
-                String ext = (dot != -1) ? fileName.substring(dot) : "";
-                destFile = new File(downloadsDir, base + "_" + count + ext);
-                count++;
-            }
 
             DownloadItem item = new DownloadItem();
             item.setId(UUID.randomUUID().toString());
             item.setUrl(url);
             item.setOriginalUrl(url);
-            item.setFileName(destFile.getName());
+            item.setFileName(fileName);
             item.setDestinationPath(destFile.getAbsolutePath());
-            item.setTempPath(destFile.getAbsolutePath() + ".part");
+            item.setExpectedSha256(editSha256.getText().toString());
             item.setMimeType(mimeType);
-            item.setNumSegments(selectedSegments[0]);
-            if (knownSize > 0) {
+            item.setNumSegments(isBlob ? 1 : selectedSegments[0]);
+            if (knownSize >= 0 && isBlob) {
+                item.setTotalBytes(knownSize);
+            } else if (knownSize > 0) {
                 item.setTotalBytes(knownSize);
                 item.setSupportsRange(true);
             }
@@ -256,13 +256,16 @@ public class DownloadPromptDialog {
                 item.setAudioUrl(audioUrl);
                 item.setAudioBytes(audioBytes);
             }
-            item.setCookies(cookies);
-            item.setUserAgent(finalUserAgent);
-            item.setReferrer(referrer);
             item.setWifiOnly(checkWifiOnly.isChecked());
             item.setStatus(DownloadStatus.PENDING);
 
-            DownloadEngine.getInstance(context).enqueue(item);
+            try {
+                if (isBlob) blobConfirmation.enqueue(item);
+                else engine.enqueue(item, request);
+            } catch (IOException e) {
+                Toast.makeText(context, e.getMessage(), Toast.LENGTH_LONG).show();
+                return;
+            }
             Toast.makeText(context, "Download queued: " + item.getFileName(), Toast.LENGTH_SHORT).show();
 
             if (listener != null) {
@@ -273,11 +276,35 @@ public class DownloadPromptDialog {
         });
 
         dialog.show();
+        // A blob cannot update an older job; a retired page or dismissed dialog cannot use a late lookup.
+        if (!isBlob) engine.findIncompleteDownload(initialFileName, duplicate -> {
+            if (duplicate == null || !dialog.isShowing() || !current.getAsBoolean()) return;
+            layoutDuplicate.setVisibility(View.VISIBLE);
+            textDuplicateMsg.setText("Notice: An incomplete download for this file already exists ("
+                    + DownloadItem.formatBytes(duplicate.savedBytes)
+                    + " saved). If you update the link, saved bytes will only be reused if they can be verified.");
+            btnResumeExisting.setOnClickListener(v -> {
+                if (!dialog.isShowing() || !current.getAsBoolean()) return;
+                btnResumeExisting.setEnabled(false);
+                engine.updateUrl(duplicate.id, url, updated -> {
+                    if (!dialog.isShowing() || !current.getAsBoolean()) return;
+                    btnResumeExisting.setEnabled(true);
+                    if (updated) {
+                        Toast.makeText(context, "Link updated. Retrying download...", Toast.LENGTH_SHORT).show();
+                        dialog.dismiss();
+                    } else {
+                        Toast.makeText(context, "Link not updated. Stop the earlier transfer first.", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            });
+        });
+
 
         if (dialog.getWindow() != null) {
             int width = (int) (context.getResources().getDisplayMetrics().widthPixels * 0.92);
             dialog.getWindow().setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT);
         }
+        return dialog;
     }
 
     public static void updateFolderDisplay(File folder, TextView pathView, TextView spaceView) {

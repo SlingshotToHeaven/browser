@@ -5,20 +5,6 @@
 (function() {
     'use strict';
 
-    function notifyShield(apiType) {
-        try {
-            if (window.PrivacyShieldBridge && typeof window.PrivacyShieldBridge.postMessage === 'function') {
-                window.PrivacyShieldBridge.postMessage(JSON.stringify({
-                    type: 'FINGERPRINT_INTERCEPTED',
-                    api: apiType,
-                    timestamp: Date.now()
-                }));
-            }
-        } catch (e) {
-            // Silently absorb bridge reporting errors
-        }
-    }
-
     // =========================================================================
     // 1. Canvas Fingerprint Protection (Micro-Noise Injection)
     // =========================================================================
@@ -33,7 +19,7 @@
                         // Perturb the red channel by 1 least-significant bit
                         imgData.data[0] = (imgData.data[0] ^ 1);
                         ctx.putImageData(imgData, 0, 0);
-                        notifyShield('canvas_todataurl');
+
                     }
                 }
             } catch (e) {}
@@ -47,7 +33,7 @@
                 if (imgData.data && imgData.data.length >= 4) {
                     // Inject undetectable micro-noise at first pixel
                     imgData.data[0] = (imgData.data[0] ^ 1);
-                    notifyShield('canvas_getimagedata');
+
                 }
             } catch (e) {}
             return imgData;
@@ -66,11 +52,11 @@
             const origGetParam = proto.getParameter;
             proto.getParameter = function(param) {
                 if (param === UNMASKED_VENDOR_WEBGL) {
-                    notifyShield('webgl_vendor');
+
                     return 'ARM';
                 }
                 if (param === UNMASKED_RENDERER_WEBGL) {
-                    notifyShield('webgl_renderer');
+
                     return 'Mali-G78 MP14';
                 }
                 return origGetParam.apply(this, arguments);
@@ -97,7 +83,7 @@
                     for (let i = 0; i < Math.min(array.length, 10); i++) {
                         array[i] += (Math.sin(i) * 0.0001);
                     }
-                    notifyShield('audio_frequency');
+
                 }
             };
 
@@ -106,7 +92,7 @@
                 origGetByteFreq.apply(this, arguments);
                 if (array && array.length > 0) {
                     array[0] = (array[0] ^ 1);
-                    notifyShield('audio_byte_frequency');
+
                 }
             };
         }

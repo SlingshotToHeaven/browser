@@ -10,7 +10,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
-import android.webkit.CookieManager;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -21,12 +20,12 @@ import android.widget.Toast;
 import com.privacy.browser.R;
 import com.privacy.browser.media.MediaSniffer;
 import com.privacy.downloader.engine.StreamDetector;
-import com.privacy.downloader.ui.DownloadPromptDialog;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.BooleanSupplier;
 
 /**
  * AMOLED bottom sheet dialog displaying available video qualities and companion audio tracks
@@ -35,23 +34,13 @@ import java.util.Locale;
  */
 public class VideoQualityDialog {
 
-    public interface OnLinkGrabberClickListener {
-        void onOpenLinkGrabber();
+    public interface DownloadAction {
+        void choose(String url, String mime, String name, long size, String audio, long audioSize);
     }
 
-    public interface OnRefreshClickListener {
-        void onRefresh();
-    }
-
-    public static void show(Context context, List<MediaSniffer.SniffedMedia> mediaList, String pageUrl, String userAgent, OnLinkGrabberClickListener grabberListener) {
-        show(context, mediaList, pageUrl, userAgent, grabberListener, null);
-    }
-
-    public static void show(Context context, List<MediaSniffer.SniffedMedia> mediaList, String pageUrl, String userAgent, OnLinkGrabberClickListener grabberListener, OnRefreshClickListener refreshListener) {
-        if (context == null || mediaList == null || mediaList.isEmpty()) {
-            Toast.makeText(context, "No media streams detected yet", Toast.LENGTH_SHORT).show();
-            return;
-        }
+    public static AlertDialog show(Context context, List<MediaSniffer.SniffedMedia> mediaList, BooleanSupplier current,
+                                   DownloadAction action, Runnable grabber, Runnable refresh) {
+        if (mediaList.isEmpty() || !current.getAsBoolean()) return null;
 
         AlertDialog.Builder builder = new AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert);
         View root = LayoutInflater.from(context).inflate(R.layout.dialog_video_quality_picker, null);
@@ -82,10 +71,9 @@ public class VideoQualityDialog {
 
         if (btnRefresh != null) {
             btnRefresh.setOnClickListener(v -> {
+                if (!dialog.isShowing() || !current.getAsBoolean()) return;
                 dialog.dismiss();
-                if (refreshListener != null) {
-                    refreshListener.onRefresh();
-                }
+                refresh.run();
             });
         }
         btnClose.setOnClickListener(v -> dialog.dismiss());
@@ -144,10 +132,10 @@ public class VideoQualityDialog {
 
             if (curVideo != null) {
                 long totalSize = curVideo.getFileSize();
-                boolean needsAudio = (curVideo.getAudioUrl() != null || (curVideo.getUrl() != null && curVideo.getUrl().contains("videoplayback")));
-                if (needsAudio && curAudio != null && curAudio.getFileSize() > 0) {
-                    totalSize = (totalSize > 0) ? (totalSize + curAudio.getFileSize()) : curAudio.getFileSize();
-                }
+                boolean needsAudio = curVideo.getAudioUrl() != null;
+                boolean useSelection = compatibleAudio(curVideo, curAudio);
+                long audioSize = useSelection ? curAudio.getFileSize() : curVideo.getAudioFileSize();
+                if (needsAudio && audioSize > 0) totalSize = Math.max(0, totalSize) + audioSize;
 
                 String sizeStr = formatBytes(totalSize);
                 btnDownload.setText("DOWNLOAD VIDEO" + (sizeStr.isEmpty() ? "" : " • ~" + sizeStr));
@@ -157,13 +145,8 @@ public class VideoQualityDialog {
                 if (curVideo.getCodec() != null && !curVideo.getCodec().isEmpty()) {
                     sub.append(" (").append(curVideo.getCodec()).append(")");
                 }
-                if (needsAudio && curAudio != null) {
-                    sub.append(" + ").append(curAudio.getQuality());
-                    if (curAudio.getCodec() != null) {
-                        sub.append(" (").append(curAudio.getCodec()).append(")");
-                    }
-                    sub.append(" • Merged MP4");
-                }
+                if (needsAudio) sub.append(useSelection ? " + " + curAudio.getQuality() : " + companion audio")
+                        .append(" • Merged MP4");
                 tvSubtitle.setText(sub.toString());
             } else if (curAudio != null) {
                 String sizeStr = formatBytes(curAudio.getFileSize());
@@ -261,6 +244,7 @@ public class VideoQualityDialog {
 
         final String finalTitle = title;
         btnDownload.setOnClickListener(v -> {
+            if (!dialog.isShowing() || !current.getAsBoolean()) return;
             MediaSniffer.SniffedMedia selectedVideo = (selectedVideoIdx[0] >= 0 && selectedVideoIdx[0] < videoList.size())
                     ? videoList.get(selectedVideoIdx[0]) : null;
             MediaSniffer.SniffedMedia selectedAudio = (selectedAudioIdx[0] >= 0 && selectedAudioIdx[0] < audioList.size())
@@ -275,25 +259,13 @@ public class VideoQualityDialog {
 
             if (selectedVideo != null) {
                 String videoUrl = selectedVideo.getUrl();
-                boolean isStream = StreamDetector.isStream(videoUrl, null) || videoUrl.contains(".m3u8") || videoUrl.contains(".mpd");
-                String mimeType = isStream ? "application/vnd.apple.mpegurl" : "video/mp4";
-
-                boolean isGoogleVideo = videoUrl.contains("googlevideo.com");
-                String effectiveCookies = CookieManager.getInstance().getCookie(pageUrl);
-                if (effectiveCookies == null && isGoogleVideo) {
-                    effectiveCookies = CookieManager.getInstance().getCookie("https://youtube.com");
-                }
-                String effectiveReferrer;
-                if (isGoogleVideo) {
-                    effectiveReferrer = (pageUrl != null && !pageUrl.isEmpty() ? pageUrl : "https://m.youtube.com/");
-                } else {
-                    effectiveReferrer = (selectedVideo.getReferrer() != null ? selectedVideo.getReferrer() : pageUrl);
-                }
+                String mimeType = selectedVideo.getManifestMime();
+                if (mimeType == null) mimeType = "video/mp4";
 
                 // Companion audio track resolution
                 String audioUrl = null;
                 long audioBytes = -1;
-                if (selectedAudio != null) {
+                if (compatibleAudio(selectedVideo, selectedAudio)) {
                     audioUrl = selectedAudio.getUrl();
                     audioBytes = selectedAudio.getFileSize();
                 } else if (selectedVideo.getAudioUrl() != null) {
@@ -312,32 +284,26 @@ public class VideoQualityDialog {
                 String cleanName = rawFileName.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
                 String mp4FileName = StreamDetector.ensureMp4Extension(cleanName);
 
-                DownloadPromptDialog.show(context, videoUrl, userAgent, null, mimeType,
-                        effectiveCookies, effectiveReferrer, mp4FileName, totalBytes, audioUrl, audioBytes, null);
+                action.choose(videoUrl, mimeType, "Direct Video".equals(selectedVideo.getQuality()) ? null : mp4FileName,
+                        totalBytes, audioUrl, audioBytes);
             } else {
                 // Audio Only download
                 String audioUrl = selectedAudio.getUrl();
-                boolean isGoogleVideo = audioUrl.contains("googlevideo.com");
-                String effectiveCookies = CookieManager.getInstance().getCookie(pageUrl);
-                if (effectiveCookies == null && isGoogleVideo) {
-                    effectiveCookies = CookieManager.getInstance().getCookie("https://youtube.com");
-                }
-                String effectiveReferrer = isGoogleVideo ? "https://m.youtube.com/" : (selectedAudio.getReferrer() != null ? selectedAudio.getReferrer() : pageUrl);
-
                 String ext = "AAC".equalsIgnoreCase(selectedAudio.getCodec()) ? ".m4a" : ".opus";
                 String rawFileName = finalTitle + "_Audio_" + selectedAudio.getQuality();
                 String cleanName = rawFileName.replaceAll("[\\\\/:*?\"<>|]", "_").trim() + ext;
 
-                DownloadPromptDialog.show(context, audioUrl, userAgent, null, "audio/*",
-                        effectiveCookies, effectiveReferrer, cleanName, selectedAudio.getFileSize(), null, -1, null);
+                action.choose(audioUrl, "audio/*", "Direct Audio".equals(selectedAudio.getQuality()) ? null : cleanName,
+                        selectedAudio.getFileSize(), null, -1);
             }
         });
 
-        if (grabberListener != null) {
+        if (grabber != null) {
             btnLinkGrabber.setVisibility(View.VISIBLE);
             btnLinkGrabber.setOnClickListener(v -> {
+                if (!dialog.isShowing() || !current.getAsBoolean()) return;
                 dialog.dismiss();
-                grabberListener.onOpenLinkGrabber();
+                grabber.run();
             });
         } else {
             btnLinkGrabber.setVisibility(View.GONE);
@@ -361,6 +327,12 @@ public class VideoQualityDialog {
                 }
             });
         }
+        return dialog;
+    }
+
+    private static boolean compatibleAudio(MediaSniffer.SniffedMedia video, MediaSniffer.SniffedMedia audio) {
+        return video.getAudioUrl() != null && video.getAudioGroup() != null && audio != null
+                && video.getAudioGroup().equals(audio.getAudioGroup());
     }
 
     private static String formatQualityLabel(String quality, String codec) {

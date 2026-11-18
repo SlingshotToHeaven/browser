@@ -100,6 +100,18 @@
                 android:paddingEnd="12dp"
                 android:layout_marginEnd="6dp" />
 
+            <Button
+                android:id="@+id/btn_tab_custom_network"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:text="Custom Network"
+                android:textSize="12sp"
+                android:textColor="?attr/textPrimary"
+                android:background="?attr/borderHairline"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginEnd="6dp" />
+
             <!-- Category 2: Cosmetic Rules -->
             <Button
                 android:id="@+id/btn_tab_cosmetic"
@@ -241,7 +253,7 @@
             android:id="@+id/btn_script_timing"
             android:layout_width="wrap_content"
             android:layout_height="28dp"
-            android:text="document-start"
+            android:text="After page commit"
             android:textColor="?attr/textPrimary"
             android:textSize="11sp"
             android:fontFamily="monospace"

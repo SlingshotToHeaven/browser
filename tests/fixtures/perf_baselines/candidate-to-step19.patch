@@ -1,0 +1,3976 @@
+diff --git a/app/src/main/java/com/privacy/browser/MainActivity.java b/app/src/main/java/com/privacy/browser/MainActivity.java
+--- a/app/src/main/java/com/privacy/browser/MainActivity.java
++++ b/app/src/main/java/com/privacy/browser/MainActivity.java
+@@ -81,6 +81,7 @@
+ import com.privacy.downloader.net.RequestContext;
+ import com.privacy.downloader.ui.DownloadPromptDialog;
+ import com.privacy.downloader.ui.DownloadsActivity;
++import com.privacy.downloader.ui.DownloadsDialog;
+ import com.privacy.downloader.ui.LinkGrabberActivity;
+ import com.privacy.browser.bookmarks.BookmarksActivity;
+ import com.privacy.browser.history.HistoryActivity;
+diff --git a/downloader/build.gradle b/downloader/build.gradle
+--- a/downloader/build.gradle
++++ b/downloader/build.gradle
+@@ -28,7 +28,6 @@
+ dependencies {
+     implementation 'androidx.annotation:annotation:1.8.2'
+     implementation 'androidx.core:core:1.13.1'
+-    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+     implementation 'androidx.webkit:webkit:1.12.0'
+     testImplementation 'junit:junit:4.13.2'
+ }
+diff --git a/downloader/src/main/java/com/privacy/downloader/db/DownloadDbHelper.java b/downloader/src/main/java/com/privacy/downloader/db/DownloadDbHelper.java
+--- a/downloader/src/main/java/com/privacy/downloader/db/DownloadDbHelper.java
++++ b/downloader/src/main/java/com/privacy/downloader/db/DownloadDbHelper.java
+@@ -3,11 +3,8 @@
+ import android.content.ContentValues;
+ import android.content.Context;
+ import android.database.Cursor;
+-import android.database.DatabaseUtils;
+ import android.database.sqlite.SQLiteDatabase;
+ import android.database.sqlite.SQLiteOpenHelper;
+-import android.os.CancellationSignal;
+-import android.os.Trace;
+ 
+ import com.privacy.downloader.engine.DownloadQueue;
+ import com.privacy.downloader.model.DownloadItem;
+@@ -21,19 +18,14 @@
+ import java.nio.file.LinkOption;
+ import java.util.ArrayList;
+ import java.util.Arrays;
+-import java.util.Collection;
+-import java.util.Collections;
+ import java.util.HashSet;
+ import java.util.List;
+-import java.util.Map;
+-import java.util.HashMap;
+ import java.util.Set;
+-import java.util.function.Predicate;
+ 
+ public class DownloadDbHelper extends SQLiteOpenHelper implements DownloadQueue.Store {
+ 
+     private static final String DATABASE_NAME = "downloads.db";
+-    private static final int DATABASE_VERSION = 8;
++    private static final int DATABASE_VERSION = 7;
+ 
+     public static final String TABLE_DOWNLOADS = "downloads";
+     public static final String COL_ID = "id";
+@@ -41,8 +33,6 @@
+     public static final String COL_ORIGINAL_URL = "original_url";
+     public static final String COL_FILE_NAME = "file_name";
+     public static final String COL_DEST_PATH = "dest_path";
+-    private static final String COL_NAME_SEARCH = "name_search";
+-    private static final String COL_NAME_ORDER = "name_order";
+     private static final String COL_DESTINATION_KEY = "destination_key";
+     private static final String COL_EXPECTED_SHA256 = "expected_sha256";
+     private static final String COL_ATTEMPT_TOKEN = "attempt_token";
+@@ -77,8 +67,6 @@
+     public static final String COL_SEG_CURRENT = "current_byte";
+     public static final String COL_SEG_STATUS = "status";
+ 
+-    private static final String UNKEYED_PATHS = "(destination_key IS NULL AND dest_path IS NOT NULL) OR temp_path IS NOT NULL";
+-    private static final String PATHS_INDEX = "CREATE INDEX downloads_unkeyed_paths ON downloads (id) WHERE " + UNKEYED_PATHS;
+     private static final String QUEUE_ROW = COL_ID + "=? AND " + COL_STATUS + "=? AND " + COL_ATTEMPT_TOKEN;
+     private static final String TRANSFERRING = COL_STATUS + " IN ('CONNECTING','RUNNING')";
+     private static final String WORKER = COL_ID + "=? AND " + COL_ATTEMPT_TOKEN + "=?";
+@@ -92,14 +80,6 @@
+             + COL_ATTEMPT_TOKEN + " IS NOT NULL AND " + COL_DESTINATION_KEY + " IS NOT NULL AND "
+             + COL_TEMP_PATH + " IS NULL AND " + COL_PUBLISHED_IDENTITY + " IS NOT NULL AND "
+             + COL_TOTAL_BYTES + ">=0 AND " + COL_TOTAL_BYTES + "=" + COL_DOWNLOADED_BYTES;
+-
+-    private static final String[] TASK_COLUMNS = {COL_ID, COL_ATTEMPT_TOKEN, COL_URL, COL_ORIGINAL_URL, COL_FILE_NAME,
+-            COL_DEST_PATH, COL_TEMP_PATH, COL_MIME_TYPE, COL_EXPECTED_SHA256, COL_TOTAL_BYTES, COL_DOWNLOADED_BYTES,
+-            COL_STATUS, COL_NUM_SEGMENTS, COL_SUPPORTS_RANGE, COL_ETAG, COL_VERIFIED_RANGE_URL, COL_FULL_DOWNLOAD_ONLY,
+-            COL_LAST_MODIFIED, COL_CREATED_TIME, COL_FINISHED_TIME, COL_ERROR_MESSAGE, COL_WIFI_ONLY, COL_AUDIO_URL, COL_AUDIO_BYTES};
+-    // Only the prefix is needed for orphaned blob intake. Never materialize a queued data: payload here.
+-    private static final String[] QUEUE_COLUMNS = {COL_ID, COL_STATUS, COL_ATTEMPT_TOKEN, COL_WIFI_ONLY, COL_ERROR_MESSAGE,
+-            "substr(" + COL_URL + ",1,5)"};
+ 
+     private static DownloadDbHelper instance;
+ 
+@@ -145,12 +125,9 @@
+                 + COL_ERROR_MESSAGE + " TEXT, "
+                 + COL_WIFI_ONLY + " INTEGER DEFAULT 0, "
+                 + COL_AUDIO_URL + " TEXT, "
+-                + COL_AUDIO_BYTES + " INTEGER DEFAULT -1, "
+-                + COL_NAME_SEARCH + " TEXT NOT NULL DEFAULT '', "
+-                + COL_NAME_ORDER + " TEXT NOT NULL DEFAULT '')";
++                + COL_AUDIO_BYTES + " INTEGER DEFAULT -1)";
+         db.execSQL(createDownloadsTable);
+         createDestinationIndex(db);
+-        createQueryIndexes(db);
+ 
+         String createSegmentsTable = "CREATE TABLE " + TABLE_SEGMENTS + " ("
+                 + COL_SEG_TASK_ID + " TEXT NOT NULL, "
+@@ -196,50 +173,6 @@
+                     + COL_REFERRER + "=NULL WHERE " + COL_COOKIES + " IS NOT NULL OR " + COL_USER_AGENT + " IS NOT NULL OR "
+                     + COL_REFERRER + " IS NOT NULL");
+         }
+-        if (oldVersion < 8) {
+-            db.execSQL("ALTER TABLE " + TABLE_DOWNLOADS + " ADD COLUMN " + COL_NAME_SEARCH + " TEXT NOT NULL DEFAULT ''");
+-            db.execSQL("ALTER TABLE " + TABLE_DOWNLOADS + " ADD COLUMN " + COL_NAME_ORDER + " TEXT NOT NULL DEFAULT ''");
+-            backfillNames(db);
+-            createQueryIndexes(db);
+-        }
+-    }
+-
+-    private static void createQueryIndexes(SQLiteDatabase db) {
+-        db.execSQL(DownloadHistory.STATUS_INDEX);
+-        db.execSQL(DownloadHistory.DATE_INDEX);
+-        db.execSQL(DownloadHistory.SIZE_INDEX);
+-        db.execSQL(DownloadHistory.NAME_INDEX);
+-        db.execSQL(DownloadHistory.COMPLETED_SIZE_INDEX);
+-        db.execSQL(DownloadHistory.COMPLETED_NAME_INDEX);
+-        db.execSQL(DownloadHistory.DUPLICATE_INDEX);
+-        db.execSQL(PATHS_INDEX);
+-    }
+-
+-    private static void backfillNames(SQLiteDatabase db) {
+-        // Snapshot each small batch before updating it, inside SQLiteOpenHelper's upgrade transaction.
+-        Long after = null;
+-        for (;;) {
+-            Map<Long, String> names = new HashMap<>();
+-            try (Cursor cursor = db.query(TABLE_DOWNLOADS, new String[]{"rowid", COL_FILE_NAME},
+-                    after == null ? null : "rowid>?", after == null ? null : new String[]{after.toString()},
+-                    null, null, "rowid", "256")) {
+-                while (cursor.moveToNext()) {
+-                    after = cursor.getLong(0);
+-                    names.put(after, cursor.getString(1));
+-                }
+-            }
+-            if (names.isEmpty()) return;
+-            for (Map.Entry<Long, String> row : names.entrySet()) {
+-                ContentValues values = new ContentValues(2);
+-                putNameKeys(values, row.getValue());
+-                db.update(TABLE_DOWNLOADS, values, "rowid=?", new String[]{row.getKey().toString()});
+-            }
+-        }
+-    }
+-
+-    private static void putNameKeys(ContentValues values, String name) {
+-        values.put(COL_NAME_SEARCH, DownloadHistory.searchKey(name));
+-        values.put(COL_NAME_ORDER, DownloadHistory.nameKey(name));
+     }
+ 
+     private static void createDestinationIndex(SQLiteDatabase db) {
+@@ -252,7 +185,7 @@
+         SQLiteDatabase db = getWritableDatabase();
+         db.beginTransaction();
+         try {
+-            File chosen = DownloadDestination.choose(requested, pathClaims(db, item.getId()));
++            File chosen = DownloadDestination.choose(requested, occupiedKeys(db, item.getId()));
+             item.setFileName(chosen.getName());
+             item.setDestinationPath(chosen.getPath());
+             item.setTempPath(null);
+@@ -261,7 +194,6 @@
+             ContentValues cv = transferValues(item);
+             cv.put(COL_ID, item.getId());
+             cv.put(COL_FILE_NAME, chosen.getName());
+-            putNameKeys(cv, chosen.getName());
+             cv.put(COL_DEST_PATH, chosen.getPath());
+             cv.put(COL_DESTINATION_KEY, DownloadDestination.key(chosen));
+             cv.put(COL_EXPECTED_SHA256, item.getExpectedSha256());
+@@ -300,11 +232,10 @@
+             ContentValues claim = new ContentValues();
+             if (reservedKey == null) {
+                 DownloadDestination.requireVacant(requested);
+-                destination = DownloadDestination.choose(requested, pathClaims(db, item.getId()));
++                destination = DownloadDestination.choose(requested, occupiedKeys(db, item.getId()));
+                 claim.put(COL_DESTINATION_KEY, DownloadDestination.key(destination));
+                 claim.put(COL_DEST_PATH, destination.getPath());
+                 claim.put(COL_FILE_NAME, destination.getName());
+-                putNameKeys(claim, destination.getName());
+             } else if (!reservedKey.equals(DownloadDestination.key(destination))) {
+                 throw new IOException("The reserved download folder has changed. Restore it or queue a new download.");
+             }
+@@ -324,25 +255,17 @@
+         }
+     }
+ 
+-    private static Predicate<String> pathClaims(SQLiteDatabase db, String exceptId) throws IOException {
+-        Set<String> unkeyed = new HashSet<>();
+-        // Legacy destinations and staging paths can have filesystem aliases. Resolve the small residual
+-        // set as before; modern destination claims already have a canonical key and an exact index.
++    private static Set<String> occupiedKeys(SQLiteDatabase db, String exceptId) throws IOException {
++        Set<String> keys = new HashSet<>();
+         try (Cursor row = db.query(TABLE_DOWNLOADS, new String[]{COL_DESTINATION_KEY, COL_DEST_PATH, COL_TEMP_PATH},
+-                "(" + UNKEYED_PATHS + ") AND " + COL_ID + "<>?", new String[]{exceptId}, null, null, null)) {
++                COL_ID + "<>?", new String[]{exceptId}, null, null, null)) {
+             while (row.moveToNext()) {
+-                if (row.isNull(0)) addPathKey(unkeyed, row.getString(1));
+-                addPathKey(unkeyed, row.getString(2));
+-            }
+-        }
+-        return key -> unkeyed.contains(key) || pathKeyExists(db, key, exceptId);
+-    }
+-
+-    private static boolean pathKeyExists(SQLiteDatabase db, String key, String exceptId) {
+-        try (Cursor row = db.query(TABLE_DOWNLOADS, new String[]{COL_ID}, COL_DESTINATION_KEY + "=? AND " + COL_ID + "<>?",
+-                new String[]{key, exceptId}, null, null, null, "1")) {
+-            return row.moveToFirst();
+-        }
++                if (row.isNull(0)) addPathKey(keys, row.getString(1));
++                else keys.add(row.getString(0));
++                addPathKey(keys, row.getString(2));
++            }
++        }
++        return keys;
+     }
+ 
+     private static void addPathKey(Set<String> keys, String path) throws IOException {
+@@ -522,21 +445,28 @@
+ 
+     @Override
+     public synchronized DownloadItem getDownload(String taskId) {
+-        try (Cursor c = getReadableDatabase().query(TABLE_DOWNLOADS, TASK_COLUMNS,
+-                COL_ID + "=?", new String[]{taskId}, null, null, null)) {
+-            return c.moveToFirst() ? cursorToDownloadItem(c) : null;
+-        }
+-    }
+-
+-    /** An explicit diagnostics snapshot; never a history or notification read. */
+-    public synchronized DownloadItem getDownloadWithSegments(String taskId) {
+-        DownloadItem item = getDownload(taskId);
+-        if (item != null) item.setSegments(getSegments(taskId));
+-        return item;
+-    }
+-
+-    public long countDownloads() {
+-        return DatabaseUtils.queryNumEntries(getReadableDatabase(), TABLE_DOWNLOADS);
++        SQLiteDatabase db = getReadableDatabase();
++        try (Cursor c = db.query(TABLE_DOWNLOADS, null, COL_ID + "=?", new String[]{taskId}, null, null, null)) {
++            if (c.moveToFirst()) {
++                DownloadItem item = cursorToDownloadItem(c);
++                item.setSegments(getSegments(taskId));
++                return item;
++            }
++        }
++        return null;
++    }
++
++    public synchronized List<DownloadItem> getAllDownloads() {
++        List<DownloadItem> list = new ArrayList<>();
++        SQLiteDatabase db = getReadableDatabase();
++        try (Cursor c = db.query(TABLE_DOWNLOADS, null, null, null, null, null, COL_CREATED_TIME + " DESC")) {
++            while (c.moveToNext()) {
++                DownloadItem item = cursorToDownloadItem(c);
++                item.setSegments(getSegments(item.getId()));
++                list.add(item);
++            }
++        }
++        return list;
+     }
+ 
+     @Override
+@@ -546,94 +476,13 @@
+         Arrays.fill(markers, "?");
+         for (int i = 0; i < states.length; i++) args[i] = states[i].name();
+         List<DownloadItem> items = new ArrayList<>();
+-        try (Cursor c = getReadableDatabase().query(TABLE_DOWNLOADS, QUEUE_COLUMNS,
+-                COL_STATUS + " IN (" + String.join(",", markers) + ")", args, null, null, DownloadHistory.DATE + " ASC, " + COL_ID)) {
+-            while (c.moveToNext()) {
+-                DownloadItem item = new DownloadItem();
+-                item.setId(c.getString(0));
+-                item.setStatus(DownloadStatus.valueOf(c.getString(1)));
+-                item.setAttemptToken(c.getString(2));
+-                item.setWifiOnly(c.getInt(3) == 1);
+-                item.setErrorMessage(c.getString(4));
+-                item.setUrl(c.getString(5));
+-                items.add(item);
+-            }
++        try (Cursor c = getReadableDatabase().query(TABLE_DOWNLOADS, null,
++                COL_STATUS + " IN (" + String.join(",", markers) + ")", args, null, null, COL_CREATED_TIME + " ASC, " + COL_ID)) {
++            while (c.moveToNext()) items.add(cursorToDownloadItem(c));
+         }
+         return items;
+     }
+ 
+-    public boolean hasAutomaticDownloads() {
+-        try (Cursor c = getReadableDatabase().rawQuery("SELECT 1 FROM downloads WHERE " + DownloadHistory.AUTOMATIC + " LIMIT 1", null)) {
+-            return c.moveToFirst();
+-        }
+-    }
+-
+-    public DownloadHistory.Duplicate findIncomplete(String filename) {
+-        try (Cursor c = getReadableDatabase().rawQuery(DownloadHistory.DUPLICATE_SQL, new String[]{DownloadHistory.nameKey(filename)})) {
+-            return c.moveToFirst() ? new DownloadHistory.Duplicate(c.getString(0), c.getLong(1)) : null;
+-        }
+-    }
+-
+-    /** Only call on a reader thread. Cursor windows contain card fields, not URL payloads or checkpoints. */
+-    public DownloadHistory.Page readPage(DownloadHistory.Query query, DownloadHistory.Row after, CancellationSignal cancel) {
+-        Trace.beginSection("Downloads.page");
+-        try {
+-            DownloadHistory.Sql sql = query.page(after);
+-            List<DownloadHistory.Row> rows = new ArrayList<>(DownloadHistory.PAGE_SIZE);
+-            try (Cursor c = getReadableDatabase().rawQuery(sql.text, sql.args, cancel)) {
+-                while (rows.size() < DownloadHistory.PAGE_SIZE && c.moveToNext()) rows.add(readCard(c));
+-                return new DownloadHistory.Page(rows, rows.size() == DownloadHistory.PAGE_SIZE && c.moveToNext());
+-            }
+-        } finally {
+-            Trace.endSection();
+-        }
+-    }
+-
+-    public List<DownloadHistory.Row> readChangedRows(DownloadHistory.Query query, List<String> ids, CancellationSignal cancel) {
+-        if (ids.isEmpty() || ids.size() > DownloadHistory.ID_BATCH) throw new IllegalArgumentException("Expected a bounded set of job IDs");
+-        Trace.beginSection("Downloads.changedRows");
+-        try {
+-            DownloadHistory.Sql sql = query.ids(ids, true);
+-            List<DownloadHistory.Row> rows = new ArrayList<>(ids.size());
+-            try (Cursor c = getReadableDatabase().rawQuery(sql.text, sql.args, cancel)) {
+-                while (c.moveToNext()) rows.add(readCard(c));
+-            }
+-            return rows;
+-        } finally {
+-            Trace.endSection();
+-        }
+-    }
+-
+-    /** An explicit Select All reads IDs only. A selection moving to another filter intersects by ID. */
+-    public Set<String> readMatchingIds(DownloadHistory.Query query, Collection<String> subset, CancellationSignal cancel) {
+-        Set<String> ids = new HashSet<>();
+-        if (subset == null) readIds(query.ids(null, false), cancel, ids);
+-        else {
+-            List<String> batch = new ArrayList<>(DownloadHistory.ID_BATCH);
+-            for (String id : subset) {
+-                batch.add(id);
+-                if (batch.size() == DownloadHistory.ID_BATCH) {
+-                    readIds(query.ids(batch, false), cancel, ids);
+-                    batch.clear();
+-                }
+-            }
+-            if (!batch.isEmpty()) readIds(query.ids(batch, false), cancel, ids);
+-        }
+-        return ids;
+-    }
+-
+-    private void readIds(DownloadHistory.Sql sql, CancellationSignal cancel, Set<String> out) {
+-        try (Cursor c = getReadableDatabase().rawQuery(sql.text, sql.args, cancel)) {
+-            while (c.moveToNext()) out.add(c.getString(0));
+-        }
+-    }
+-
+-    private static DownloadHistory.Row readCard(Cursor c) {
+-        return new DownloadHistory.Row(c.getString(0), c.getString(1), c.getString(2), DownloadStatus.valueOf(c.getString(3)),
+-                c.getLong(4), c.getLong(5), c.getInt(6), c.getString(7), c.getLong(8), c.getString(9));
+-    }
+-
+-    @Override
+     public synchronized List<DownloadSegment> getSegments(String taskId) {
+         List<DownloadSegment> list = new ArrayList<>();
+         SQLiteDatabase db = getReadableDatabase();
+@@ -667,33 +516,15 @@
+         }
+     }
+ 
+-    @Override
+-    public synchronized int clearCompletedExcept(Set<String> owned) {
+-        String where = COL_STATUS + "='COMPLETED' AND " + COL_ID + " IS NOT NULL";
+-        String[] args = owned.toArray(new String[0]);
+-        if (args.length != 0) where += " AND " + COL_ID + " NOT IN (" + String.join(",", Collections.nCopies(args.length, "?")) + ")";
+-        SQLiteDatabase db = getWritableDatabase();
+-        db.beginTransaction();
+-        try {
+-            db.delete(TABLE_SEGMENTS, COL_SEG_TASK_ID + " IN (SELECT " + COL_ID + " FROM " + TABLE_DOWNLOADS
+-                    + " WHERE " + where + ")", args);
+-            int removed = db.delete(TABLE_DOWNLOADS, where, args);
+-            db.setTransactionSuccessful();
+-            return removed;
+-        } finally {
+-            db.endTransaction();
+-        }
+-    }
+-
+     private static void deleteArtifacts(SQLiteDatabase db, DownloadItem item) {
+         if (item.getDestinationPath() == null) return;
+         File destination = new File(item.getDestinationPath());
+         if (!destination.isAbsolute()) return;
+         try {
+             String destinationKey = DownloadDestination.key(destination);
+-            Predicate<String> otherPaths = pathClaims(db, item.getId());
++            Set<String> otherPaths = occupiedKeys(db, item.getId());
+             // This is an explicit user deletion. Do not touch an occupied uncommitted destination.
+-            if (item.getStatus() == DownloadStatus.COMPLETED && !otherPaths.test(destinationKey)
++            if (item.getStatus() == DownloadStatus.COMPLETED && !otherPaths.contains(destinationKey)
+                     && Files.isRegularFile(destination.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                 Files.deleteIfExists(destination.toPath());
+             }
+@@ -703,7 +534,7 @@
+                 String stageKey = DownloadDestination.key(staging);
+                 if (staging.isAbsolute() && (name.startsWith("download-") || name.startsWith("stream-")) && name.endsWith(".part")
+                         && staging.getParentFile().equals(destination.getParentFile())
+-                        && !stageKey.equals(destinationKey) && !otherPaths.test(stageKey)
++                        && !stageKey.equals(destinationKey) && !otherPaths.contains(stageKey)
+                         && Files.isRegularFile(staging.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                     Files.deleteIfExists(staging.toPath());
+                 }
+@@ -714,10 +545,10 @@
+     }
+ 
+     @Override
+-    public synchronized int recoverInterrupted() {
++    public synchronized void recoverInterrupted() {
+         ContentValues cv = stateValues(DownloadStatus.PENDING, null);
+         cv.putNull(COL_ATTEMPT_TOKEN);
+-        return getWritableDatabase().update(TABLE_DOWNLOADS, cv, TRANSFERRING, null);
++        getWritableDatabase().update(TABLE_DOWNLOADS, cv, TRANSFERRING, null);
+     }
+ 
+     private DownloadItem cursorToDownloadItem(Cursor c) {
+diff --git a/downloader/src/main/java/com/privacy/downloader/db/DownloadHistory.java b/downloader/src/main/java/com/privacy/downloader/db/DownloadHistory.java
+deleted file mode 100644
+--- a/downloader/src/main/java/com/privacy/downloader/db/DownloadHistory.java
++++ /dev/null
+@@ -1,227 +0,0 @@
+-package com.privacy.downloader.db;
+-
+-import com.privacy.downloader.model.DownloadStatus;
+-
+-import java.util.ArrayList;
+-import java.util.Collections;
+-import java.util.List;
+-import java.util.Locale;
+-import java.util.Objects;
+-
+-/** Bound parameters and a stable keyset for the Downloads screen. Live progress isn't a paging key. */
+-public final class DownloadHistory {
+-    public static final int PAGE_SIZE = 48;
+-    public static final int ID_BATCH = 128;
+-    static final String AUTOMATIC = "status IN ('PENDING','CONNECTING','RUNNING','WAITING_FOR_WIFI','WAITING_FOR_BATTERY','WAITING_FOR_SCHEDULE')";
+-    static final String INCOMPLETE_LINK = "status NOT IN ('COMPLETED','CANCELLED') AND substr(url,1,5)<>'blob:'";
+-    static final String DATE = "coalesce(created_time,0)";
+-    static final String SIZE = "CASE WHEN total_bytes>0 THEN total_bytes ELSE coalesce(downloaded_bytes,0) END";
+-    static final String NAME = "name_order";
+-    static final String STATUS_INDEX = "CREATE INDEX downloads_status_date ON downloads (status, " + DATE + ", id)";
+-    static final String DATE_INDEX = "CREATE INDEX downloads_date ON downloads (" + DATE + ", id)";
+-    static final String SIZE_INDEX = "CREATE INDEX downloads_size ON downloads (" + SIZE + ", id)";
+-    static final String NAME_INDEX = "CREATE INDEX downloads_name ON downloads (" + NAME + ", id)";
+-    static final String COMPLETED_SIZE_INDEX = "CREATE INDEX downloads_completed_size ON downloads (" + SIZE + ", id) WHERE status='COMPLETED'";
+-    static final String COMPLETED_NAME_INDEX = "CREATE INDEX downloads_completed_name ON downloads (" + NAME + ", id) WHERE status='COMPLETED'";
+-    static final String DUPLICATE_INDEX = "CREATE INDEX downloads_incomplete_name ON downloads (" + NAME + ", " + DATE
+-            + " DESC, id DESC) WHERE " + INCOMPLETE_LINK;
+-    static final String DUPLICATE_SQL = "SELECT id, downloaded_bytes FROM downloads WHERE " + INCOMPLETE_LINK
+-            + " AND id IS NOT NULL AND " + NAME + "=? ORDER BY " + DATE + " DESC, id DESC LIMIT 1";
+-    static final String CARD_COLUMNS = "id, attempt_token, file_name, status, total_bytes, downloaded_bytes, num_segments, error_message, "
+-            + DATE + ", " + NAME;
+-
+-    private DownloadHistory() {}
+-
+-    public enum Sort {
+-        NEWEST(DATE, true), OLDEST(DATE, false), LARGEST(SIZE, true), SMALLEST(SIZE, false),
+-        NAME_ASC(NAME, false), NAME_DESC(NAME, true);
+-
+-        final String sql;
+-        final boolean desc;
+-
+-        Sort(String sql, boolean desc) { this.sql = sql; this.desc = desc; }
+-
+-        public int compare(Row first, Row second) {
+-            int value;
+-            if (sql.equals(NAME)) value = compareText(first.nameKey, second.nameKey);
+-            else if (sql.equals(SIZE)) value = Long.compare(first.sizeKey(), second.sizeKey());
+-            else value = Long.compare(first.created, second.created);
+-            if (value == 0) value = compareText(first.id, second.id);
+-            return desc ? -value : value;
+-        }
+-
+-        String key(Row row) {
+-            return sql.equals(NAME) ? row.nameKey : Long.toString(sql.equals(SIZE) ? row.sizeKey() : row.created);
+-        }
+-    }
+-
+-    public enum Filter {
+-        ALL, ACTIVE, COMPLETED, VIDEOS(".mp4", ".mkv", ".webm", ".avi", ".mov"),
+-        MUSIC(".mp3", ".m4a", ".flac", ".wav", ".ogg"),
+-        DOCS(".pdf", ".doc", ".docx", ".txt", ".epub"), ARCHIVES(".zip", ".7z", ".rar", ".tar", ".gz", ".apk");
+-
+-        final String[] suffixes;
+-        Filter(String... suffixes) { this.suffixes = suffixes; }
+-
+-        public boolean hasExtension(String name) {
+-            String lower = searchKey(name);
+-            for (String suffix : suffixes) if (lower.endsWith(suffix)) return true;
+-            return false;
+-        }
+-    }
+-
+-    public static final class Query {
+-        public final Filter filter;
+-        public final Sort sort;
+-        public final String search;
+-
+-        public Query(Filter filter, Sort sort, String search) {
+-            this.filter = filter;
+-            this.sort = sort;
+-            this.search = searchKey(search == null ? null : search.trim());
+-        }
+-
+-        Sql page(Row after) {
+-            List<String> args = new ArrayList<>();
+-            String direction = sort.desc ? " DESC" : " ASC";
+-            String order = " ORDER BY " + sort.sql + direction + ", id" + direction;
+-            String limit = " LIMIT " + (PAGE_SIZE + 1);
+-            String from = " FROM downloads INDEXED BY " + pageIndex() + " WHERE ";
+-            String where = where(args);
+-            if (after == null) return new Sql("SELECT " + CARD_COLUMNS + from + where + order + limit, args);
+-
+-            // Seek in the tie group by ID, then among strictly later sort keys. A tuple/OR alone
+-            // can make SQLite 3.18 walk the whole equal-size/name group from the start on every page.
+-            String op = sort.desc ? "<" : ">";
+-            String bind = sort.sql.equals(NAME) ? "?" : "(?+0)"; // Android binds numeric arguments as text.
+-            String key = sort.key(after);
+-            String select = "SELECT " + CARD_COLUMNS + ", " + sort.sql + " AS seek_key" + from;
+-            String tied = select + where + " AND " + sort.sql + "=" + bind + " AND id" + op + "? ORDER BY id" + direction + limit;
+-            Collections.addAll(args, key, after.id);
+-            String rest = select + where(args) + " AND " + sort.sql + op + bind + order + limit;
+-            args.add(key);
+-            return new Sql("SELECT * FROM (" + tied + ") UNION ALL SELECT * FROM (" + rest + ") ORDER BY seek_key"
+-                    + direction + ", id" + direction + limit, args);
+-        }
+-
+-        private String pageIndex() {
+-            if (filter == Filter.ACTIVE) return "downloads_status_date";
+-            if (sort.sql.equals(NAME)) return filter == Filter.COMPLETED ? "downloads_completed_name" : "downloads_name";
+-            if (sort.sql.equals(SIZE)) return filter == Filter.COMPLETED ? "downloads_completed_size" : "downloads_size";
+-            return filter == Filter.COMPLETED ? "downloads_status_date" : "downloads_date";
+-        }
+-
+-        Sql ids(List<String> ids, boolean cards) {
+-            List<String> args = new ArrayList<>();
+-            String where = where(args);
+-            if (ids != null) {
+-                where += " AND id IN (" + String.join(",", Collections.nCopies(ids.size(), "?")) + ")";
+-                args.addAll(ids);
+-            }
+-            // With IN (...) and a status filter the planner can otherwise walk all rows of that status.
+-            String table = ids == null ? "downloads" : "downloads INDEXED BY sqlite_autoindex_downloads_1";
+-            return new Sql("SELECT " + (cards ? CARD_COLUMNS : "id") + " FROM " + table + " WHERE " + where, args);
+-        }
+-
+-        private String where(List<String> args) {
+-            StringBuilder where = new StringBuilder("id IS NOT NULL");
+-            if (!search.isEmpty()) {
+-                where.append(" AND instr(name_search, ?) > 0");
+-                args.add(search);
+-            }
+-            if (filter == Filter.ACTIVE) where.append(" AND ").append(AUTOMATIC);
+-            else if (filter == Filter.COMPLETED) where.append(" AND status='COMPLETED'");
+-            else if (filter.suffixes.length > 0) {
+-                List<String> extensions = new ArrayList<>();
+-                for (String suffix : filter.suffixes) {
+-                    extensions.add("substr(name_search, -" + suffix.length() + ")=?");
+-                    args.add(suffix);
+-                }
+-                where.append(" AND (").append(String.join(" OR ", extensions)).append(")");
+-            }
+-            return where.toString();
+-        }
+-
+-    }
+-
+-    static final class Sql {
+-        final String text;
+-        final String[] args;
+-        Sql(String text, List<String> args) { this.text = text; this.args = args.toArray(new String[0]); }
+-    }
+-
+-    public static final class Row {
+-        public final String id;
+-        public final String token;
+-        public final String name;
+-        public final DownloadStatus status;
+-        public final long total;
+-        public final long downloaded;
+-        public final int threads;
+-        public final String reason;
+-        public final long created;
+-        public final String nameKey;
+-
+-        public Row(String id, String token, String name, DownloadStatus status, long total, long downloaded,
+-                   int threads, String reason, long created, String nameKey) {
+-            this.id = id;
+-            this.token = token;
+-            this.name = name;
+-            this.status = status;
+-            this.total = total;
+-            this.downloaded = downloaded;
+-            this.threads = threads;
+-            this.reason = reason;
+-            this.created = created;
+-            this.nameKey = nameKey;
+-        }
+-
+-        long sizeKey() { return total > 0 ? total : downloaded; }
+-
+-        @Override public boolean equals(Object object) {
+-            if (!(object instanceof Row)) return false;
+-            Row other = (Row) object;
+-            return id.equals(other.id) && Objects.equals(token, other.token) && Objects.equals(name, other.name)
+-                    && status == other.status && total == other.total && downloaded == other.downloaded && threads == other.threads
+-                    && Objects.equals(reason, other.reason) && created == other.created && nameKey.equals(other.nameKey);
+-        }
+-
+-        @Override public int hashCode() {
+-            return Objects.hash(id, token, name, status, total, downloaded, threads, reason, created, nameKey);
+-        }
+-    }
+-
+-    public static final class Page {
+-        public final List<Row> rows;
+-        public final boolean more;
+-        Page(List<Row> rows, boolean more) { this.rows = Collections.unmodifiableList(rows); this.more = more; }
+-    }
+-
+-    public static final class Duplicate {
+-        public final String id;
+-        public final long savedBytes;
+-        Duplicate(String id, long savedBytes) { this.id = id; this.savedBytes = savedBytes; }
+-    }
+-
+-    static String searchKey(String name) { return name == null ? "" : name.toLowerCase(Locale.US); }
+-
+-    // Match Java's simple case-insensitive comparison, including dotted/dotless i and sigma.
+-    static String nameKey(String name) {
+-        if (name == null) return "";
+-        StringBuilder key = new StringBuilder(name.length());
+-        name.codePoints().forEach(cp -> key.appendCodePoint(Character.toLowerCase(Character.toUpperCase(cp))));
+-        return key.toString();
+-    }
+-
+-    // SQLite BINARY order on UTF-8 compares code points, not Java UTF-16 code units.
+-    private static int compareText(String a, String b) {
+-        int i = 0, j = 0;
+-        while (i < a.length() && j < b.length()) {
+-            int x = a.codePointAt(i), y = b.codePointAt(j);
+-            if (x != y) return Integer.compare(x, y);
+-            i += Character.charCount(x);
+-            j += Character.charCount(y);
+-        }
+-        return Integer.compare(a.length(), b.length());
+-    }
+-}
+diff --git a/downloader/src/main/java/com/privacy/downloader/engine/ActiveDownloadPublisher.java b/downloader/src/main/java/com/privacy/downloader/engine/ActiveDownloadPublisher.java
+deleted file mode 100644
+--- a/downloader/src/main/java/com/privacy/downloader/engine/ActiveDownloadPublisher.java
++++ /dev/null
+@@ -1,71 +0,0 @@
+-package com.privacy.downloader.engine;
+-
+-import com.privacy.downloader.model.ActiveDownloads;
+-
+-import java.util.Collections;
+-import java.util.function.Consumer;
+-import java.util.function.Supplier;
+-
+-/** At most one trailing refresh from any number of worker events. No recurring runnable. */
+-final class ActiveDownloadPublisher {
+-    static final long INTERVAL_MS = 1000;
+-
+-    interface Delay {
+-        /** Schedule on the queue controller, returning a cancellation action. */
+-        Runnable schedule(Runnable action, long milliseconds);
+-    }
+-
+-    private final Delay delay;
+-    private final Supplier<ActiveDownloads> capture;
+-    private final Consumer<ActiveDownloads> publish;
+-    private Object ticket;
+-    private Runnable cancel;
+-    private volatile ActiveDownloads current = new ActiveDownloads(false, 0, Collections.emptyList());
+-
+-    ActiveDownloadPublisher(Delay delay, Supplier<ActiveDownloads> capture, Consumer<ActiveDownloads> publish) {
+-        this.delay = delay;
+-        this.capture = capture;
+-        this.publish = publish;
+-    }
+-
+-    ActiveDownloads current() { return current; }
+-
+-    synchronized void changed() {
+-        // The controller publishes admission from idle, even if a worker runs before that publication.
+-        if (ticket != null || current.owners == 0) return;
+-        Object ownTicket = new Object();
+-        ticket = ownTicket;
+-        cancel = delay.schedule(() -> flush(ownTicket), INTERVAL_MS);
+-    }
+-
+-    // Only the controller can publish. Entering/leaving the foreground lifetime must not wait for progress.
+-    void reconciled(boolean checked, int owners) {
+-        ActiveDownloads last = current;
+-        if (last.checked == checked && (last.owners == 0) == (owners == 0)) {
+-            changed();
+-            return;
+-        }
+-        synchronized (this) {
+-            ticket = null;
+-            if (cancel != null) cancel.run();
+-            cancel = null;
+-        }
+-        captureAndPublish();
+-    }
+-
+-    private void flush(Object ownTicket) {
+-        synchronized (this) {
+-            if (ticket != ownTicket) return;
+-            ticket = null;
+-            cancel = null;
+-        }
+-        captureAndPublish();
+-    }
+-
+-    private void captureAndPublish() {
+-        ActiveDownloads next = capture.get();
+-        if (next.equals(current)) return;
+-        current = next;
+-        publish.accept(next);
+-    }
+-}
+diff --git a/downloader/src/main/java/com/privacy/downloader/engine/DownloadEngine.java b/downloader/src/main/java/com/privacy/downloader/engine/DownloadEngine.java
+--- a/downloader/src/main/java/com/privacy/downloader/engine/DownloadEngine.java
++++ b/downloader/src/main/java/com/privacy/downloader/engine/DownloadEngine.java
+@@ -13,14 +13,12 @@
+ import android.os.Build;
+ import android.os.Handler;
+ import android.os.Looper;
+-import android.os.Trace;
+ import android.util.Log;
+ import android.widget.Toast;
+ 
+ import com.privacy.downloader.db.DownloadDbHelper;
+-import com.privacy.downloader.db.DownloadHistory;
+-import com.privacy.downloader.model.ActiveDownloads;
+ import com.privacy.downloader.model.DownloadItem;
++import com.privacy.downloader.model.DownloadSegment;
+ import com.privacy.downloader.model.DownloadStatus;
+ import com.privacy.downloader.net.RequestContext;
+ import com.privacy.downloader.service.DownloadService;
+@@ -28,33 +26,27 @@
+ 
+ import java.io.File;
+ import java.io.IOException;
+-import java.time.Instant;
+-import java.time.ZonedDateTime;
+ import java.util.ArrayList;
++import java.util.Calendar;
+ import java.util.Collections;
+-import java.util.HashSet;
+ import java.util.List;
+-import java.util.Set;
+ import java.util.Locale;
+ import java.util.Map;
+ import java.util.concurrent.CopyOnWriteArrayList;
+ import java.util.concurrent.Executors;
+-import java.util.concurrent.ExecutorService;
+-import java.util.concurrent.ScheduledFuture;
+-import java.util.concurrent.ScheduledThreadPoolExecutor;
++import java.util.concurrent.ScheduledExecutorService;
+ import java.util.concurrent.TimeUnit;
+ import java.util.concurrent.atomic.AtomicBoolean;
+ import java.util.function.BooleanSupplier;
+ import java.util.function.Consumer;
+-import java.util.function.Supplier;
+ 
+ public class DownloadEngine {
+ 
+-    /** Main-thread delivery. Progress never invalidates history or delivers a live mutable task. */
+     public interface DownloadListener {
+-        default void onActiveDownloadsChanged(ActiveDownloads active) {}
+-        default void onDownloadRowsChanged(Set<String> ids, boolean reset) {}
+-        default void onDownloadCompleted(DownloadItem item) {}
++        void onDownloadProgress(DownloadItem item);
++        void onDownloadCompleted(DownloadItem item);
++        void onDownloadFailed(DownloadItem item, String error);
++        void onQueueChanged();
+     }
+ 
+     private static final String TAG = "DownloadEngine";
+@@ -78,22 +70,16 @@
+     private final Context context;
+     private final DownloadDbHelper dbHelper;
+     private final SpeedLimiter globalLimiter;
+-    private final ScheduledThreadPoolExecutor controller;
+-    private final ExecutorService detailsReader = Executors.newSingleThreadExecutor(r -> new Thread(r, "DownloadDetails"));
++    private final ScheduledExecutorService controller;
+     private final Handler mainHandler;
+     private final SharedPreferences prefs;
+     private final DownloadQueue queue;
+     private final CopyOnWriteArrayList<DownloadListener> listeners = new CopyOnWriteArrayList<>();
+     private final AtomicBoolean checkQueued = new AtomicBoolean();
+-    private final AtomicBoolean activePosted = new AtomicBoolean();
+-    private final ActiveDownloadPublisher activePublisher;
+-    private final Set<String> changedRows = new HashSet<>(); // also the delivery lock
+-    private boolean resetRows;
+-    private boolean rowsPosted;
+-    private ActiveDownloads deliveredActive; // main only
+-    private ScheduledFuture<?> scheduleBoundary; // controller only
++    private final AtomicBoolean refreshPosted = new AtomicBoolean();
+     private volatile boolean lowBatteryUnplugged;
+-    private boolean initialCheckFinished; // controller only
++    private volatile boolean initialCheckFinished;
++    private boolean lastInsideSchedule = true; // controller only
+ 
+     public static synchronized DownloadEngine getInstance(Context context) {
+         if (instance == null && context != null) {
+@@ -108,17 +94,16 @@
+         this.prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+         this.globalLimiter = new SpeedLimiter(prefs.getLong(KEY_SPEED_LIMIT, 0));
+         this.mainHandler = new Handler(Looper.getMainLooper());
+-        this.controller = new ScheduledThreadPoolExecutor(1, r -> new Thread(r, "DownloadQueue"));
+-        controller.setRemoveOnCancelPolicy(true);
++        this.controller = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "DownloadQueue"));
+         this.queue = new DownloadQueue(dbHelper, Executors.newFixedThreadPool(WORKER_LIMIT), this::submitCommand,
+-                mainHandler::post, this::createTask, this::activeChanged, this::rowChanged, this::onTerminal);
+-        this.activePublisher = new ActiveDownloadPublisher((action, delay) -> {
+-            ScheduledFuture<?> pending = controller.schedule(action, delay, TimeUnit.MILLISECONDS);
+-            return () -> pending.cancel(false);
+-        }, this::captureActive, active -> postActive());
++                mainHandler::post, this::createTask, this::onProgress, this::onTerminal);
+ 
+         registerConstraintEvents();
+         reconcile();
++        // Best effort while the process lives. This does not wake a stopped app.
++        controller.scheduleWithFixedDelay(() -> {
++            if (isScheduleEnabled() && lastInsideSchedule != new Schedule(prefs.getAll()).includesNow()) reconcile();
++        }, 30, 30, TimeUnit.SECONDS);
+     }
+ 
+     public void addListener(DownloadListener listener) {
+@@ -148,8 +133,8 @@
+             // Like blob intake, a browser context is assigned by job ID, atomically with admission.
+             queue.registerRequest(item, request);
+         }
+-        rowChanged(item.getId());
+         reconcile();
++        notifyQueueChanged();
+     }
+ 
+     /** Only the originating tab's confirmation can supply an ephemeral blob source. */
+@@ -167,8 +152,8 @@
+         } finally {
+             if (!accepted) intake.close();
+         }
+-        rowChanged(item.getId());
+         reconcile();
++        notifyQueueChanged();
+     }
+ 
+     private void reserveAndInsert(DownloadItem item) throws IOException {
+@@ -191,23 +176,6 @@
+     /** Reports removal of the queue row, not a guarantee that external files could be unlinked. */
+     public void delete(String id, boolean deleteFile, Consumer<Boolean> result) {
+         submitCommand(() -> queue.delete(id, deleteFile, result == null ? null : removed -> mainHandler.post(() -> result.accept(removed))));
+-    }
+-
+-    /** A user-selected batch is one controller command, not one queue reconciliation per row. */
+-    public void deleteSelected(List<String> ids, Consumer<Integer> result) {
+-        if (ids.isEmpty()) return;
+-        final List<String> selection = new ArrayList<>(ids);
+-        submitCommand(() -> {
+-            int[] remaining = {selection.size()}, removed = {0};
+-            Consumer<Boolean> onRemoved = success -> {
+-                if (success) removed[0]++;
+-                if (--remaining[0] == 0) mainHandler.post(() -> result.accept(removed[0]));
+-            };
+-            for (String id : selection) {
+-                try { queue.delete(id, true, onRemoved); }
+-                catch (RuntimeException e) { logQueueError(e); }
+-            }
+-        });
+     }
+ 
+     public static boolean canStartOver(DownloadItem item) { return DownloadQueue.canStartOver(item); }
+@@ -239,7 +207,7 @@
+             } catch (RuntimeException e) {
+                 logQueueError(e);
+             } finally {
+-                reconcileOnController();
++                reconcileOnController(true);
+             }
+         });
+     }
+@@ -248,64 +216,29 @@
+         if (!checkQueued.compareAndSet(false, true)) return;
+         controller.execute(() -> {
+             checkQueued.set(false);
+-            reconcileOnController();
++            reconcileOnController(false);
+         });
+     }
+ 
+-    private void reconcileOnController() {
+-        Trace.beginSection("Downloads.reconcile");
++    private void reconcileOnController(boolean notify) {
+         try {
+             Map<String, ?> settings = prefs.getAll();
+-            DownloadSchedule schedule = new DownloadSchedule(Boolean.TRUE.equals(settings.get(KEY_SCHEDULE_ENABLED)),
+-                    minuteSetting(settings, KEY_SCHEDULE_START_HOUR, KEY_SCHEDULE_START_MIN, 2),
+-                    minuteSetting(settings, KEY_SCHEDULE_END_HOUR, KEY_SCHEDULE_END_MIN, 6));
+-            ZonedDateTime now = schedule.enabled ? ZonedDateTime.now() : null;
+-            QueuePolicy.Constraints constraints = new QueuePolicy.Constraints(!schedule.enabled || schedule.includes(now),
++            Schedule schedule = new Schedule(settings);
++            boolean insideSchedule = schedule.includesNow();
++            QueuePolicy.Constraints constraints = new QueuePolicy.Constraints(insideSchedule,
+                     Boolean.TRUE.equals(settings.get(KEY_BATTERY_SAVER)) && lowBatteryUnplugged, isWifiConnected(),
+-                    Boolean.TRUE.equals(settings.get(KEY_WIFI_ONLY)), schedule.enabled ? scheduleReason(schedule) : null,
++                    Boolean.TRUE.equals(settings.get(KEY_WIFI_ONLY)), schedule.reason(),
+                     clampConcurrency(intSetting(settings, KEY_MAX_CONCURRENT, 3)));
+-            queue.reconcile(constraints);
+-            armScheduleBoundary(schedule, now);
++            notify |= queue.reconcile(constraints);
++            lastInsideSchedule = insideSchedule;
++            if (queue.ownerCount() != 0) startForegroundService();
+         } catch (RuntimeException e) {
+             logQueueError(e);
+         } finally {
++            boolean first = !initialCheckFinished;
+             initialCheckFinished = true;
+-            int owners = queue.ownerCount();
+-            activePublisher.reconciled(true, owners);
+-            // Every actual admission/reconcile can retry an Android-denied or racing service start.
+-            if (owners != 0) startForegroundService();
+-            Trace.endSection();
+-        }
+-    }
+-
+-    private void armScheduleBoundary(DownloadSchedule schedule, ZonedDateTime now) {
+-        if (scheduleBoundary != null) scheduleBoundary.cancel(false);
+-        scheduleBoundary = null;
+-        boolean work = schedule.enabled && schedule.start != schedule.end
+-                && (queue.ownerCount() != 0 || dbHelper.hasAutomaticDownloads());
+-        Instant next = work ? schedule.nextBoundary(now, true) : null;
+-        // In-process and best effort: does not wake a suspended or stopped app.
+-        if (next != null) {
+-            scheduleBoundary = controller.schedule(() -> {
+-                Trace.beginSection("Downloads.scheduleBoundary");
+-                try {
+-                    reconcileOnController();
+-                } finally {
+-                    Trace.endSection();
+-                }
+-            }, Math.max(0, next.toEpochMilli() - System.currentTimeMillis()), TimeUnit.MILLISECONDS);
+-        }
+-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Trace.setCounter("Downloads.scheduleArmed", next == null ? 0 : 1);
+-    }
+-
+-    private static int minuteSetting(Map<String, ?> settings, String hour, String minute, int defaultHour) {
+-        return Math.floorMod(intSetting(settings, hour, defaultHour), 24) * 60
+-                + Math.floorMod(intSetting(settings, minute, 0), 60);
+-    }
+-
+-    private static String scheduleReason(DownloadSchedule schedule) {
+-        return String.format(Locale.US, "Scheduled window (%02d:%02d - %02d:%02d)",
+-                schedule.start / 60, schedule.start % 60, schedule.end / 60, schedule.end % 60);
++            if (first || notify) notifyQueueChanged();
++        }
+     }
+ 
+     private static void logQueueError(RuntimeException error) {
+@@ -326,7 +259,6 @@
+         IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+         filter.addAction(Intent.ACTION_TIME_CHANGED);
+         filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+-        filter.addAction(Intent.ACTION_SCREEN_ON);
+         try {
+             BroadcastReceiver receiver = new BroadcastReceiver() {
+                 @Override public void onReceive(Context ctx, Intent intent) {
+@@ -384,6 +316,28 @@
+         return value instanceof Integer ? (int) value : fallback;
+     }
+ 
++    private static final class Schedule {
++        final boolean enabled;
++        final int start;
++        final int end;
++
++        Schedule(Map<String, ?> settings) {
++            enabled = Boolean.TRUE.equals(settings.get(KEY_SCHEDULE_ENABLED));
++            start = intSetting(settings, KEY_SCHEDULE_START_HOUR, 2) * 60 + intSetting(settings, KEY_SCHEDULE_START_MIN, 0);
++            end = intSetting(settings, KEY_SCHEDULE_END_HOUR, 6) * 60 + intSetting(settings, KEY_SCHEDULE_END_MIN, 0);
++        }
++
++        boolean includesNow() {
++            Calendar cal = Calendar.getInstance();
++            int now = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE);
++            return !enabled || QueuePolicy.withinWindow(now, start, end);
++        }
++
++        String reason() {
++            return String.format(Locale.US, "Scheduled window (%02d:%02d - %02d:%02d)", start / 60, start % 60, end / 60, end % 60);
++        }
++    }
++
+     public void setQueueConstraints(boolean wifiOnly, boolean batterySaver, int slots, boolean scheduleEnabled,
+                                     int startHour, int startMinute, int endHour, int endMinute) {
+         prefs.edit().putBoolean(KEY_WIFI_ONLY, wifiOnly).putBoolean(KEY_BATTERY_SAVER, batterySaver)
+@@ -416,32 +370,24 @@
+         prefs.edit().putLong(KEY_SPEED_LIMIT, rate).apply();
+     }
+ 
+-    public ActiveDownloads activeDownloads() { return activePublisher.current(); }
+-
+-    public void readDownload(String id, boolean details, Consumer<DownloadItem> result) {
+-        readAsync(() -> {
+-            if (!details) return dbHelper.getDownload(id);
+-            DownloadItem live = queue.activeDetails(id);
+-            return live != null ? live : dbHelper.getDownloadWithSegments(id);
+-        }, result);
+-    }
+-
+-    public void findIncompleteDownload(String name, Consumer<DownloadHistory.Duplicate> result) {
+-        readAsync(() -> dbHelper.findIncomplete(name), result);
+-    }
+-
+-    private <T> void readAsync(Supplier<T> read, Consumer<T> result) {
+-        detailsReader.execute(() -> {
+-            T value = null;
+-            try {
+-                value = read.get();
+-            } catch (RuntimeException e) {
+-                logQueueError(e);
+-            }
+-            T snapshot = value;
+-            mainHandler.post(() -> result.accept(snapshot));
+-        });
+-    }
++    public DownloadItem getDownloadItem(String taskId) {
++        return queue.withLiveProgress(dbHelper.getDownload(taskId));
++    }
++
++    public List<DownloadSegment> getTaskSegments(String taskId) {
++        DownloadItem item = getDownloadItem(taskId);
++        return item != null ? new ArrayList<>(item.getSegments()) : Collections.emptyList();
++    }
++
++    public List<DownloadItem> getAllDownloads() {
++        List<DownloadItem> list = dbHelper.getAllDownloads();
++        for (int i = 0; i < list.size(); i++) list.set(i, queue.withLiveProgress(list.get(i)));
++        return list;
++    }
++
++    public int getActiveTaskCount() { return queue.ownerCount(); }
++    public List<DownloadItem> getActiveDownloads() { return queue.activeItems(); }
++    public boolean hasCheckedQueue() { return initialCheckFinished; }
+ 
+     private void startForegroundService() {
+         try {
+@@ -451,26 +397,8 @@
+         }
+     }
+ 
+-    private ActiveDownloads captureActive() {
+-        Trace.beginSection("Downloads.snapshotActive");
+-        try {
+-            return queue.snapshotActive(initialCheckFinished);
+-        } finally {
+-            Trace.endSection();
+-        }
+-    }
+-
+-    private void activeChanged() { activePublisher.changed(); }
+-
+-    private void postActive() {
+-        if (!activePosted.compareAndSet(false, true)) return;
+-        mainHandler.post(() -> {
+-            activePosted.set(false);
+-            ActiveDownloads snapshot = activeDownloads();
+-            if (snapshot.equals(deliveredActive)) return;
+-            deliveredActive = snapshot;
+-            for (DownloadListener listener : listeners) listener.onActiveDownloadsChanged(snapshot);
+-        });
++    private void onProgress(DownloadItem item) {
++        for (DownloadListener listener : listeners) listener.onDownloadProgress(item);
+     }
+ 
+     private void onTerminal(DownloadItem item) {
+@@ -482,6 +410,7 @@
+             String error = item.getErrorMessage();
+             Toast.makeText(context, "Download failed: " + item.getFileName() + " (" + (error != null ? error : "Error") + ")",
+                     Toast.LENGTH_SHORT).show();
++            for (DownloadListener listener : listeners) listener.onDownloadFailed(item, error);
+         }
+     }
+ 
+@@ -501,31 +430,11 @@
+         });
+     }
+ 
+-    private void rowChanged(String id) {
+-        synchronized (changedRows) {
+-            if (!resetRows) {
+-                if (id != null) changedRows.add(id);
+-                if (id == null || changedRows.size() > DownloadHistory.ID_BATCH) {
+-                    resetRows = true;
+-                    changedRows.clear();
+-                }
+-            }
+-            if (rowsPosted) return;
+-            rowsPosted = true;
+-        }
+-        mainHandler.postDelayed(this::deliverRows, 80);
+-    }
+-
+-    private void deliverRows() {
+-        Set<String> ids;
+-        boolean reset;
+-        synchronized (changedRows) {
+-            reset = resetRows;
+-            ids = Collections.unmodifiableSet(new HashSet<>(changedRows));
+-            resetRows = false;
+-            rowsPosted = false;
+-            changedRows.clear();
+-        }
+-        for (DownloadListener listener : listeners) listener.onDownloadRowsChanged(ids, reset);
++    private void notifyQueueChanged() {
++        if (!refreshPosted.compareAndSet(false, true)) return;
++        mainHandler.post(() -> {
++            refreshPosted.set(false);
++            for (DownloadListener listener : listeners) listener.onQueueChanged();
++        });
+     }
+ }
+diff --git a/downloader/src/main/java/com/privacy/downloader/engine/DownloadQueue.java b/downloader/src/main/java/com/privacy/downloader/engine/DownloadQueue.java
+--- a/downloader/src/main/java/com/privacy/downloader/engine/DownloadQueue.java
++++ b/downloader/src/main/java/com/privacy/downloader/engine/DownloadQueue.java
+@@ -1,8 +1,6 @@
+ package com.privacy.downloader.engine;
+ 
+-import com.privacy.downloader.model.ActiveDownloads;
+ import com.privacy.downloader.model.DownloadItem;
+-import com.privacy.downloader.model.DownloadSegment;
+ import com.privacy.downloader.model.DownloadStatus;
+ import com.privacy.downloader.net.RequestContext;
+ import com.privacy.downloader.util.DownloadDestination;
+@@ -10,29 +8,27 @@
+ import java.io.File;
+ import java.io.IOException;
+ import java.util.ArrayList;
+-import java.util.HashSet;
+ import java.util.List;
+ import java.util.Objects;
+-import java.util.Set;
+ import java.util.UUID;
+ import java.util.concurrent.ConcurrentHashMap;
+ import java.util.concurrent.Executor;
+ import java.util.concurrent.RejectedExecutionException;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicLong;
+ import java.util.function.Consumer;
+ import java.util.function.Predicate;
+ 
+ /** The controller thread owns commands, constraint transitions, worker admission and retirement. */
+ public final class DownloadQueue {
+     public interface Store {
+-        int recoverInterrupted();
++        void recoverInterrupted();
+         DownloadItem getDownload(String id);
+-        List<DownloadSegment> getSegments(String id);
+         List<DownloadItem> getDownloadsIn(DownloadStatus... states);
+         boolean transition(DownloadItem expected, DownloadStatus next, String reason);
+         boolean claim(DownloadItem item, File requested, String token) throws IOException;
+         boolean saveRetry(DownloadItem replacement, DownloadStatus previousState);
+         boolean deleteDownload(DownloadItem expected, boolean deleteFile);
+-        int clearCompletedExcept(Set<String> owned);
+     }
+ 
+     interface TaskFactory {
+@@ -49,12 +45,11 @@
+     private final Executor controller;
+     private final Executor delivery;
+     private final TaskFactory factory;
+-    private final Runnable activeChanged;
+-    private final Consumer<String> rowChanged;
++    private final Consumer<DownloadItem> progress;
+     private final Consumer<DownloadItem> terminal;
+     private boolean recovered;
+ 
+-    // Read by workers (progress) and the explicit details reader. Only the controller
++    // Read by workers (progress), the UI and the foreground service. Only the controller
+     // can add/remove owners. A stop request never releases a slot or a filesystem claim.
+     private final ConcurrentHashMap<String, Owner> owners = new ConcurrentHashMap<>();
+     private final ConcurrentHashMap<String, DownloadItem> pendingTerminals = new ConcurrentHashMap<>();
+@@ -77,6 +72,7 @@
+         final String id;
+         final String token;
+         final BlobIntake blob;
++        final AtomicLong lastProgress = new AtomicLong(Long.MIN_VALUE);
+         volatile boolean stopping;
+         volatile boolean exited;
+         Removal removal; // controller only
+@@ -103,14 +99,13 @@
+     }
+ 
+     DownloadQueue(Store store, Executor workerExecutor, Executor controller, Executor delivery, TaskFactory factory,
+-                  Runnable activeChanged, Consumer<String> rowChanged, Consumer<DownloadItem> terminal) {
++                  Consumer<DownloadItem> progress, Consumer<DownloadItem> terminal) {
+         this.store = store;
+         this.workerExecutor = workerExecutor;
+         this.controller = controller;
+         this.delivery = delivery;
+         this.factory = factory;
+-        this.activeChanged = activeChanged;
+-        this.rowChanged = rowChanged;
++        this.progress = progress;
+         this.terminal = terminal;
+     }
+ 
+@@ -137,18 +132,20 @@
+         if (intake != null) intake.close();
+     }
+ 
+-    void reconcile(QueuePolicy.Constraints constraints) {
++    boolean reconcile(QueuePolicy.Constraints constraints) {
++        boolean changed = false;
+         if (!recovered) {
+             // There are no in-process owners on the first pass. Leave pauses, waits and history alone.
+-            if (store.recoverInterrupted() != 0) rowChanged.accept(null);
++            store.recoverInterrupted();
+             recovered = true;
++            changed = true;
+         }
+         List<DownloadItem> queue = store.getDownloadsIn(AUTOMATIC_STATES);
+         List<String> ready = new ArrayList<>();
+         for (DownloadItem item : queue) {
+             if (item.getStatus().isTransferring() && !owners.containsKey(item.getId())) {
+                 // For example, an SQLite error during retirement can leave a token but no thread.
+-                failUnfinishedWorker(item);
++                changed |= failUnfinishedWorker(item) != null;
+                 continue;
+             }
+             if (isBlob(item.getUrl()) && !owners.containsKey(item.getId())) {
+@@ -156,7 +153,10 @@
+                 if (intake == null || !intake.isPending()) {
+                     releasePendingBlob(item.getId());
+                     DownloadItem failed = change(item, QueuePolicy::automatic, DownloadStatus.FAILED, BlobIntake.SOURCE_GONE);
+-                    if (failed != null) postTerminal(failed);
++                    if (failed != null) {
++                        changed = true;
++                        postTerminal(failed);
++                    }
+                     continue;
+                 }
+             }
+@@ -164,16 +164,21 @@
+             if (target.isWaiting()) {
+                 // Evaluate constraints even at capacity, and again for jobs already waiting.
+                 DownloadItem stopped = change(item, QueuePolicy::automatic, target, constraints.reason(target));
+-                if (stopped != null) stopOwner(stopped);
++                if (stopped != null) {
++                    stopOwner(stopped);
++                    changed = true;
++                }
+             } else {
+                 DownloadItem pending = change(item, DownloadStatus::isWaiting, DownloadStatus.PENDING, null);
++                if (pending != null) changed = true;
+                 if (pending != null || item.getStatus() == DownloadStatus.PENDING) ready.add(item.getId());
+             }
+         }
+         for (String id : ready) {
+             if (owners.size() >= constraints.slots) break;
+-            if (!owners.containsKey(id)) admit(id);
+-        }
++            if (!owners.containsKey(id)) changed |= admit(id);
++        }
++        return changed;
+     }
+ 
+     void pause(String id) {
+@@ -231,7 +236,6 @@
+         pendingTerminals.remove(id);
+         if (!store.saveRetry(row, previous)) return false;
+         pendingRequests.remove(id);
+-        rowChanged.accept(id);
+         return true;
+     }
+ 
+@@ -246,12 +250,9 @@
+             if (StreamDetector.needsMux(row) != mux) return false;
+             if (TransferIntegrity.isDirectHttp(row)) TransferIntegrity.clearRepresentation(row);
+         }
+-        // Preserve a staged checkpoint; the next attempt must still verify its representation.
+-        if (row.getTempPath() != null) row.setSegments(store.getSegments(id));
+         pendingTerminals.remove(id);
+         if (!store.saveRetry(row, row.getStatus())) return false;
+         pendingRequests.remove(id);
+-        rowChanged.accept(id);
+         return true;
+     }
+ 
+@@ -269,7 +270,6 @@
+             try {
+                 DownloadItem row = store.getDownload(id);
+                 removed = row != null && store.deleteDownload(row, deleteFile);
+-                if (removed) rowChanged.accept(id);
+             } finally {
+                 if (result != null) result.accept(removed);
+             }
+@@ -277,14 +277,7 @@
+     }
+ 
+     void clearCompleted() {
+-        Set<String> owned = new HashSet<>(owners.keySet());
+-        for (String id : owned) {
+-            DownloadItem row = store.getDownload(id);
+-            if (row != null && row.getStatus() == DownloadStatus.COMPLETED) delete(id, false, null);
+-        }
+-        // A buffered completion must not outlive an explicitly cleared history row.
+-        pendingTerminals.entrySet().removeIf(entry -> entry.getValue().getStatus() == DownloadStatus.COMPLETED);
+-        if (store.clearCompletedExcept(owned) != 0) rowChanged.accept(null);
++        for (DownloadItem item : store.getDownloadsIn(DownloadStatus.COMPLETED)) delete(item.getId(), false, null);
+     }
+ 
+     private boolean isRemoving(String id) {
+@@ -299,7 +292,6 @@
+             if (store.transition(row, state, reason)) {
+                 row.setStatus(state);
+                 row.setErrorMessage(reason);
+-                rowChanged.accept(row.getId());
+                 return row;
+             }
+             row = store.getDownload(row.getId());
+@@ -315,18 +307,16 @@
+         }
+     }
+ 
+-    private void admit(String id) {
++    private boolean admit(String id) {
+         DownloadItem item = store.getDownload(id);
+-        if (item == null || item.getStatus() != DownloadStatus.PENDING) return;
+-        if (item.getTempPath() != null && TransferIntegrity.isDirectHttp(item)) item.setSegments(store.getSegments(id));
++        if (item == null || item.getStatus() != DownloadStatus.PENDING) return false;
+         pendingTerminals.remove(id);
+         try {
+-            if (!store.claim(item, requestedDestination(item, false), UUID.randomUUID().toString())) return;
+-            rowChanged.accept(id);
++            if (!store.claim(item, requestedDestination(item, false), UUID.randomUUID().toString())) return false;
+         } catch (IOException e) {
+             DownloadItem failed = change(item, state -> state == DownloadStatus.PENDING, DownloadStatus.FAILED, e.getMessage());
+             if (failed != null) releasePendingSources(id);
+-            return;
++            return failed != null;
+         }
+ 
+         // The SQLite claim has assigned the attempt token. No future attempt can take this source.
+@@ -341,7 +331,7 @@
+             if (blob != null) blob.close();
+             DownloadItem failed = change(item, DownloadStatus::isTransferring, DownloadStatus.FAILED, "Could not start the download.");
+             if (failed != null) postTerminal(failed);
+-            return;
++            return true;
+         }
+         owners.put(id, owner);
+         try {
+@@ -360,6 +350,7 @@
+             owner.exited = true;
+             retire(owner);
+         }
++        return true;
+     }
+ 
+     private DownloadItem failUnfinishedWorker(DownloadItem row) {
+@@ -388,8 +379,6 @@
+         } finally {
+             if (owner.blob != null) owner.blob.close();
+             owners.remove(owner.id, owner);
+-            // The worker may have saved a final checkpoint even after pause or a constraint stop.
+-            rowChanged.accept(owner.id);
+         }
+     }
+ 
+@@ -405,55 +394,28 @@
+     private void onTaskUpdated(DownloadItem item) {
+         Owner owner = owners.get(item.getId());
+         if (owner == null || owner.task.getItem() != item || !owner.matches(item) || !owner.canDeliverProgress()) return;
+-        activeChanged.run();
+-    }
+-
+-    int ownerCount() { return owners.size(); }
+-
+-    /** Capture only on the controller. Never visits the store or a segment. */
+-    ActiveDownloads snapshotActive(boolean checked) {
+-        List<ActiveDownloads.Transfer> active = new ArrayList<>(owners.size());
+-        for (Owner owner : owners.values()) {
+-            if (!owner.canDeliverProgress()) continue;
+-            ActiveDownloads.Transfer transfer = new ActiveDownloads.Transfer(owner.task.getItem());
+-            if (transfer.status.isTransferring() && !owner.stopping && !owner.exited) active.add(transfer);
+-        }
+-        return new ActiveDownloads(checked, owners.size(), active);
+-    }
+-
+-    /** Once per explicit details refresh, detach live fields/checkpoints from the owning task. */
+-    DownloadItem activeDetails(String id) {
+-        Owner owner = owners.get(id);
+-        if (owner == null || !owner.canDeliverProgress()) return null;
+-        DownloadItem live = owner.task.getItem(), copy = new DownloadItem();
+-        List<DownloadSegment> segments;
+-        synchronized (live) {
+-            copy.setId(id);
+-            copy.setAttemptToken(owner.token);
+-            copy.setFileName(live.getFileName());
+-            copy.setDestinationPath(live.getDestinationPath());
+-            copy.setUrl(live.getUrl());
+-            copy.setMimeType(live.getMimeType());
+-            copy.setAudioUrl(live.getAudioUrl());
+-            copy.setAudioBytes(live.getAudioBytes());
+-            copy.setStatus(live.getStatus());
+-            copy.setErrorMessage(live.getErrorMessage());
+-            copy.setSupportsRange(live.isSupportsRange());
+-            copy.setNumSegments(live.getNumSegments());
+-            copy.setDownloadedBytes(live.getDownloadedBytes());
+-            copy.setTotalBytes(live.getTotalBytes());
+-            copy.setSpeedBytesPerSec(live.getSpeedBytesPerSec());
+-            segments = live.getSegments();
+-        }
+-        List<DownloadSegment> snapshot = new ArrayList<>();
+-        if (segments != null) for (DownloadSegment segment : segments) {
+-            synchronized (segment) {
+-                snapshot.add(new DownloadSegment(id, segment.getIndex(), segment.getStartByte(), segment.getEndByte(),
+-                        segment.getCurrentByte(), segment.getStatus()));
+-            }
+-        }
+-        copy.setSegments(snapshot);
+-        return owners.get(id) == owner && copy.getStatus().isTransferring() && owner.canDeliverProgress() ? copy : null;
++        long now = System.nanoTime(), last = owner.lastProgress.get();
++        if (last != Long.MIN_VALUE && now - last < TimeUnit.MILLISECONDS.toNanos(500)) return;
++        if (!owner.lastProgress.compareAndSet(last, now)) return;
++        delivery.execute(() -> {
++            if (owners.get(owner.id) == owner && owner.matches(item) && owner.canDeliverProgress()) progress.accept(item);
++        });
++    }
++
++    int ownerCount() {
++        return owners.size();
++    }
++
++    DownloadItem withLiveProgress(DownloadItem row) {
++        if (row == null || !row.getStatus().isTransferring()) return row;
++        Owner owner = owners.get(row.getId());
++        return owner != null && owner.matches(row) && owner.canDeliverProgress() ? owner.task.getItem() : row;
++    }
++
++    List<DownloadItem> activeItems() {
++        List<DownloadItem> active = new ArrayList<>();
++        for (Owner owner : owners.values()) if (owner.canDeliverProgress()) active.add(owner.task.getItem());
++        return active;
+     }
+ 
+     static File requestedDestination(DownloadItem item, boolean newJob) throws IOException {
+diff --git a/downloader/src/main/java/com/privacy/downloader/engine/DownloadSchedule.java b/downloader/src/main/java/com/privacy/downloader/engine/DownloadSchedule.java
+deleted file mode 100644
+--- a/downloader/src/main/java/com/privacy/downloader/engine/DownloadSchedule.java
++++ /dev/null
+@@ -1,46 +0,0 @@
+-package com.privacy.downloader.engine;
+-
+-import java.time.Instant;
+-import java.time.LocalDate;
+-import java.time.LocalTime;
+-import java.time.ZoneOffset;
+-import java.time.ZonedDateTime;
+-import java.time.zone.ZoneOffsetTransition;
+-import java.time.zone.ZoneRules;
+-
+-/** Wall-clock windows, including overnight windows, skipped minutes and repeated minutes. */
+-final class DownloadSchedule {
+-    final boolean enabled;
+-    final int start;
+-    final int end;
+-
+-    DownloadSchedule(boolean enabled, int start, int end) {
+-        this.enabled = enabled;
+-        this.start = start;
+-        this.end = end;
+-    }
+-
+-    boolean includes(ZonedDateTime time) {
+-        return !enabled || QueuePolicy.withinWindow(time.getHour() * 60 + time.getMinute(), start, end);
+-    }
+-
+-    Instant nextBoundary(ZonedDateTime time, boolean hasWork) {
+-        if (!hasWork || !enabled || start == end) return null;
+-        Instant now = time.toInstant();
+-        ZoneRules rules = time.getZone().getRules();
+-        ZoneOffsetTransition transition = rules.nextTransition(now);
+-        // A clock jump can cross a window edge even if that local minute doesn't exist.
+-        Instant next = transition == null ? null : transition.getInstant();
+-        LocalDate date = time.toLocalDate();
+-        for (int day = 0; day <= 1; day++) {
+-            for (int minute : new int[]{start, end}) {
+-                var edge = date.plusDays(day).atTime(LocalTime.of(minute / 60, minute % 60));
+-                for (ZoneOffset offset : rules.getValidOffsets(edge)) {
+-                    Instant candidate = edge.toInstant(offset);
+-                    if (candidate.isAfter(now) && (next == null || candidate.isBefore(next))) next = candidate;
+-                }
+-            }
+-        }
+-        return next;
+-    }
+-}
+diff --git a/downloader/src/main/java/com/privacy/downloader/model/ActiveDownloads.java b/downloader/src/main/java/com/privacy/downloader/model/ActiveDownloads.java
+deleted file mode 100644
+--- a/downloader/src/main/java/com/privacy/downloader/model/ActiveDownloads.java
++++ /dev/null
+@@ -1,88 +0,0 @@
+-package com.privacy.downloader.model;
+-
+-import java.util.ArrayList;
+-import java.util.Collections;
+-import java.util.Comparator;
+-import java.util.List;
+-import java.util.Objects;
+-
+-/** A value snapshot of in-process transfer owners. No URLs, paths, checkpoints or history. */
+-public final class ActiveDownloads {
+-    public final boolean checked;
+-    public final int owners;
+-    public final List<Transfer> transfers;
+-    public final long downloadedBytes;
+-    public final long totalBytes;
+-    public final long speed;
+-
+-    public ActiveDownloads(boolean checked, int owners, List<Transfer> transfers) {
+-        this.checked = checked;
+-        this.owners = owners;
+-        List<Transfer> ordered = new ArrayList<>(transfers);
+-        ordered.sort(Comparator.comparing(transfer -> transfer.id));
+-        this.transfers = Collections.unmodifiableList(ordered);
+-        long downloaded = 0, total = 0, rate = 0;
+-        for (Transfer transfer : ordered) {
+-            downloaded = sum(downloaded, transfer.downloadedBytes);
+-            if (transfer.totalBytes <= 0) total = -1;
+-            else if (total >= 0) total = sum(total, transfer.totalBytes);
+-            rate = sum(rate, transfer.speed);
+-        }
+-        downloadedBytes = downloaded;
+-        totalBytes = total;
+-        speed = rate;
+-    }
+-
+-    public boolean idle() { return checked && owners == 0; }
+-
+-    public Transfer find(String id) {
+-        for (Transfer transfer : transfers) if (transfer.id.equals(id)) return transfer;
+-        return null;
+-    }
+-
+-    private static long sum(long a, long b) { return a + Math.min(Math.max(0, b), Long.MAX_VALUE - a); }
+-
+-    @Override public boolean equals(Object object) {
+-        if (!(object instanceof ActiveDownloads)) return false;
+-        ActiveDownloads other = (ActiveDownloads) object;
+-        return checked == other.checked && owners == other.owners && transfers.equals(other.transfers);
+-    }
+-
+-    @Override public int hashCode() { return Objects.hash(checked, owners, transfers); }
+-
+-    public static final class Transfer {
+-        public final String id;
+-        public final String token;
+-        public final String name;
+-        public final DownloadStatus status;
+-        public final long downloadedBytes;
+-        public final long totalBytes;
+-        public final long speed;
+-        public final int threads;
+-
+-        public Transfer(DownloadItem item) {
+-            synchronized (item) {
+-                id = item.getId();
+-                token = item.getAttemptToken();
+-                name = item.getFileName();
+-                status = item.getStatus();
+-                downloadedBytes = item.getDownloadedBytes();
+-                totalBytes = item.getTotalBytes();
+-                speed = Math.max(0, item.getSpeedBytesPerSec());
+-                threads = item.getNumSegments();
+-            }
+-        }
+-
+-        @Override public boolean equals(Object object) {
+-            if (!(object instanceof Transfer)) return false;
+-            Transfer other = (Transfer) object;
+-            return id.equals(other.id) && Objects.equals(token, other.token) && Objects.equals(name, other.name)
+-                    && status == other.status && downloadedBytes == other.downloadedBytes && totalBytes == other.totalBytes
+-                    && speed == other.speed && threads == other.threads;
+-        }
+-
+-        @Override public int hashCode() {
+-            return Objects.hash(id, token, name, status, downloadedBytes, totalBytes, speed, threads);
+-        }
+-    }
+-}
+diff --git a/downloader/src/main/java/com/privacy/downloader/model/DownloadItem.java b/downloader/src/main/java/com/privacy/downloader/model/DownloadItem.java
+--- a/downloader/src/main/java/com/privacy/downloader/model/DownloadItem.java
++++ b/downloader/src/main/java/com/privacy/downloader/model/DownloadItem.java
+@@ -120,11 +120,8 @@
+     public synchronized void setSegments(List<DownloadSegment> segments) { this.segments = segments; }
+ 
+     public synchronized int getProgressPercentage() {
+-        return progressPercentage(downloadedBytes, totalBytes);
+-    }
+-
+-    public static int progressPercentage(long downloaded, long total) {
+-        return total <= 0 ? 0 : (int) Math.max(0, Math.min(100, 100.0 * downloaded / total));
++        if (totalBytes <= 0) return 0;
++        return (int) Math.min(100, (downloadedBytes * 100) / totalBytes);
+     }
+ 
+     public synchronized String getFormattedTotalSize() {
+@@ -136,22 +133,16 @@
+     }
+ 
+     public synchronized String getFormattedSpeed() {
+-        return formatSpeed(speedBytesPerSec);
+-    }
+-
+-    public static String formatSpeed(long speed) {
+-        return formatBytes(speed) + "/s";
++        if (speedBytesPerSec <= 0) return "0 B/s";
++        return formatBytes(speedBytesPerSec) + "/s";
+     }
+ 
+     public synchronized String getFormattedEta() {
+-        return formatEta(downloadedBytes, totalBytes, speedBytesPerSec);
+-    }
+-
+-    public static String formatEta(long downloaded, long total, long speed) {
+-        if (speed <= 0 || total <= 0 || downloaded >= total) {
++        if (speedBytesPerSec <= 0 || totalBytes <= 0 || downloadedBytes >= totalBytes) {
+             return "--:--";
+         }
+-        long seconds = (total - Math.max(0, downloaded)) / speed;
++        long remainingBytes = totalBytes - downloadedBytes;
++        long seconds = remainingBytes / speedBytesPerSec;
+         if (seconds <= 0) {
+             return "< 1s";
+         } else if (seconds < 60) {
+diff --git a/downloader/src/main/java/com/privacy/downloader/service/DownloadService.java b/downloader/src/main/java/com/privacy/downloader/service/DownloadService.java
+--- a/downloader/src/main/java/com/privacy/downloader/service/DownloadService.java
++++ b/downloader/src/main/java/com/privacy/downloader/service/DownloadService.java
+@@ -9,14 +9,18 @@
+ import android.content.Intent;
+ import android.content.pm.ServiceInfo;
+ import android.os.Build;
++import android.os.Handler;
++import android.os.HandlerThread;
+ import android.os.IBinder;
+-import android.os.Trace;
++import android.os.Looper;
++import android.os.Process;
+ 
+ import androidx.core.app.NotificationCompat;
+ 
+ import com.privacy.downloader.engine.DownloadEngine;
+-import com.privacy.downloader.model.ActiveDownloads;
+ import com.privacy.downloader.model.DownloadItem;
++
++import java.util.List;
+ 
+ public class DownloadService extends Service implements DownloadEngine.DownloadListener {
+ 
+@@ -28,50 +32,90 @@
+ 
+     private NotificationManager notificationManager;
+     private DownloadEngine engine;
+-    private ActiveDownloads rendered;
+-    private PendingIntent openDownloads;
++    private HandlerThread bgThread;
++    private volatile Handler bgHandler;
++    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+     private int lastStartId;
+-    private boolean foreground;
+-    private long sessionStartTime;
++    private volatile long sessionStartTime = 0;
++
++    private final Runnable notifTicker = new Runnable() {
++        @Override
++        public void run() {
++            if (engine.hasCheckedQueue() && engine.getActiveTaskCount() == 0) {
++                mainHandler.post(() -> {
++                    if (!stopIfIdle()) scheduleTicker();
++                });
++                return;
++            }
++            if (notificationManager != null) notificationManager.notify(NOTIFICATION_ID, buildProgressNotification());
++            scheduleTicker();
++        }
++    };
++
++    private void scheduleTicker() {
++        Handler handler = bgHandler;
++        if (handler != null) {
++            handler.removeCallbacks(notifTicker);
++            handler.postDelayed(notifTicker, 1000);
++        }
++    }
++
++    /** Check on the service thread (main) and don't stop a newer start request. */
++    private boolean stopIfIdle() {
++        if (lastStartId != 0 && engine.hasCheckedQueue() && engine.getActiveTaskCount() == 0 && stopSelfResult(lastStartId)) {
++            sessionStartTime = 0;
++            stopForeground(true);
++            return true;
++        }
++        return false;
++    }
+ 
+     @Override
+     public void onCreate() {
+         super.onCreate();
+         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+         createNotificationChannel();
+-        Intent launch = new Intent(this, com.privacy.downloader.ui.DownloadsActivity.class)
+-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+-        openDownloads = PendingIntent.getActivity(this, 0, launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+         engine = DownloadEngine.getInstance(this);
+         engine.addListener(this);
+-        // Satisfy Android's startForegroundService deadline without waiting for a queue or DB read.
+-        enterForeground(engine.activeDownloads());
++
++        bgThread = new HandlerThread("DownloadNotifThread", Process.THREAD_PRIORITY_BACKGROUND);
++        bgThread.start();
++        bgHandler = new Handler(bgThread.getLooper());
++
++        // CRITICAL FOR ANDROID 12/13/14: Call startForeground IMMEDIATELY in onCreate()
++        // to prevent ForegroundServiceDidNotStartInTimeException crashes!
++        startForegroundNotification();
++        scheduleTicker();
+     }
+ 
+     @Override
+     public int onStartCommand(Intent intent, int flags, int startId) {
+         lastStartId = startId;
+-        if (!foreground) enterForeground(engine.activeDownloads());
++        startForegroundNotification();
+         if (intent == null) engine.reconcile(); // Android recreated a previously active service.
+-        return stopIfIdle() ? START_NOT_STICKY : START_STICKY;
+-    }
+-
+-    private boolean stopIfIdle() {
+-        // A draining worker still owns a slot. Don't stop a newer Android start request.
+-        if (lastStartId == 0 || !engine.activeDownloads().idle() || !stopSelfResult(lastStartId)) return false;
+-        stopForeground(STOP_FOREGROUND_REMOVE);
+-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Trace.setCounter("Downloads.notificationOwners", 0);
+-        foreground = false;
++        if (stopIfIdle()) return START_NOT_STICKY;
++        scheduleTicker();
++        return START_STICKY;
++    }
++
++    @Override
++    public void onDestroy() {
++        super.onDestroy();
+         sessionStartTime = 0;
+-        return true;
+-    }
+-
+-    @Override
+-    public void onDestroy() {
+-        engine.removeListener(this);
+-        stopForeground(STOP_FOREGROUND_REMOVE);
+-        foreground = false;
+-        super.onDestroy();
++        if (engine != null) {
++            engine.removeListener(this);
++        }
++        Handler handler = bgHandler;
++        bgHandler = null;
++        if (handler != null) handler.removeCallbacksAndMessages(null);
++        mainHandler.removeCallbacksAndMessages(null);
++        if (bgThread != null) {
++            bgThread.quitSafely();
++            bgThread = null;
++        }
++        try {
++            stopForeground(true);
++        } catch (Throwable ignored) {}
+     }
+ 
+     @Override
+@@ -102,74 +146,107 @@
+         }
+     }
+ 
+-    private void enterForeground(ActiveDownloads active) {
+-        Trace.beginSection("Downloads.notification");
+-        try {
+-            Notification notification = buildProgressNotification(active);
+-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+-            } else {
+-                startForeground(NOTIFICATION_ID, notification);
+-            }
+-            foreground = true;
+-            rendered = active;
+-        } finally {
+-            Trace.endSection();
+-        }
+-    }
+-
+-    @Override
+-    public void onActiveDownloadsChanged(ActiveDownloads active) {
+-        if (active.idle()) {
+-            stopIfIdle();
+-            return;
+-        }
+-        if (!foreground || active.equals(rendered) || notificationManager == null) return;
+-        Trace.beginSection("Downloads.notification");
+-        try {
+-            notificationManager.notify(NOTIFICATION_ID, buildProgressNotification(active));
+-            rendered = active;
+-        } finally {
+-            Trace.endSection();
+-        }
+-    }
+-
+-    /** Formatting is constant work; the engine has already reduced the bounded owners to totals. */
+-    private Notification buildProgressNotification(ActiveDownloads active) {
+-        int count = active.transfers.size();
+-        String title = count == 1 ? "Downloading " + active.transfers.get(0).name
+-                : count == 0 ? "Download queue" : "Downloading " + count + " files";
+-        String speed = DownloadItem.formatSpeed(active.speed);
+-        int progress = DownloadItem.progressPercentage(active.downloadedBytes, active.totalBytes);
+-        boolean indeterminate = active.totalBytes <= 0;
+-        String text;
+-        if (count == 0) {
+-            text = !active.checked ? "Checking downloads…" : active.owners != 0 ? "Finishing download cleanup…" : "Idle";
++    private void startForegroundNotification() {
++        Notification notification = buildProgressNotification();
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+         } else {
+-            text = DownloadItem.formatBytes(active.downloadedBytes) + " / "
+-                    + (indeterminate ? "Unknown size" : DownloadItem.formatBytes(active.totalBytes) + " (" + progress + "%)")
+-                    + " • " + speed;
+-            if (count == 1) text += " • ETA: " + DownloadItem.formatEta(active.downloadedBytes, active.totalBytes, active.speed);
+-        }
+-        if (sessionStartTime == 0) sessionStartTime = System.currentTimeMillis();
+-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Trace.setCounter("Downloads.notificationOwners", active.owners);
+-        return new NotificationCompat.Builder(this, CHANNEL_ID)
++            startForeground(NOTIFICATION_ID, notification);
++        }
++    }
++
++    private Notification buildProgressNotification() {
++        List<DownloadItem> all = engine.getActiveDownloads();
++        int activeCount = 0;
++        long totalDownloaded = 0;
++        long totalExpected = 0;
++        long aggregateSpeed = 0;
++        DownloadItem sampleItem = null;
++
++        for (DownloadItem item : all) {
++            if (item.getStatus().isActive()) {
++                activeCount++;
++                sampleItem = item;
++                totalDownloaded += item.getDownloadedBytes();
++                if (item.getTotalBytes() > 0) {
++                    totalExpected += item.getTotalBytes();
++                }
++                aggregateSpeed += item.getSpeedBytesPerSec();
++            }
++        }
++
++        String title = (activeCount == 1 && sampleItem != null)
++                ? "Downloading " + sampleItem.getFileName()
++                : (activeCount == 0 ? "Download queue" : "Downloading " + activeCount + " files");
++
++        String speedText = DownloadItem.formatBytes(aggregateSpeed) + "/s";
++
++        int progress = 0;
++        boolean indeterminate = true;
++        if (totalExpected > 0) {
++            progress = (int) Math.min(100, (totalDownloaded * 100) / totalExpected);
++            indeterminate = false;
++        }
++
++        String contentText;
++        if (activeCount == 0) {
++            contentText = !engine.hasCheckedQueue() ? "Checking downloads…"
++                    : engine.getActiveTaskCount() != 0 ? "Finishing download cleanup…" : "Idle";
++        } else if (activeCount == 1 && sampleItem != null) {
++            contentText = sampleItem.getFormattedDownloadedSize() + " / " + sampleItem.getFormattedTotalSize()
++                    + " (" + sampleItem.getProgressPercentage() + "%) • " + speedText
++                    + " • ETA: " + sampleItem.getFormattedEta();
++        } else {
++            contentText = DownloadItem.formatBytes(totalDownloaded) + " / " + DownloadItem.formatBytes(totalExpected)
++                    + " (" + progress + "%) • " + speedText;
++        }
++
++        Intent launchIntent = new Intent(this, com.privacy.downloader.ui.DownloadsActivity.class);
++        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
++        PendingIntent pendingIntent = PendingIntent.getActivity(
++                this,
++                0,
++                launchIntent,
++                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
++        );
++
++        if (sessionStartTime == 0 && activeCount > 0) {
++            sessionStartTime = System.currentTimeMillis();
++        } else if (activeCount == 0) {
++            sessionStartTime = 0;
++        }
++
++        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                 .setContentTitle(title)
+-                .setContentText(text)
+-                .setSubText(speed)
++                .setContentText(contentText)
++                .setSubText(speedText)
+                 .setSmallIcon(com.privacy.downloader.R.drawable.ic_download)
+                 .setOngoing(true)
+                 .setOnlyAlertOnce(true)
+-                .setWhen(sessionStartTime)
++                .setWhen(sessionStartTime > 0 ? sessionStartTime : System.currentTimeMillis())
+                 .setShowWhen(false)
+                 .setProgress(100, progress, indeterminate)
+-                .setContentIntent(openDownloads)
+-                .build();
++                .setContentIntent(pendingIntent);
++
++        return builder.build();
++    }
++
++    @Override
++    public void onDownloadProgress(DownloadItem item) {
++        // The ticker renders progress from the current owners, not from buffered callbacks.
+     }
+ 
+     @Override
+     public void onDownloadCompleted(DownloadItem item) {
+         showCompletionNotification(item);
++    }
++
++    @Override
++    public void onDownloadFailed(DownloadItem item, String error) {}
++
++    @Override
++    public void onQueueChanged() {
++        if (!stopIfIdle()) scheduleTicker();
+     }
+ 
+     private void showCompletionNotification(DownloadItem item) {
+diff --git a/downloader/src/main/java/com/privacy/downloader/ui/DownloadPages.java b/downloader/src/main/java/com/privacy/downloader/ui/DownloadPages.java
+deleted file mode 100644
+--- a/downloader/src/main/java/com/privacy/downloader/ui/DownloadPages.java
++++ /dev/null
+@@ -1,80 +0,0 @@
+-package com.privacy.downloader.ui;
+-
+-import com.privacy.downloader.db.DownloadHistory;
+-import com.privacy.downloader.db.DownloadHistory.Row;
+-
+-import java.util.ArrayList;
+-import java.util.Collections;
+-import java.util.HashMap;
+-import java.util.List;
+-import java.util.Map;
+-
+-/** Loaded prefix of a stable SQL order. The paging boundary is a key, not a position or a live row. */
+-final class DownloadPages {
+-    interface Edits {
+-        void inserted(int at, int count);
+-        void removed(int at);
+-        void moved(int from, int to);
+-        void changed(int at);
+-    }
+-
+-    private final DownloadHistory.Sort sort;
+-    private final Edits edits;
+-    private final List<Row> rows = new ArrayList<>();
+-    private final Map<String, Row> byId = new HashMap<>();
+-    private Row boundary;
+-    private boolean more;
+-
+-    DownloadPages(DownloadHistory.Sort sort, Edits edits) {
+-        this.sort = sort;
+-        this.edits = edits;
+-    }
+-
+-    int size() { return rows.size(); }
+-    Row get(int position) { return rows.get(position); }
+-    Row boundary() { return boundary; }
+-    boolean more() { return more; }
+-
+-    int position(String id) {
+-        Row row = byId.get(id);
+-        return row == null ? -1 : Collections.binarySearch(rows, row, sort::compare);
+-    }
+-
+-    void append(List<Row> page, boolean hasMore) {
+-        if (!page.isEmpty()) boundary = page.get(page.size() - 1);
+-        more = hasMore;
+-        int appendAt = rows.size();
+-        for (Row row : page) {
+-            if (!byId.containsKey(row.id) && (rows.isEmpty() || sort.compare(rows.get(rows.size() - 1), row) < 0)) {
+-                rows.add(row);
+-                byId.put(row.id, row);
+-            } else {
+-                if (rows.size() > appendAt) edits.inserted(appendAt, rows.size() - appendAt);
+-                replace(row.id, row); // A changing sort key may bring back an already loaded ID.
+-                appendAt = rows.size();
+-            }
+-        }
+-        if (rows.size() > appendAt) edits.inserted(appendAt, rows.size() - appendAt);
+-    }
+-
+-    void replace(String id, Row row) {
+-        Row previous = byId.get(id);
+-        if (row != null && more && sort.compare(row, boundary) > 0) row = null;
+-        if (row == null ? previous == null : row.equals(previous)) return;
+-        int before = position(id);
+-        if (before >= 0) rows.remove(before);
+-        if (row == null) {
+-            byId.remove(id);
+-            edits.removed(before);
+-            return;
+-        }
+-        int after = -1 - Collections.binarySearch(rows, row, sort::compare);
+-        rows.add(after, row);
+-        byId.put(id, row);
+-        if (before < 0) edits.inserted(after, 1);
+-        else {
+-            if (before != after) edits.moved(before, after);
+-            edits.changed(after);
+-        }
+-    }
+-}
+diff --git a/downloader/src/main/java/com/privacy/downloader/ui/DownloadPromptDialog.java b/downloader/src/main/java/com/privacy/downloader/ui/DownloadPromptDialog.java
+--- a/downloader/src/main/java/com/privacy/downloader/ui/DownloadPromptDialog.java
++++ b/downloader/src/main/java/com/privacy/downloader/ui/DownloadPromptDialog.java
+@@ -21,6 +21,7 @@
+ import android.widget.Toast;
+ 
+ import com.privacy.downloader.R;
++import com.privacy.downloader.db.DownloadDbHelper;
+ import com.privacy.downloader.engine.DownloadEngine;
+ import com.privacy.downloader.model.DownloadItem;
+ import com.privacy.downloader.model.DownloadStatus;
+@@ -28,6 +29,7 @@
+ 
+ import java.io.File;
+ import java.io.IOException;
++import java.util.List;
+ import java.util.Locale;
+ import java.util.UUID;
+ import java.util.function.BooleanSupplier;
+@@ -208,7 +210,41 @@
+             if (layoutThreadWarning != null) layoutThreadWarning.setVisibility(View.GONE);
+         }
+ 
+-        layoutDuplicate.setVisibility(View.GONE);
++        // A blob cannot update an older job's URL: its confirmation creates a new source.
++        DownloadItem matchedIncomplete = null;
++        if (!isBlob) {
++            List<DownloadItem> existing = DownloadDbHelper.getInstance(context).getAllDownloads();
++            for (DownloadItem it : existing) {
++                if (it.getFileName() != null && it.getFileName().equalsIgnoreCase(initialFileName)
++                        && it.getStatus() != DownloadStatus.COMPLETED && it.getStatus() != DownloadStatus.CANCELLED
++                        && (it.getUrl() == null || !it.getUrl().startsWith("blob:"))) {
++                    matchedIncomplete = it;
++                    break;
++                }
++            }
++        }
++
++        final DownloadItem duplicateItem = matchedIncomplete;
++        if (duplicateItem != null) {
++            layoutDuplicate.setVisibility(View.VISIBLE);
++            textDuplicateMsg.setText("Notice: An incomplete download for this file already exists (" + duplicateItem.getFormattedDownloadedSize() + " saved). If you update the link, saved bytes will only be reused if they can be verified.");
++            btnResumeExisting.setOnClickListener(v -> {
++                if (!dialog.isShowing() || !current.getAsBoolean()) return;
++                btnResumeExisting.setEnabled(false);
++                DownloadEngine.getInstance(context).updateUrl(duplicateItem.getId(), url, updated -> {
++                    if (!dialog.isShowing() || !current.getAsBoolean()) return;
++                    btnResumeExisting.setEnabled(true);
++                    if (updated) {
++                        Toast.makeText(context, "Link updated. Retrying download...", Toast.LENGTH_SHORT).show();
++                        dialog.dismiss();
++                    } else {
++                        Toast.makeText(context, "Link not updated. Stop the earlier transfer first.", Toast.LENGTH_SHORT).show();
++                    }
++                });
++            });
++        } else {
++            layoutDuplicate.setVisibility(View.GONE);
++        }
+ 
+         CheckBox checkWifiOnly = view.findViewById(R.id.prompt_check_wifi_only);
+         CheckBox checkSubfolders = view.findViewById(R.id.prompt_check_subfolders);
+@@ -276,29 +312,6 @@
+         });
+ 
+         dialog.show();
+-        // A blob cannot update an older job; a retired page or dismissed dialog cannot use a late lookup.
+-        if (!isBlob) engine.findIncompleteDownload(initialFileName, duplicate -> {
+-            if (duplicate == null || !dialog.isShowing() || !current.getAsBoolean()) return;
+-            layoutDuplicate.setVisibility(View.VISIBLE);
+-            textDuplicateMsg.setText("Notice: An incomplete download for this file already exists ("
+-                    + DownloadItem.formatBytes(duplicate.savedBytes)
+-                    + " saved). If you update the link, saved bytes will only be reused if they can be verified.");
+-            btnResumeExisting.setOnClickListener(v -> {
+-                if (!dialog.isShowing() || !current.getAsBoolean()) return;
+-                btnResumeExisting.setEnabled(false);
+-                engine.updateUrl(duplicate.id, url, updated -> {
+-                    if (!dialog.isShowing() || !current.getAsBoolean()) return;
+-                    btnResumeExisting.setEnabled(true);
+-                    if (updated) {
+-                        Toast.makeText(context, "Link updated. Retrying download...", Toast.LENGTH_SHORT).show();
+-                        dialog.dismiss();
+-                    } else {
+-                        Toast.makeText(context, "Link not updated. Stop the earlier transfer first.", Toast.LENGTH_SHORT).show();
+-                    }
+-                });
+-            });
+-        });
+-
+ 
+         if (dialog.getWindow() != null) {
+             int width = (int) (context.getResources().getDisplayMetrics().widthPixels * 0.92);
+diff --git a/downloader/src/main/java/com/privacy/downloader/ui/DownloadsActivity.java b/downloader/src/main/java/com/privacy/downloader/ui/DownloadsActivity.java
+--- a/downloader/src/main/java/com/privacy/downloader/ui/DownloadsActivity.java
++++ b/downloader/src/main/java/com/privacy/downloader/ui/DownloadsActivity.java
+@@ -3,14 +3,9 @@
+ import android.app.Activity;
+ import android.app.AlertDialog;
+ import android.content.Context;
+-import android.content.Intent;
+ import android.content.SharedPreferences;
+ import android.graphics.Color;
+ import android.os.Bundle;
+-import android.os.CancellationSignal;
+-import android.os.Handler;
+-import android.os.Looper;
+-import android.os.Trace;
+ import android.os.Environment;
+ import android.os.StatFs;
+ import android.text.Editable;
+@@ -19,24 +14,20 @@
+ import android.view.LayoutInflater;
+ import android.view.View;
+ import android.view.ViewGroup;
++import android.widget.BaseAdapter;
+ import android.widget.EditText;
+ import android.widget.ImageView;
+ import android.widget.LinearLayout;
++import android.widget.ListView;
+ import android.widget.ProgressBar;
+ import android.widget.TextView;
+ import android.widget.Toast;
+ 
+-import androidx.annotation.NonNull;
+ import androidx.annotation.Nullable;
+-import androidx.recyclerview.widget.LinearLayoutManager;
+-import androidx.recyclerview.widget.RecyclerView;
++import androidx.core.content.FileProvider;
+ 
+ import com.privacy.downloader.R;
+-import com.privacy.downloader.db.DownloadDbHelper;
+-import com.privacy.downloader.db.DownloadHistory;
+-import com.privacy.downloader.db.DownloadHistory.Row;
+ import com.privacy.downloader.engine.DownloadEngine;
+-import com.privacy.downloader.model.ActiveDownloads;
+ import com.privacy.downloader.model.DownloadItem;
+ import com.privacy.downloader.model.DownloadStatus;
+ import com.privacy.downloader.net.RequestContext;
+@@ -46,18 +37,11 @@
+ import java.io.IOException;
+ import java.util.ArrayList;
+ import java.util.Collections;
+-import java.util.HashMap;
+ import java.util.HashSet;
+ import java.util.List;
+ import java.util.Locale;
+-import java.util.Map;
+ import java.util.Objects;
+ import java.util.Set;
+-import java.util.concurrent.Callable;
+-import java.util.concurrent.ExecutorService;
+-import java.util.concurrent.Executors;
+-import java.util.function.Consumer;
+-import java.util.function.Function;
+ 
+ import android.content.ClipData;
+ import android.content.ClipboardManager;
+@@ -72,21 +56,21 @@
+ public class DownloadsActivity extends Activity implements DownloadEngine.DownloadListener {
+ 
+     private static final String PREF_SORT_ORDER = "pref_download_sort_order";
+-    private static final long SEARCH_DELAY_MS = 160;
+-    private static final Object PROGRESS_PAYLOAD = new Object();
+-    private int currentSortOrder;
++    private static final int SORT_DATE_DESC = 0;
++    private static final int SORT_DATE_ASC = 1;
++    private static final int SORT_SIZE_DESC = 2;
++    private static final int SORT_SIZE_ASC = 3;
++    private static final int SORT_NAME_ASC = 4;
++    private static final int SORT_NAME_DESC = 5;
++
++    private int currentSortOrder = SORT_DATE_DESC;
+ 
+     private DownloadEngine engine;
+-    private DownloadDbHelper db;
+-    private RecyclerView listView;
+-    private LinearLayoutManager layout;
++    private ListView listView;
+     private View layoutEmptyState;
+-    private View loading;
+     private TextView tvAggregateSpeed;
+     private LinearLayout searchBarContainer;
+     private EditText editSearch;
+-    private AlertDialog diagnosticsDialog;
+-    private Runnable refreshDiagnostics;
+ 
+     // Selection mode members
+     private View toolbarStandard;
+@@ -97,40 +81,14 @@
+     private View btnShareSelected;
+     private View btnDeleteSelected;
+     private boolean isSelectionMode = false;
+-    private Set<String> selectedTaskIds = new HashSet<>();
+-    private boolean selectedAll;
+-    private boolean selectAllRequested;
+-    private boolean selectingAll;
++    private final Set<String> selectedTaskIds = new HashSet<>();
+ 
+     private TextView pillAll, pillActive, pillCompleted, pillVideos, pillMusic, pillDocs, pillArchives;
+     private int currentFilterIndex = 0; // 0=All, 1=Active, 2=Completed, 3=Videos, 4=Music, 5=Docs, 6=Archives
+     private String currentSearchQuery = "";
+ 
+-    private final Handler ui = new Handler(Looper.getMainLooper());
+-    private final ExecutorService reader = Executors.newSingleThreadExecutor(r -> new Thread(r, "DownloadHistory"));
+-    private final Set<String> dirtyRows = new HashSet<>();
+-    private DownloadHistory.Query query;
+-    private DownloadPages pages;
+-    private CancellationSignal queryOwner;
+-    private boolean resumed;
+-    private boolean resetting;
+-    private boolean firstPage;
+-    private boolean needsReset;
+-    private boolean wantMore;
+-    private boolean readFailed;
+-    private long itemAction;
+-    private final Runnable settledSearch = () -> {
+-        resetting = false;
+-        pumpHistory();
+-    };
++    private final List<DownloadItem> filteredItems = new ArrayList<>();
+     private DownloadsCardAdapter adapter;
+-    private ActiveDownloads active;
+-    private final DownloadPages.Edits pageEdits = new DownloadPages.Edits() {
+-        @Override public void inserted(int at, int count) { adapter.notifyItemRangeInserted(at, count); }
+-        @Override public void removed(int at) { adapter.notifyItemRemoved(at); }
+-        @Override public void moved(int from, int to) { adapter.notifyItemMoved(from, to); }
+-        @Override public void changed(int at) { adapter.notifyItemChanged(at); }
+-    };
+ 
+     @Override
+     protected void onCreate(@Nullable Bundle savedInstanceState) {
+@@ -138,17 +96,13 @@
+         super.onCreate(savedInstanceState);
+         setContentView(R.layout.activity_downloads);
+ 
+-        currentSortOrder = getSharedPreferences("download_prefs", MODE_PRIVATE).getInt(PREF_SORT_ORDER, 0);
+-        if (currentSortOrder < 0 || currentSortOrder >= DownloadHistory.Sort.values().length) currentSortOrder = 0;
++        currentSortOrder = getSharedPreferences("download_prefs", MODE_PRIVATE).getInt(PREF_SORT_ORDER, SORT_DATE_DESC);
+         engine = DownloadEngine.getInstance(this);
+-        db = DownloadDbHelper.getInstance(this);
+-        active = new ActiveDownloads(false, 0, Collections.emptyList());
+-        pages = new DownloadPages(DownloadHistory.Sort.values()[currentSortOrder], pageEdits);
+ 
+         initViews();
+         setupFilterPills();
+         updatePillsUI();
+-        engine.addListener(this);
++        refreshDownloadsList();
+         checkNotificationPermission();
+ 
+         if (getIntent() != null && getIntent().getBooleanExtra("extra_show_settings", false)) {
+@@ -167,30 +121,15 @@
+     @Override
+     protected void onResume() {
+         super.onResume();
+-        resumed = true;
+-        onActiveDownloadsChanged(engine.activeDownloads());
+-        if (refreshDiagnostics != null) refreshDiagnostics.run();
++        engine.addListener(this);
+         engine.reconcile();
+-        if (query == null || readFailed || needsReset) refreshDownloadsList();
+-        else pumpHistory();
++        refreshDownloadsList();
+     }
+ 
+     @Override
+     protected void onPause() {
+-        resumed = false;
+-        itemAction++;
+         super.onPause();
+-    }
+-
+-    @Override
+-    protected void onDestroy() {
+-        resumed = false;
+-        if (diagnosticsDialog != null) diagnosticsDialog.dismiss();
+         engine.removeListener(this);
+-        cancelRead();
+-        ui.removeCallbacksAndMessages(null);
+-        reader.shutdownNow();
+-        super.onDestroy();
+     }
+ 
+     private void initViews() {
+@@ -219,7 +158,6 @@
+ 
+         tvAggregateSpeed = findViewById(R.id.tv_aggregate_speed);
+         layoutEmptyState = findViewById(R.id.layout_empty_state);
+-        loading = findViewById(R.id.downloads_loading);
+         listView = findViewById(R.id.list_downloads);
+ 
+         searchBarContainer = findViewById(R.id.search_bar_container);
+@@ -229,13 +167,19 @@
+             if (searchBarContainer.getVisibility() == View.VISIBLE) {
+                 searchBarContainer.setVisibility(View.GONE);
+                 editSearch.setText("");
++                currentSearchQuery = "";
++                refreshDownloadsList();
+             } else {
+                 searchBarContainer.setVisibility(View.VISIBLE);
+                 editSearch.requestFocus();
+             }
+         });
+ 
+-        findViewById(R.id.btn_clear_search).setOnClickListener(v -> editSearch.setText(""));
++        findViewById(R.id.btn_clear_search).setOnClickListener(v -> {
++            editSearch.setText("");
++            currentSearchQuery = "";
++            refreshDownloadsList();
++        });
+ 
+         editSearch.addTextChangedListener(new TextWatcher() {
+             @Override
+@@ -243,10 +187,8 @@
+ 
+             @Override
+             public void onTextChanged(CharSequence s, int start, int before, int count) {
+-                String search = s.toString().trim().toLowerCase(Locale.US);
+-                if (search.equals(currentSearchQuery)) return;
+-                currentSearchQuery = search;
+-                resetHistory(SEARCH_DELAY_MS);
++                currentSearchQuery = s.toString().trim().toLowerCase(Locale.US);
++                refreshDownloadsList();
+             }
+ 
+             @Override
+@@ -256,14 +198,8 @@
+         findViewById(R.id.btn_add_download).setOnClickListener(v -> showAddUrlPrompt());
+         findViewById(R.id.btn_overflow_menu).setOnClickListener(v -> showOverflowMenu());
+ 
+-        layout = new LinearLayoutManager(this);
+-        listView.setLayoutManager(layout);
+-        listView.setItemAnimator(null); // Byte progress should not animate the whole card or steal scroll focus.
+         adapter = new DownloadsCardAdapter();
+         listView.setAdapter(adapter);
+-        listView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+-            @Override public void onScrolled(@NonNull RecyclerView view, int dx, int dy) { requestNextPage(); }
+-        });
+     }
+ 
+     private void setupFilterPills() {
+@@ -305,276 +241,200 @@
+         }
+     }
+ 
+-    private void refreshDownloadsList() { resetHistory(0); }
+-
+-    private void resetHistory(long delay) {
+-        itemAction++;
+-        ui.removeCallbacks(settledSearch);
+-        cancelRead();
+-        query = new DownloadHistory.Query(DownloadHistory.Filter.values()[currentFilterIndex],
+-                DownloadHistory.Sort.values()[currentSortOrder], currentSearchQuery);
+-        int old = pages.size();
+-        pages = new DownloadPages(query.sort, pageEdits);
+-        if (old != 0) adapter.notifyItemRangeRemoved(0, old);
+-        listView.scrollToPosition(0);
+-        firstPage = true;
+-        wantMore = needsReset = readFailed = false;
+-        selectAllRequested = selectingAll = selectedAll = false;
+-        dirtyRows.clear(); // The new read will include these commits.
+-        updateHistoryViews();
+-        resetting = delay != 0;
+-        if (resetting) ui.postDelayed(settledSearch, delay);
+-        else pumpHistory();
+-    }
+-
+-    private void cancelRead() {
+-        CancellationSignal old = queryOwner;
+-        queryOwner = null;
+-        if (old != null) old.cancel();
+-    }
+-
+-    @Override public void onDownloadRowsChanged(Set<String> ids, boolean reset) {
+-        if (reset || (!needsReset && dirtyRows.addAll(ids) && dirtyRows.size() > DownloadHistory.ID_BATCH)) {
+-            dirtyRows.clear();
+-            needsReset = true;
+-        }
+-        pumpHistory();
+-    }
+-
+-    private void requestNextPage() {
+-        if (!resumed || needsReset || !pages.more() || layout.findLastVisibleItemPosition() < pages.size() - 8) return;
+-        wantMore = true;
+-        pumpHistory();
+-    }
+-
+-    private void pumpHistory() {
+-        if (!resumed || query == null || resetting || isFinishing()) return;
+-        if (needsReset) {
+-            refreshDownloadsList();
+-            return;
+-        }
+-        if (queryOwner != null || readFailed) return;
+-        DownloadHistory.Query request = query;
+-        if (firstPage) {
+-            // Until this settles, selection controls are blocked, or Back replaces the set entirely.
+-            Set<String> selection = selectedTaskIds;
+-            readHistory(cancel -> new InitialPage(db.readPage(request, null, cancel), selection.isEmpty()
+-                    ? selection : db.readMatchingIds(request, selection, cancel)), result -> {
+-                firstPage = false;
+-                if (selection == selectedTaskIds) selectedTaskIds = result.selected;
+-                applyPage(result.page);
+-                finishSelectionUpdate();
+-            });
+-        } else if (!dirtyRows.isEmpty()) {
+-            List<String> ids = new ArrayList<>(dirtyRows);
+-            dirtyRows.clear();
+-            readHistory(cancel -> db.readChangedRows(request, ids, cancel), rows -> applyChangedRows(ids, rows));
+-        } else if (selectAllRequested) {
+-            selectAllRequested = false;
+-            selectingAll = true;
+-            Set<String> before = selectedTaskIds;
+-            readHistory(cancel -> db.readMatchingIds(request, null, cancel), selected -> {
+-                selectingAll = false;
+-                if (before != selectedTaskIds) return;
+-                selectedTaskIds = selected;
+-                selectedAll = !selected.isEmpty();
+-                finishSelectionUpdate();
+-                rebindSelection();
+-            });
+-        } else if (wantMore && pages.more()) {
+-            wantMore = false;
+-            Row after = pages.boundary();
+-            readHistory(cancel -> db.readPage(request, after, cancel), this::applyPage);
+-        }
+-    }
+-
+-    private <T> void readHistory(Function<CancellationSignal, T> read, Consumer<T> deliver) {
+-        CancellationSignal owner = new CancellationSignal();
+-        queryOwner = owner;
+-        reader.execute(() -> {
+-            if (owner.isCanceled()) return;
+-            try {
+-                T result = read.apply(owner);
+-                ui.post(() -> {
+-                    if (queryOwner != owner || isFinishing() || isDestroyed()) return;
+-                    queryOwner = null;
+-                    deliver.accept(result);
+-                    updateHistoryViews();
+-                    pumpHistory();
+-                });
+-            } catch (RuntimeException failure) {
+-                ui.post(() -> {
+-                    if (queryOwner != owner || isFinishing() || isDestroyed()) return;
+-                    queryOwner = null;
+-                    readFailed = true;
+-                    selectingAll = selectAllRequested = false;
+-                    updateHistoryViews();
+-                    Toast.makeText(this, "Could not load downloads. Select a filter to retry.", Toast.LENGTH_SHORT).show();
+-                });
+-            }
+-        });
+-    }
+-
+-    private void applyPage(DownloadHistory.Page page) {
+-        Trace.beginSection("Downloads.applyPage");
+-        try {
+-            pages.append(page.rows, page.more);
+-        } finally {
+-            Trace.endSection();
+-        }
+-        listView.post(this::requestNextPage);
+-    }
+-
+-    private void applyChangedRows(List<String> ids, List<Row> rows) {
+-        Trace.beginSection("Downloads.applyRows");
+-        try {
+-            Map<String, Row> byId = new HashMap<>();
+-            for (Row row : rows) byId.put(row.id, row);
+-            for (String id : ids) {
+-                Row match = byId.get(id);
+-                if (match == null) selectedTaskIds.remove(id);
+-                else if (!selectedTaskIds.contains(id)) selectedAll = false;
+-                pages.replace(id, match);
+-            }
+-            finishSelectionUpdate();
+-        } finally {
+-            Trace.endSection();
+-        }
+-        listView.post(this::requestNextPage);
+-    }
+-
+-    private void updateHistoryViews() {
+-        loading.setVisibility(firstPage && !readFailed ? View.VISIBLE : View.GONE);
+-        layoutEmptyState.setVisibility(!firstPage && !readFailed && pages.size() == 0 ? View.VISIBLE : View.GONE);
+-        if (isSelectionMode) updateSelectionToolbar();
+-    }
+-
+-    private static final class InitialPage {
+-        final DownloadHistory.Page page;
+-        final Set<String> selected;
+-        InitialPage(DownloadHistory.Page page, Set<String> selected) { this.page = page; this.selected = selected; }
+-    }
+-
+-    private void rebindSelection() {
+-        if (pages.size() != 0) adapter.notifyItemRangeChanged(0, pages.size());
++    private void refreshDownloadsList() {
++        List<DownloadItem> all = engine.getAllDownloads();
++        filteredItems.clear();
++
++        long totalSpeed = 0;
++        for (DownloadItem item : all) {
++            if (item.getStatus().isActive()) {
++                totalSpeed += item.getSpeedBytesPerSec();
++            }
++
++            // Search filter
++            if (!currentSearchQuery.isEmpty()) {
++                String name = item.getFileName() != null ? item.getFileName().toLowerCase(Locale.US) : "";
++                if (!name.contains(currentSearchQuery)) {
++                    continue;
++                }
++            }
++
++            // Category filter
++            if (currentFilterIndex == 0) {
++                filteredItems.add(item);
++            } else if (currentFilterIndex == 1 && (item.getStatus().isActive() || item.getStatus().isWaiting())) {
++                filteredItems.add(item);
++            } else if (currentFilterIndex == 2 && item.getStatus() == DownloadStatus.COMPLETED) {
++                filteredItems.add(item);
++            } else if (currentFilterIndex == 3 && isVideo(item.getFileName())) {
++                filteredItems.add(item);
++            } else if (currentFilterIndex == 4 && isAudio(item.getFileName())) {
++                filteredItems.add(item);
++            } else if (currentFilterIndex == 5 && isDocument(item.getFileName())) {
++                filteredItems.add(item);
++            } else if (currentFilterIndex == 6 && isArchive(item.getFileName())) {
++                filteredItems.add(item);
++            }
++        }
++
++        Collections.sort(filteredItems, (a, b) -> {
++            switch (currentSortOrder) {
++                case SORT_DATE_ASC:
++                    return Long.compare(a.getCreatedTime(), b.getCreatedTime());
++                case SORT_SIZE_DESC: {
++                    long sizeA = a.getTotalBytes() > 0 ? a.getTotalBytes() : a.getDownloadedBytes();
++                    long sizeB = b.getTotalBytes() > 0 ? b.getTotalBytes() : b.getDownloadedBytes();
++                    return Long.compare(sizeB, sizeA);
++                }
++                case SORT_SIZE_ASC: {
++                    long sizeA = a.getTotalBytes() > 0 ? a.getTotalBytes() : a.getDownloadedBytes();
++                    long sizeB = b.getTotalBytes() > 0 ? b.getTotalBytes() : b.getDownloadedBytes();
++                    return Long.compare(sizeA, sizeB);
++                }
++                case SORT_NAME_ASC: {
++                    String nameA = a.getFileName() != null ? a.getFileName() : "";
++                    String nameB = b.getFileName() != null ? b.getFileName() : "";
++                    return nameA.compareToIgnoreCase(nameB);
++                }
++                case SORT_NAME_DESC: {
++                    String nameA = a.getFileName() != null ? a.getFileName() : "";
++                    String nameB = b.getFileName() != null ? b.getFileName() : "";
++                    return nameB.compareToIgnoreCase(nameA);
++                }
++                case SORT_DATE_DESC:
++                default:
++                    return Long.compare(b.getCreatedTime(), a.getCreatedTime());
++            }
++        });
++
++        if (tvAggregateSpeed != null) {
++            if (totalSpeed > 0) {
++                tvAggregateSpeed.setVisibility(View.VISIBLE);
++                tvAggregateSpeed.setText("Speed: " + DownloadItem.formatBytes(totalSpeed) + "/s");
++            } else {
++                tvAggregateSpeed.setVisibility(View.GONE);
++            }
++        }
++
++        if (layoutEmptyState != null) {
++            layoutEmptyState.setVisibility(filteredItems.isEmpty() ? View.VISIBLE : View.GONE);
++        }
++
++        if (isSelectionMode) {
++            // Prune any deleted items
++            Set<String> validIds = new HashSet<>();
++            for (DownloadItem di : filteredItems) {
++                validIds.add(di.getId());
++            }
++            selectedTaskIds.retainAll(validIds);
++            if (selectedTaskIds.isEmpty()) {
++                exitSelectionMode();
++            } else {
++                updateSelectionToolbar();
++            }
++        }
++
++        if (adapter != null) {
++            adapter.notifyDataSetChanged();
++        }
+     }
+ 
+     private void enterSelectionMode(String initialTaskId) {
+-        if (pages.position(initialTaskId) < 0) return;
+         isSelectionMode = true;
+-        selectedAll = false;
+-        selectedTaskIds = new HashSet<>(Collections.singleton(initialTaskId));
++        selectedTaskIds.clear();
++        if (initialTaskId != null) {
++            selectedTaskIds.add(initialTaskId);
++        }
+         updateSelectionToolbar();
+-        rebindSelection();
++        if (adapter != null) adapter.notifyDataSetChanged();
+     }
+ 
+     private void exitSelectionMode() {
+-        if (!isSelectionMode) return;
+-        isSelectionMode = selectedAll = selectAllRequested = selectingAll = false;
+-        selectedTaskIds = new HashSet<>();
+-        toolbarSelection.setVisibility(View.GONE);
+-        toolbarStandard.setVisibility(View.VISIBLE);
+-        rebindSelection();
+-    }
+-
+-    private boolean selectionBusy() { return firstPage || selectingAll || selectAllRequested; }
++        isSelectionMode = false;
++        selectedTaskIds.clear();
++        if (toolbarSelection != null) toolbarSelection.setVisibility(View.GONE);
++        if (toolbarStandard != null) toolbarStandard.setVisibility(View.VISIBLE);
++        if (adapter != null) adapter.notifyDataSetChanged();
++    }
+ 
+     private void toggleItemSelection(String taskId) {
+-        if (selectionBusy()) return;
+-        if (!selectedTaskIds.remove(taskId)) selectedTaskIds.add(taskId);
+-        selectedAll = false;
+-        finishSelectionUpdate();
+-        int position = pages.position(taskId);
+-        if (isSelectionMode && position >= 0) adapter.notifyItemChanged(position);
+-    }
+-
+-    private void finishSelectionUpdate() {
+-        if (!isSelectionMode) return;
+-        if (selectedTaskIds.isEmpty()) exitSelectionMode();
+-        else updateSelectionToolbar();
+-    }
+-
+-    private boolean allSelected() {
+-        return selectedAll || (!pages.more() && pages.size() != 0 && selectedTaskIds.size() == pages.size());
++        if (selectedTaskIds.contains(taskId)) {
++            selectedTaskIds.remove(taskId);
++        } else {
++            selectedTaskIds.add(taskId);
++        }
++        if (selectedTaskIds.isEmpty()) {
++            exitSelectionMode();
++        } else {
++            updateSelectionToolbar();
++            if (adapter != null) adapter.notifyDataSetChanged();
++        }
+     }
+ 
+     private void toggleSelectAll() {
+-        if (selectionBusy() || readFailed) return;
+-        if (allSelected()) exitSelectionMode();
+-        else {
+-            selectAllRequested = true;
++        if (selectedTaskIds.size() == filteredItems.size()) {
++            selectedTaskIds.clear();
++            exitSelectionMode();
++        } else {
++            selectedTaskIds.clear();
++            for (DownloadItem item : filteredItems) {
++                selectedTaskIds.add(item.getId());
++            }
+             updateSelectionToolbar();
+-            pumpHistory();
++            if (adapter != null) adapter.notifyDataSetChanged();
+         }
+     }
+ 
+     private void updateSelectionToolbar() {
+-        toolbarStandard.setVisibility(View.GONE);
+-        toolbarSelection.setVisibility(View.VISIBLE);
+-        textSelectedCount.setText(selectedTaskIds.size() + " selected");
+-        btnSelectAll.setText(allSelected() ? "Deselect" : "Select All");
+-        btnSelectAll.setEnabled(!selectionBusy() && !readFailed);
+-        btnShareSelected.setEnabled(!selectionBusy());
+-        btnDeleteSelected.setEnabled(!selectionBusy());
++        if (toolbarStandard != null) toolbarStandard.setVisibility(View.GONE);
++        if (toolbarSelection != null) toolbarSelection.setVisibility(View.VISIBLE);
++
++        int count = selectedTaskIds.size();
++        if (textSelectedCount != null) {
++            textSelectedCount.setText(count + " selected");
++        }
++        if (btnSelectAll != null) {
++            btnSelectAll.setText(count == filteredItems.size() && !filteredItems.isEmpty() ? "Deselect" : "Select All");
++        }
+     }
+ 
+     private void confirmDeleteSelected() {
+-        if (selectionBusy() || selectedTaskIds.isEmpty()) return;
+-        List<String> selection = new ArrayList<>(selectedTaskIds);
+-        int count = selection.size();
++        if (selectedTaskIds.isEmpty()) return;
++        final int count = selectedTaskIds.size();
++
+         new AlertDialog.Builder(this, DownloaderThemeHelper.getDialogTheme(this))
+                 .setTitle("Delete Downloads")
+                 .setMessage("Are you sure you want to delete " + count + " selected " + (count == 1 ? "download" : "downloads") + "?")
+                 .setPositiveButton("Delete", (dialog, which) -> {
+-                    engine.deleteSelected(selection, removed -> Toast.makeText(this,
+-                            "Removed " + removed + " of " + count + " downloads from queue", Toast.LENGTH_SHORT).show());
++                    int[] remaining = {count};
++                    int[] removed = {0};
++                    for (String id : new ArrayList<>(selectedTaskIds)) {
++                        engine.delete(id, true, success -> {
++                            if (success) removed[0]++;
++                            if (--remaining[0] == 0) Toast.makeText(this,
++                                    "Removed " + removed[0] + " of " + count + " downloads from queue", Toast.LENGTH_SHORT).show();
++                        });
++                    }
+                     exitSelectionMode();
++                    refreshDownloadsList();
+                 })
+                 .setNegativeButton("Cancel", null)
+                 .show();
+     }
+ 
+     private void shareSelectedItems() {
+-        if (selectionBusy() || selectedTaskIds.isEmpty()) return;
+-        List<String> selection = new ArrayList<>(selectedTaskIds);
+-        runFileAction(() -> {
+-            Set<String> completed = db.readMatchingIds(new DownloadHistory.Query(DownloadHistory.Filter.COMPLETED,
+-                    DownloadHistory.Sort.NEWEST, ""), selection, null);
+-            selection.retainAll(completed);
+-            return DownloadFileIntents.share(this, selection);
+-        }, "Cannot share files");
+-    }
+-
+-    private void runFileAction(Callable<Intent> action, String failureMessage) {
+-        long request = ++itemAction;
+-        reader.execute(() -> {
+-            try {
+-                Intent intent = action.call();
+-                ui.post(() -> {
+-                    if (!canDeliverAction(request)) return;
+-                    try { startActivity(intent); } catch (RuntimeException e) { fileActionError(failureMessage, e); }
+-                });
+-            } catch (Exception e) {
+-                ui.post(() -> { if (canDeliverAction(request)) fileActionError(failureMessage, e); });
+-            }
+-        });
+-    }
+-
+-    private boolean canDeliverAction(long request) {
+-        return request == itemAction && resumed && !isFinishing() && !isDestroyed();
+-    }
+-
+-    private void fileActionError(String message, Exception e) {
+-        Toast.makeText(this, message + ": " + e.getMessage(), Toast.LENGTH_SHORT).show();
+-    }
+-
+-    private void onCurrentItem(String id, Consumer<DownloadItem> action) {
+-        long request = ++itemAction;
+-        engine.readDownload(id, false, item -> {
+-            if (!canDeliverAction(request)) return;
+-            if (item != null) action.accept(item);
+-            else Toast.makeText(this, "Download no longer available", Toast.LENGTH_SHORT).show();
+-        });
++        if (selectedTaskIds.isEmpty()) return;
++        List<String> completed = new ArrayList<>();
++        for (DownloadItem item : filteredItems) {
++            if (selectedTaskIds.contains(item.getId()) && item.getStatus() == DownloadStatus.COMPLETED) {
++                completed.add(item.getId());
++            }
++        }
++        try {
++            startActivity(DownloadFileIntents.share(this, completed));
++        } catch (Exception e) {
++            Toast.makeText(this, "Cannot share files: " + e.getMessage(), Toast.LENGTH_SHORT).show();
++        }
+     }
+ 
+     @Override
+@@ -794,6 +654,7 @@
+             Toast.makeText(this, queueError == null ? result : result + ". " + queueError, Toast.LENGTH_LONG).show();
+             if (queued == 0) return;
+             dialog.dismiss();
++            refreshDownloadsList();
+         });
+ 
+         parseUrls.run();
+@@ -1150,9 +1011,9 @@
+         applyDialogTheme(dialog);
+     }
+ 
+-    private void showTaskDiagnosticsDialog(String taskId) {
+-        itemAction++;
+-        if (diagnosticsDialog != null) diagnosticsDialog.dismiss();
++    private void showTaskDiagnosticsDialog(DownloadItem initialItem) {
++        if (initialItem == null) return;
++        final String taskId = initialItem.getId();
+ 
+         AlertDialog.Builder builder = new AlertDialog.Builder(this, DownloaderThemeHelper.getDialogTheme(this));
+         View view = LayoutInflater.from(this).inflate(R.layout.dialog_task_diagnostics, null);
+@@ -1186,11 +1047,10 @@
+ 
+         btnClose.setOnClickListener(v -> dialog.dismiss());
+ 
+-        Consumer<DownloadItem> updateUI = liveItem -> {
++        Runnable updateUI = () -> {
++            DownloadItem liveItem = engine.getDownloadItem(taskId);
+             if (liveItem == null) {
+-                Toast.makeText(this, "Download no longer available", Toast.LENGTH_SHORT).show();
+-                dialog.dismiss();
+-                return;
++                liveItem = initialItem;
+             }
+ 
+             textFileName.setText(liveItem.getFileName());
+@@ -1299,7 +1159,7 @@
+                 }
+             }
+ 
+-            List<DownloadSegment> segments = liveItem.getSegments();
++            List<DownloadSegment> segments = engine.getTaskSegments(taskId);
+             containerSegments.removeAllViews();
+ 
+             if (segments == null || segments.isEmpty()) {
+@@ -1361,54 +1221,39 @@
+             }
+         };
+ 
+-        class Diagnostics implements DownloadEngine.DownloadListener {
+-            boolean pending;
+-            boolean dirty;
+-            ActiveDownloads.Transfer last = active.find(taskId);
+-
+-            void refresh() {
+-                if (!dialog.isShowing() || !resumed) return;
+-                if (pending) {
+-                    dirty = true;
+-                    return;
+-                }
+-                pending = true;
+-                engine.readDownload(taskId, true, detail -> {
+-                    pending = false;
+-                    if (!dialog.isShowing() || isDestroyed()) return;
+-                    updateUI.accept(detail);
+-                    if (dirty) {
+-                        dirty = false;
+-                        refresh();
+-                    }
+-                });
+-            }
+-
+-            @Override public void onActiveDownloadsChanged(ActiveDownloads snapshot) {
+-                ActiveDownloads.Transfer next = snapshot.find(taskId);
+-                if (Objects.equals(last, next)) return;
+-                last = next;
+-                refresh();
+-            }
+-
+-            @Override public void onDownloadRowsChanged(Set<String> ids, boolean reset) {
+-                if (reset || ids.contains(taskId)) refresh();
+-            }
+-        }
+-        Diagnostics diagnostics = new Diagnostics();
+-        dialog.setOnDismissListener(d -> {
+-            engine.removeListener(diagnostics);
+-            if (diagnosticsDialog == dialog) {
+-                diagnosticsDialog = null;
+-                refreshDiagnostics = null;
+-            }
+-        });
+-        diagnosticsDialog = dialog;
+-        refreshDiagnostics = diagnostics::refresh;
+-        textStatusBadge.setText("Loading…");
++        DownloadEngine.DownloadListener diagListener = new DownloadEngine.DownloadListener() {
++            @Override
++            public void onDownloadProgress(DownloadItem item) {
++                if (item.getId().equals(taskId)) {
++                    runOnUiThread(updateUI);
++                }
++            }
++
++            @Override
++            public void onDownloadCompleted(DownloadItem item) {
++                if (item.getId().equals(taskId)) {
++                    runOnUiThread(updateUI);
++                }
++            }
++
++            @Override
++            public void onDownloadFailed(DownloadItem item, String error) {
++                if (item.getId().equals(taskId)) {
++                    runOnUiThread(updateUI);
++                }
++            }
++
++            @Override
++            public void onQueueChanged() {
++                runOnUiThread(updateUI);
++            }
++        };
++
++        engine.addListener(diagListener);
++        dialog.setOnDismissListener(d -> engine.removeListener(diagListener));
++
++        updateUI.run();
+         dialog.show();
+-        engine.addListener(diagnostics);
+-        diagnostics.refresh();
+         applyDialogTheme(dialog);
+         if (dialog.getWindow() != null) {
+             int maxHeight = (int) (getResources().getDisplayMetrics().heightPixels * 0.85);
+@@ -1544,10 +1389,29 @@
+         });
+     }
+ 
+-    private boolean isVideo(String name) { return DownloadHistory.Filter.VIDEOS.hasExtension(name); }
+-    private boolean isAudio(String name) { return DownloadHistory.Filter.MUSIC.hasExtension(name); }
+-    private boolean isDocument(String name) { return DownloadHistory.Filter.DOCS.hasExtension(name); }
+-    private boolean isArchive(String name) { return DownloadHistory.Filter.ARCHIVES.hasExtension(name); }
++    private boolean isVideo(String name) {
++        if (name == null) return false;
++        String lower = name.toLowerCase(Locale.US);
++        return lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".webm") || lower.endsWith(".avi") || lower.endsWith(".mov");
++    }
++
++    private boolean isAudio(String name) {
++        if (name == null) return false;
++        String lower = name.toLowerCase(Locale.US);
++        return lower.endsWith(".mp3") || lower.endsWith(".m4a") || lower.endsWith(".flac") || lower.endsWith(".wav") || lower.endsWith(".ogg");
++    }
++
++    private boolean isDocument(String name) {
++        if (name == null) return false;
++        String lower = name.toLowerCase(Locale.US);
++        return lower.endsWith(".pdf") || lower.endsWith(".doc") || lower.endsWith(".docx") || lower.endsWith(".txt") || lower.endsWith(".epub");
++    }
++
++    private boolean isArchive(String name) {
++        if (name == null) return false;
++        String lower = name.toLowerCase(Locale.US);
++        return lower.endsWith(".zip") || lower.endsWith(".7z") || lower.endsWith(".rar") || lower.endsWith(".tar") || lower.endsWith(".gz") || lower.endsWith(".apk");
++    }
+ 
+     private int getFileIconRes(String name) {
+         if (isVideo(name)) return R.drawable.ic_file_video;
+@@ -1557,37 +1421,68 @@
+         return R.drawable.ic_file_generic;
+     }
+ 
+-    @Override public void onActiveDownloadsChanged(ActiveDownloads snapshot) {
+-        if (!resumed) return;
+-        Trace.beginSection("Downloads.applyProgress");
+-        try {
+-            ActiveDownloads previous = active;
+-            active = snapshot;
+-            if (snapshot.speed > 0) {
++    private long lastUiProgressUpdateTime = 0;
++
++    @Override
++    public void onDownloadProgress(DownloadItem item) {
++        if (item == null) return;
++        long now = System.currentTimeMillis();
++        if (now - lastUiProgressUpdateTime < 600) {
++            return;
++        }
++        lastUiProgressUpdateTime = now;
++
++        int targetIndex = -1;
++        long totalSpeed = 0;
++        for (int i = 0; i < filteredItems.size(); i++) {
++            DownloadItem cur = filteredItems.get(i);
++            if (cur.getId().equals(item.getId()) && cur.getStatus().isTransferring() && item.getStatus().isTransferring()
++                    && Objects.equals(cur.getAttemptToken(), item.getAttemptToken())) {
++                filteredItems.set(i, item);
++                targetIndex = i;
++                cur = item;
++            }
++            if (cur.getStatus().isActive()) {
++                totalSpeed += cur.getSpeedBytesPerSec();
++            }
++        }
++
++        if (tvAggregateSpeed != null) {
++            if (totalSpeed > 0) {
+                 tvAggregateSpeed.setVisibility(View.VISIBLE);
+-                if (previous.speed != snapshot.speed || tvAggregateSpeed.length() == 0) {
+-                    tvAggregateSpeed.setText("Speed: " + DownloadItem.formatSpeed(snapshot.speed));
+-                }
+-            } else tvAggregateSpeed.setVisibility(View.GONE);
+-            for (ActiveDownloads.Transfer old : previous.transfers) {
+-                ActiveDownloads.Transfer replacement = snapshot.find(old.id);
+-                if (replacement == null || !Objects.equals(old.token, replacement.token)) rebindProgress(old.id, old.token);
+-            }
+-            for (ActiveDownloads.Transfer next : snapshot.transfers) {
+-                if (!next.equals(previous.find(next.id))) rebindProgress(next.id, next.token);
+-            }
+-        } finally {
+-            Trace.endSection();
+-        }
+-    }
+-
+-    private void rebindProgress(String id, String token) {
+-        int position = pages.position(id);
+-        if (position < 0) return;
+-        Row row = pages.get(position);
+-        if (row.status.isTransferring() && Objects.equals(token, row.token)) {
+-            adapter.notifyItemChanged(position, PROGRESS_PAYLOAD);
+-        }
++                tvAggregateSpeed.setText("Speed: " + DownloadItem.formatBytes(totalSpeed) + "/s");
++            } else {
++                tvAggregateSpeed.setVisibility(View.GONE);
++            }
++        }
++
++        if (targetIndex != -1 && listView != null) {
++            int first = listView.getFirstVisiblePosition();
++            int last = listView.getLastVisiblePosition();
++            if (targetIndex >= first && targetIndex <= last) {
++                View view = listView.getChildAt(targetIndex - first);
++                if (view != null && adapter != null) {
++                    adapter.getView(targetIndex, view, listView);
++                }
++            }
++        } else {
++            refreshDownloadsList();
++        }
++    }
++
++    @Override
++    public void onDownloadCompleted(DownloadItem item) {
++        refreshDownloadsList();
++    }
++
++    @Override
++    public void onDownloadFailed(DownloadItem item, String error) {
++        refreshDownloadsList();
++    }
++
++    @Override
++    public void onQueueChanged() {
++        refreshDownloadsList();
+     }
+ 
+     private static String waitingBadge(DownloadStatus status) {
+@@ -1634,242 +1529,220 @@
+         return rawError;
+     }
+ 
+-    private static final class CardHolder extends RecyclerView.ViewHolder {
+-        final View cardRoot;
+-        final FrameLayout iconContainer;
+-        final ImageView iconFile;
+-        final CheckBox checkBox;
+-        final TextView textFilename;
+-        final TextView textStatusBadge;
+-        final ProgressBar progressBar;
+-        final TextView textStats;
+-        final TextView textEta;
+-        final View actionsContainer;
+-        final ImageView btnInfo;
+-        final ImageView btnLink;
+-        final ImageView btnPauseResume;
+-        final ImageView btnDelete;
+-        final TextView btnChecksum;
+-        final TextView btnExtract;
+-
+-        CardHolder(View view) {
+-            super(view);
+-            cardRoot = view.findViewById(R.id.card_root);
+-            iconContainer = view.findViewById(R.id.card_icon_container);
+-            iconFile = view.findViewById(R.id.card_icon_file);
+-            checkBox = view.findViewById(R.id.card_checkbox);
+-            textFilename = view.findViewById(R.id.card_text_filename);
+-            textStatusBadge = view.findViewById(R.id.card_text_status_badge);
+-            progressBar = view.findViewById(R.id.card_progress_bar);
+-            textStats = view.findViewById(R.id.card_text_stats);
+-            textEta = view.findViewById(R.id.card_text_eta);
+-            actionsContainer = view.findViewById(R.id.card_actions_container);
+-            btnInfo = view.findViewById(R.id.card_btn_info);
+-            btnLink = view.findViewById(R.id.card_btn_link);
+-            btnPauseResume = view.findViewById(R.id.card_btn_pause_resume);
+-            btnDelete = view.findViewById(R.id.card_btn_delete);
+-            btnChecksum = view.findViewById(R.id.card_btn_checksum);
+-            btnExtract = view.findViewById(R.id.card_btn_extract);
+-        }
+-    }
+-
+-    private final class DownloadsCardAdapter extends RecyclerView.Adapter<CardHolder> {
+-        @Override public int getItemCount() { return pages.size(); }
+-
+-        @NonNull @Override public CardHolder onCreateViewHolder(@NonNull ViewGroup parent, int type) {
+-            return new CardHolder(LayoutInflater.from(parent.getContext()).inflate(R.layout.item_download_card, parent, false));
+-        }
+-
+-        @Override public void onBindViewHolder(@NonNull CardHolder holder, int position, @NonNull List<Object> payloads) {
+-            Row row = pages.get(position);
+-            if (!payloads.isEmpty() && row.status.isTransferring()) {
+-                ActiveDownloads.Transfer transfer = liveTransfer(row);
+-                bindTransfer(holder, transfer == null ? row.status : transfer.status,
+-                        transfer == null ? row.downloaded : transfer.downloadedBytes,
+-                        transfer == null ? row.total : transfer.totalBytes, transfer == null ? 0 : transfer.speed,
+-                        transfer == null ? row.threads : transfer.threads);
+-            } else onBindViewHolder(holder, position);
+-        }
+-
+-        private ActiveDownloads.Transfer liveTransfer(Row row) {
+-            ActiveDownloads.Transfer transfer = row.status.isTransferring() ? active.find(row.id) : null;
+-            return transfer != null && Objects.equals(row.token, transfer.token) ? transfer : null;
+-        }
+-
+-        @Override public void onBindViewHolder(@NonNull CardHolder holder, int position) {
+-            Row row = pages.get(position);
+-            String taskId = row.id;
+-            ActiveDownloads.Transfer transfer = liveTransfer(row);
+-            DownloadStatus status = transfer == null ? row.status : transfer.status;
+-            long total = transfer == null ? row.total : transfer.totalBytes;
+-            long downloaded = transfer == null ? row.downloaded : transfer.downloadedBytes;
+-            long speed = transfer == null ? 0 : transfer.speed;
+-            int threads = transfer == null ? row.threads : transfer.threads;
+-            int progress = DownloadItem.progressPercentage(downloaded, total);
+-            boolean isSelected = selectedTaskIds.contains(taskId);
+-
+-            holder.iconFile.setImageResource(getFileIconRes(row.name));
+-            holder.textFilename.setText(row.name);
++    private class DownloadsCardAdapter extends BaseAdapter {
++
++        @Override
++        public int getCount() {
++            return filteredItems.size();
++        }
++
++        @Override
++        public DownloadItem getItem(int position) {
++            return filteredItems.get(position);
++        }
++
++        @Override
++        public long getItemId(int position) {
++            return position;
++        }
++
++        @Override
++        public View getView(int position, View convertView, ViewGroup parent) {
++            if (convertView == null) {
++                convertView = LayoutInflater.from(DownloadsActivity.this).inflate(R.layout.item_download_card, parent, false);
++            }
++
++            DownloadItem item = getItem(position);
++            final String taskId = item.getId();
++            final boolean isSelected = selectedTaskIds.contains(taskId);
++
++            View cardRoot = convertView.findViewById(R.id.card_root);
++            FrameLayout iconContainer = convertView.findViewById(R.id.card_icon_container);
++            ImageView iconFile = convertView.findViewById(R.id.card_icon_file);
++            CheckBox checkBox = convertView.findViewById(R.id.card_checkbox);
++
++            TextView textFilename = convertView.findViewById(R.id.card_text_filename);
++            TextView textStatusBadge = convertView.findViewById(R.id.card_text_status_badge);
++            ProgressBar progressBar = convertView.findViewById(R.id.card_progress_bar);
++            TextView textStats = convertView.findViewById(R.id.card_text_stats);
++            TextView textEta = convertView.findViewById(R.id.card_text_eta);
++
++            View actionsContainer = convertView.findViewById(R.id.card_actions_container);
++            ImageView btnInfo = convertView.findViewById(R.id.card_btn_info);
++            ImageView btnLink = convertView.findViewById(R.id.card_btn_link);
++            ImageView btnPauseResume = convertView.findViewById(R.id.card_btn_pause_resume);
++            ImageView btnDelete = convertView.findViewById(R.id.card_btn_delete);
++
++            TextView btnChecksum = convertView.findViewById(R.id.card_btn_checksum);
++            TextView btnExtract = convertView.findViewById(R.id.card_btn_extract);
++
++            iconFile.setImageResource(getFileIconRes(item.getFileName()));
++            textFilename.setText(item.getFileName());
+ 
+             // Reset ETA color to default cyan
+-            holder.textEta.setTextColor(Color.parseColor("#00E5FF"));
++            textEta.setTextColor(Color.parseColor("#00E5FF"));
+ 
+             // Configure status & badge
+-            if (status == DownloadStatus.COMPLETED) {
+-                holder.textStatusBadge.setText("COMPLETED");
+-                holder.textStatusBadge.setTextColor(Color.parseColor("#4CAF50"));
+-                holder.textStatusBadge.setBackgroundResource(R.drawable.bg_badge_completed);
+-                holder.progressBar.setProgress(100);
+-                holder.progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#4CAF50")));
+-                holder.textStats.setText(DownloadItem.formatBytes(total) + " • Verified");
+-                holder.textEta.setText("Done");
+-                holder.textEta.setTextColor(Color.parseColor("#4CAF50"));
+-
+-                holder.btnPauseResume.setVisibility(View.GONE);
+-                holder.btnLink.setVisibility(View.GONE);
+-
+-                if (holder.btnChecksum != null) {
+-                    holder.btnChecksum.setVisibility(View.VISIBLE);
+-                    holder.btnChecksum.setOnClickListener(v -> onCurrentItem(taskId, DownloadsActivity.this::showChecksumDialog));
+-                }
+-                if (holder.btnExtract != null) {
+-                    if (isArchive(row.name) && row.name.toLowerCase(Locale.US).endsWith(".zip")) {
+-                        holder.btnExtract.setVisibility(View.VISIBLE);
+-                        holder.btnExtract.setOnClickListener(v -> onCurrentItem(taskId, DownloadsActivity.this::extractZip));
++            if (item.getStatus() == DownloadStatus.COMPLETED) {
++                textStatusBadge.setText("COMPLETED");
++                textStatusBadge.setTextColor(Color.parseColor("#4CAF50"));
++                textStatusBadge.setBackgroundResource(R.drawable.bg_badge_completed);
++                progressBar.setProgress(100);
++                progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#4CAF50")));
++                textStats.setText(item.getFormattedTotalSize() + " • Verified");
++                textEta.setText("Done");
++                textEta.setTextColor(Color.parseColor("#4CAF50"));
++
++                btnPauseResume.setVisibility(View.GONE);
++                btnLink.setVisibility(View.GONE);
++
++                if (btnChecksum != null) {
++                    btnChecksum.setVisibility(View.VISIBLE);
++                    btnChecksum.setOnClickListener(v -> showChecksumDialog(item));
++                }
++                if (btnExtract != null) {
++                    if (isArchive(item.getFileName()) && item.getFileName().toLowerCase(Locale.US).endsWith(".zip")) {
++                        btnExtract.setVisibility(View.VISIBLE);
++                        btnExtract.setOnClickListener(v -> extractZip(item));
+                     } else {
+-                        holder.btnExtract.setVisibility(View.GONE);
++                        btnExtract.setVisibility(View.GONE);
+                     }
+                 }
+             } else {
+-                if (holder.btnChecksum != null) holder.btnChecksum.setVisibility(View.GONE);
+-                if (holder.btnExtract != null) holder.btnExtract.setVisibility(View.GONE);
+-            }
+-
+-            if (status.isActive()) {
+-                bindTransfer(holder, status, downloaded, total, speed, threads);
+-                holder.btnPauseResume.setVisibility(View.VISIBLE);
+-                holder.btnPauseResume.setImageResource(R.drawable.ic_pause);
+-                holder.btnPauseResume.setOnClickListener(v -> engine.pause(taskId));
+-                holder.btnLink.setVisibility(View.GONE);
+-            } else if (status == DownloadStatus.PAUSED) {
+-                holder.textStatusBadge.setText("PAUSED");
+-                holder.textStatusBadge.setTextColor(Color.parseColor("#FFB74D")); // Amber
+-                holder.textStatusBadge.setBackgroundResource(R.drawable.bg_badge_paused);
+-                holder.progressBar.setProgress(progress);
+-                holder.progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#FFB74D")));
+-                holder.textStats.setText(DownloadItem.formatBytes(downloaded) + " / " + DownloadItem.formatBytes(total) + " (" + progress + "%)");
+-                holder.textEta.setText("Paused");
+-                holder.textEta.setTextColor(Color.parseColor("#FFB74D"));
+-                holder.btnPauseResume.setVisibility(View.VISIBLE);
+-                holder.btnPauseResume.setImageResource(R.drawable.ic_play);
+-                holder.btnPauseResume.setOnClickListener(v -> engine.resume(taskId));
+-                holder.btnLink.setVisibility(View.VISIBLE);
+-            } else if (status.isWaiting()) {
+-                holder.textStatusBadge.setText(waitingBadge(status));
+-                holder.textStatusBadge.setTextColor(Color.parseColor("#00E5FF"));
+-                holder.textStatusBadge.setBackgroundResource(R.drawable.bg_badge_running);
+-                holder.progressBar.setProgress(progress);
+-                holder.progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#00E5FF")));
+-                holder.textStats.setText(row.reason == null ? "Waiting for download conditions" : row.reason);
+-                holder.textEta.setText("Auto-resume");
+-                holder.btnPauseResume.setVisibility(View.VISIBLE);
+-                holder.btnPauseResume.setImageResource(R.drawable.ic_pause);
+-                holder.btnPauseResume.setOnClickListener(v -> engine.pause(taskId));
+-                holder.btnLink.setVisibility(View.VISIBLE);
+-            } else if (status == DownloadStatus.CANCELLED) {
+-                holder.textStatusBadge.setText("CANCELLED");
+-                holder.textStatusBadge.setTextColor(Color.parseColor("#FFB74D"));
+-                holder.textStatusBadge.setBackgroundResource(R.drawable.bg_badge_paused);
+-                holder.progressBar.setProgress(progress);
+-                holder.progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#FFB74D")));
+-                holder.textStats.setText("Cancelled");
+-                holder.textEta.setText("");
+-                holder.btnPauseResume.setVisibility(View.GONE);
+-                holder.btnLink.setVisibility(View.GONE);
+-            } else if (status == DownloadStatus.FAILED) {
+-                holder.textStatusBadge.setText("FAILED");
+-                holder.textStatusBadge.setTextColor(Color.parseColor("#FF5252")); // Red
+-                holder.textStatusBadge.setBackgroundResource(R.drawable.bg_badge_failed);
+-                holder.progressBar.setProgress(progress);
+-                holder.progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#FF5252")));
+-                holder.textStats.setText(formatCardErrorMessage(row.reason));
+-                holder.textEta.setText("Error");
+-                holder.textEta.setTextColor(Color.parseColor("#FF5252"));
+-                holder.btnPauseResume.setVisibility(View.VISIBLE);
+-                holder.btnPauseResume.setImageResource(R.drawable.ic_play);
+-                holder.btnPauseResume.setOnClickListener(v -> onCurrentItem(taskId, item -> DownloadRecoveryDialog.retry(DownloadsActivity.this, engine, item)));
+-                holder.btnLink.setVisibility(View.VISIBLE);
+-            }
+-
+-            holder.btnInfo.setOnClickListener(v -> showTaskDiagnosticsDialog(taskId));
+-            holder.btnLink.setOnClickListener(v -> onCurrentItem(taskId, DownloadsActivity.this::showUpdateLinkDialog));
+-            holder.btnDelete.setOnClickListener(v -> {
+-                engine.delete(taskId, true, removed -> Toast.makeText(DownloadsActivity.this,
++                if (btnChecksum != null) btnChecksum.setVisibility(View.GONE);
++                if (btnExtract != null) btnExtract.setVisibility(View.GONE);
++            }
++
++            if (item.getStatus().isActive()) {
++                int threads = item.getNumSegments();
++                DownloadStatus status = item.getStatus();
++                textStatusBadge.setText(status == DownloadStatus.PENDING ? "QUEUED" : status == DownloadStatus.CONNECTING
++                        ? "CONNECTING" : (threads > 1 ? "RUNNING • " + threads + " THREADS" : "RUNNING"));
++                textStatusBadge.setTextColor(Color.parseColor("#BB86FC"));
++                textStatusBadge.setBackgroundResource(R.drawable.bg_badge_running);
++                progressBar.setProgress(item.getProgressPercentage());
++                progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#BB86FC")));
++                textStats.setText(item.getFormattedDownloadedSize() + " / " + item.getFormattedTotalSize()
++                        + " (" + item.getProgressPercentage() + "%) • " + item.getFormattedSpeed());
++                textEta.setText(status == DownloadStatus.PENDING ? "Queued" : "ETA: " + item.getFormattedEta());
++                btnPauseResume.setVisibility(View.VISIBLE);
++                btnPauseResume.setImageResource(R.drawable.ic_pause);
++                btnPauseResume.setOnClickListener(v -> engine.pause(item.getId()));
++                btnLink.setVisibility(View.GONE);
++            } else if (item.getStatus() == DownloadStatus.PAUSED) {
++                textStatusBadge.setText("PAUSED");
++                textStatusBadge.setTextColor(Color.parseColor("#FFB74D")); // Amber
++                textStatusBadge.setBackgroundResource(R.drawable.bg_badge_paused);
++                progressBar.setProgress(item.getProgressPercentage());
++                progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#FFB74D")));
++                textStats.setText(item.getFormattedDownloadedSize() + " / " + item.getFormattedTotalSize() + " (" + item.getProgressPercentage() + "%)");
++                textEta.setText("Paused");
++                textEta.setTextColor(Color.parseColor("#FFB74D"));
++                btnPauseResume.setVisibility(View.VISIBLE);
++                btnPauseResume.setImageResource(R.drawable.ic_play);
++                btnPauseResume.setOnClickListener(v -> engine.resume(item.getId()));
++                btnLink.setVisibility(View.VISIBLE);
++            } else if (item.getStatus().isWaiting()) {
++                textStatusBadge.setText(waitingBadge(item.getStatus()));
++                textStatusBadge.setTextColor(Color.parseColor("#00E5FF"));
++                textStatusBadge.setBackgroundResource(R.drawable.bg_badge_running);
++                progressBar.setProgress(item.getProgressPercentage());
++                progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#00E5FF")));
++                textStats.setText(item.getErrorMessage() == null ? "Waiting for download conditions" : item.getErrorMessage());
++                textEta.setText("Auto-resume");
++                btnPauseResume.setVisibility(View.VISIBLE);
++                btnPauseResume.setImageResource(R.drawable.ic_pause);
++                btnPauseResume.setOnClickListener(v -> engine.pause(item.getId()));
++                btnLink.setVisibility(View.VISIBLE);
++            } else if (item.getStatus() == DownloadStatus.CANCELLED) {
++                textStatusBadge.setText("CANCELLED");
++                textStatusBadge.setTextColor(Color.parseColor("#FFB74D"));
++                textStatusBadge.setBackgroundResource(R.drawable.bg_badge_paused);
++                progressBar.setProgress(item.getProgressPercentage());
++                progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#FFB74D")));
++                textStats.setText("Cancelled");
++                textEta.setText("");
++                btnPauseResume.setVisibility(View.GONE);
++                btnLink.setVisibility(View.GONE);
++            } else if (item.getStatus() == DownloadStatus.FAILED) {
++                textStatusBadge.setText("FAILED");
++                textStatusBadge.setTextColor(Color.parseColor("#FF5252")); // Red
++                textStatusBadge.setBackgroundResource(R.drawable.bg_badge_failed);
++                progressBar.setProgress(item.getProgressPercentage());
++                progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#FF5252")));
++                textStats.setText(formatCardErrorMessage(item.getErrorMessage()));
++                textEta.setText("Error");
++                textEta.setTextColor(Color.parseColor("#FF5252"));
++                btnPauseResume.setVisibility(View.VISIBLE);
++                btnPauseResume.setImageResource(R.drawable.ic_play);
++                btnPauseResume.setOnClickListener(v -> DownloadRecoveryDialog.retry(DownloadsActivity.this, engine, item));
++                btnLink.setVisibility(View.VISIBLE);
++            }
++
++            btnInfo.setOnClickListener(v -> showTaskDiagnosticsDialog(item));
++            btnLink.setOnClickListener(v -> showUpdateLinkDialog(item));
++            btnDelete.setOnClickListener(v -> {
++                engine.delete(item.getId(), true, removed -> Toast.makeText(DownloadsActivity.this,
+                         removed ? "Download removed from queue" : "Could not remove download", Toast.LENGTH_SHORT).show());
+             });
+ 
+             boolean isDark = DownloaderThemeHelper.isAppDarkTheme(DownloadsActivity.this);
+ 
+             if (isSelectionMode) {
+-                holder.iconContainer.setVisibility(View.GONE);
+-                holder.checkBox.setVisibility(View.VISIBLE);
+-                holder.checkBox.setChecked(isSelected);
+-                holder.actionsContainer.setVisibility(View.GONE);
+-
+-                holder.cardRoot.setBackgroundResource(isSelected
++                iconContainer.setVisibility(View.GONE);
++                checkBox.setVisibility(View.VISIBLE);
++                checkBox.setChecked(isSelected);
++                actionsContainer.setVisibility(View.GONE);
++
++                cardRoot.setBackgroundResource(isSelected
+                         ? (isDark ? R.drawable.bg_history_selected_row : R.drawable.bg_history_selected_row_light)
+                         : (isDark ? R.drawable.card_download_bg : R.drawable.card_download_bg_light));
+ 
+-                holder.itemView.setOnClickListener(v -> toggleItemSelection(taskId));
+-                holder.itemView.setOnLongClickListener(v -> {
++                convertView.setOnClickListener(v -> toggleItemSelection(taskId));
++                convertView.setOnLongClickListener(v -> {
+                     toggleItemSelection(taskId);
+                     return true;
+                 });
+             } else {
+-                holder.iconContainer.setVisibility(View.VISIBLE);
+-                holder.checkBox.setVisibility(View.GONE);
+-                holder.actionsContainer.setVisibility(View.VISIBLE);
+-
+-                holder.cardRoot.setBackgroundResource(isDark ? R.drawable.card_download_bg : R.drawable.card_download_bg_light);
++                iconContainer.setVisibility(View.VISIBLE);
++                checkBox.setVisibility(View.GONE);
++                actionsContainer.setVisibility(View.VISIBLE);
++
++                cardRoot.setBackgroundResource(isDark ? R.drawable.card_download_bg : R.drawable.card_download_bg_light);
+ 
+                 // Tap card to open completed file or inspect diagnostics
+-                holder.itemView.setOnClickListener(v -> {
+-                    if (status == DownloadStatus.COMPLETED) {
+-                        openFile(taskId);
++                convertView.setOnClickListener(v -> {
++                    if (item.getStatus() == DownloadStatus.COMPLETED) {
++                        openFile(item);
+                     } else {
+-                        showTaskDiagnosticsDialog(taskId);
++                        showTaskDiagnosticsDialog(item);
+                     }
+                 });
+ 
+                 // Long press opens dedicated actions menu
+-                holder.itemView.setOnLongClickListener(v -> {
+-                    onCurrentItem(taskId, this::showDownloadItemContextMenu);
++                convertView.setOnLongClickListener(v -> {
++                    showDownloadItemContextMenu(item);
+                     return true;
+                 });
+             }
+ 
+-        }
+-
+-        private void bindTransfer(CardHolder holder, DownloadStatus status, long downloaded, long total, long speed, int threads) {
+-            int progress = DownloadItem.progressPercentage(downloaded, total);
+-            holder.textStatusBadge.setText(status == DownloadStatus.PENDING ? "QUEUED" : status == DownloadStatus.CONNECTING
+-                    ? "CONNECTING" : (threads > 1 ? "RUNNING • " + threads + " THREADS" : "RUNNING"));
+-            holder.textStatusBadge.setTextColor(Color.parseColor("#BB86FC"));
+-            holder.textStatusBadge.setBackgroundResource(R.drawable.bg_badge_running);
+-            holder.progressBar.setProgress(progress);
+-            holder.progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#BB86FC")));
+-            holder.textStats.setText(DownloadItem.formatBytes(downloaded) + " / " + DownloadItem.formatBytes(total)
+-                    + " (" + progress + "%) • " + DownloadItem.formatSpeed(speed));
+-            holder.textEta.setText(status == DownloadStatus.PENDING ? "Queued" : "ETA: " + DownloadItem.formatEta(downloaded, total, speed));
+-        }
+-
+-        private void openFile(String id) {
+-            runFileAction(() -> DownloadFileIntents.view(DownloadsActivity.this, id), "Cannot open file");
++            return convertView;
++        }
++
++        private void openFile(DownloadItem item) {
++            try {
++                DownloadsActivity.this.startActivity(DownloadFileIntents.view(DownloadsActivity.this, item.getId()));
++            } catch (Exception e) {
++                Toast.makeText(DownloadsActivity.this, "Cannot open file: " + e.getMessage(), Toast.LENGTH_SHORT).show();
++            }
+         }
+ 
+         private void shareFile(DownloadItem item) {
+-            runFileAction(() -> DownloadFileIntents.share(DownloadsActivity.this, Collections.singletonList(item.getId())),
+-                    "Cannot share file");
++            try {
++                startActivity(DownloadFileIntents.share(DownloadsActivity.this, java.util.Collections.singletonList(item.getId())));
++            } catch (Exception e) {
++                Toast.makeText(DownloadsActivity.this, "Cannot share file: " + e.getMessage(), Toast.LENGTH_SHORT).show();
++            }
+         }
+ 
+         private void showDownloadItemContextMenu(DownloadItem item) {
+@@ -1907,7 +1780,7 @@
+             if (isCompleted) {
+                 addMenuAction(actionsContainer, "Open File", R.drawable.ic_play, () -> {
+                     dialog.dismiss();
+-                    openFile(item.getId());
++                    openFile(item);
+                 });
+             }
+ 
+@@ -1922,7 +1795,7 @@
+             // 4. File Diagnostics & Details
+             addMenuAction(actionsContainer, "File Details & Diagnostics", R.drawable.ic_info, () -> {
+                 dialog.dismiss();
+-                showTaskDiagnosticsDialog(item.getId());
++                showTaskDiagnosticsDialog(item);
+             });
+ 
+             if ((item.getStatus() == DownloadStatus.PAUSED || item.getStatus() == DownloadStatus.FAILED)
+diff --git a/downloader/src/main/java/com/privacy/downloader/ui/DownloadsDialog.java b/downloader/src/main/java/com/privacy/downloader/ui/DownloadsDialog.java
+new file mode 100644
+--- /dev/null
++++ b/downloader/src/main/java/com/privacy/downloader/ui/DownloadsDialog.java
+@@ -0,0 +1,390 @@
++package com.privacy.downloader.ui;
++
++import android.app.AlertDialog;
++import android.content.Context;
++import android.graphics.Color;
++import android.os.Build;
++import android.text.TextUtils;
++import android.view.Gravity;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.ArrayAdapter;
++import android.widget.EditText;
++import android.widget.ImageView;
++import android.widget.LinearLayout;
++import android.widget.ListView;
++import android.widget.ProgressBar;
++import android.widget.TextView;
++import android.widget.Toast;
++
++import androidx.annotation.NonNull;
++import androidx.annotation.Nullable;
++import androidx.core.content.FileProvider;
++
++import com.privacy.downloader.R;
++import com.privacy.downloader.engine.DownloadEngine;
++import com.privacy.downloader.model.DownloadItem;
++import com.privacy.downloader.model.DownloadStatus;
++import com.privacy.downloader.net.RequestContext;
++import com.privacy.downloader.provider.DownloadFileIntents;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public class DownloadsDialog implements DownloadEngine.DownloadListener {
++
++    private final Context context;
++    private final DownloadEngine engine;
++    private AlertDialog dialog;
++    private ListView listView;
++    private DownloadsAdapter adapter;
++    private final List<DownloadItem> displayItems = new ArrayList<>();
++
++    private int currentFilter = 0; // 0 = All, 1 = Active, 2 = Completed
++    private TextView tabAll, tabActive, tabCompleted, tvSpeedHeader;
++
++    public static void show(Context context) {
++        new DownloadsDialog(context).display();
++    }
++
++    private DownloadsDialog(Context context) {
++        this.context = context;
++        this.engine = DownloadEngine.getInstance(context);
++    }
++
++    private void display() {
++        engine.addListener(this);
++
++        AlertDialog.Builder builder = new AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert);
++        builder.setTitle("Downloads Manager");
++
++        LinearLayout root = new LinearLayout(context);
++        root.setOrientation(LinearLayout.VERTICAL);
++        root.setBackgroundColor(Color.parseColor("#101010"));
++        root.setPadding(24, 16, 24, 16);
++
++        // Header info bar
++        LinearLayout headerBar = new LinearLayout(context);
++        headerBar.setOrientation(LinearLayout.HORIZONTAL);
++        headerBar.setPadding(0, 0, 0, 12);
++
++        tvSpeedHeader = new TextView(context);
++        tvSpeedHeader.setText("Speed: 0 B/s");
++        tvSpeedHeader.setTextColor(Color.parseColor("#4CAF50")); // Green
++        tvSpeedHeader.setTextSize(12);
++        headerBar.addView(tvSpeedHeader, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
++
++        TextView btnAddUrl = new TextView(context);
++        btnAddUrl.setText("+ Add URL");
++        btnAddUrl.setTextColor(Color.parseColor("#BB86FC"));
++        btnAddUrl.setTextSize(13);
++        btnAddUrl.setOnClickListener(v -> showAddUrlPrompt());
++        headerBar.addView(btnAddUrl);
++
++        root.addView(headerBar);
++
++        // Filter Tabs (All / Active / Completed)
++        LinearLayout tabsRow = new LinearLayout(context);
++        tabsRow.setOrientation(LinearLayout.HORIZONTAL);
++        tabsRow.setPadding(0, 4, 0, 14);
++
++        tabAll = createTabButton("All", 0);
++        tabActive = createTabButton("Active", 1);
++        tabCompleted = createTabButton("Completed", 2);
++
++        tabsRow.addView(tabAll);
++        tabsRow.addView(tabActive);
++        tabsRow.addView(tabCompleted);
++        root.addView(tabsRow);
++
++        updateTabStyles();
++
++        // List View
++        listView = new ListView(context);
++        listView.setBackgroundColor(Color.parseColor("#101010"));
++        listView.setDivider(null);
++        listView.setDividerHeight(12);
++
++        adapter = new DownloadsAdapter(context, displayItems);
++        listView.setAdapter(adapter);
++
++        root.addView(listView, new LinearLayout.LayoutParams(
++                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f));
++
++        builder.setView(root);
++        builder.setPositiveButton("Close", (d, w) -> dismiss());
++
++        dialog = builder.create();
++        dialog.setOnDismissListener(d -> engine.removeListener(this));
++        dialog.show();
++
++        refreshItems();
++    }
++
++    private TextView createTabButton(String text, int filter) {
++        TextView tv = new TextView(context);
++        tv.setText(text);
++        tv.setTextSize(13);
++        tv.setPadding(24, 10, 24, 10);
++        tv.setOnClickListener(v -> {
++            currentFilter = filter;
++            updateTabStyles();
++            refreshItems();
++        });
++        return tv;
++    }
++
++    private void updateTabStyles() {
++        tabAll.setTextColor(currentFilter == 0 ? Color.WHITE : Color.GRAY);
++        tabActive.setTextColor(currentFilter == 1 ? Color.WHITE : Color.GRAY);
++        tabCompleted.setTextColor(currentFilter == 2 ? Color.WHITE : Color.GRAY);
++    }
++
++    private void refreshItems() {
++        List<DownloadItem> all = engine.getAllDownloads();
++        displayItems.clear();
++
++        long totalSpeed = 0;
++        for (DownloadItem item : all) {
++            if (item.getStatus().isActive()) {
++                totalSpeed += item.getSpeedBytesPerSec();
++            }
++
++            if (currentFilter == 0) {
++                displayItems.add(item);
++            } else if (currentFilter == 1 && (item.getStatus().isActive() || item.getStatus().isWaiting())) {
++                displayItems.add(item);
++            } else if (currentFilter == 2 && item.getStatus() == DownloadStatus.COMPLETED) {
++                displayItems.add(item);
++            }
++        }
++
++        if (tvSpeedHeader != null) {
++            tvSpeedHeader.setText("Speed: " + DownloadItem.formatBytes(totalSpeed) + "/s");
++        }
++
++        if (adapter != null) {
++            adapter.notifyDataSetChanged();
++        }
++    }
++
++    private void showAddUrlPrompt() {
++        AlertDialog.Builder builder = new AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert);
++        builder.setTitle("Add Download URL");
++
++        EditText input = new EditText(context);
++        input.setHint("https://example.com/file.zip");
++        input.setTextColor(Color.WHITE);
++        input.setHintTextColor(Color.GRAY);
++        input.setSingleLine(true);
++        builder.setView(input);
++
++        builder.setPositiveButton("Start", (d, w) -> {
++            String url = input.getText().toString().trim();
++            if (!TextUtils.isEmpty(url) && (url.startsWith("http://") || url.startsWith("https://"))) {
++                DownloadPromptDialog.show(context, url, RequestContext.anonymous(), null, null, -1);
++            } else {
++                Toast.makeText(context, "Invalid HTTP/HTTPS URL", Toast.LENGTH_SHORT).show();
++            }
++        });
++        builder.setNegativeButton("Cancel", null);
++        builder.show();
++    }
++
++    private void showUpdateLinkDialog(DownloadItem item) {
++        AlertDialog.Builder builder = new AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert);
++        builder.setTitle("Update Download Link");
++        builder.setMessage("Paste the refreshed link. If the saved bytes cannot be verified, you will need to start over.");
++
++        EditText input = new EditText(context);
++        input.setText(item.getUrl());
++        input.setTextColor(Color.WHITE);
++        input.setSingleLine(true);
++        input.selectAll();
++        builder.setView(input);
++
++        builder.setPositiveButton("Update & Retry", (d, w) -> {
++            String newUrl = input.getText().toString().trim();
++            if (!TextUtils.isEmpty(newUrl) && (newUrl.startsWith("http://") || newUrl.startsWith("https://"))) {
++                engine.updateUrl(item.getId(), newUrl, updated -> {
++                    String message = updated ? "Link updated. Retrying download..."
++                            : "Link not updated. Stop the transfer first and use the same type of link.";
++                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
++                });
++            } else {
++                Toast.makeText(context, "Invalid URL", Toast.LENGTH_SHORT).show();
++            }
++        });
++        builder.setNegativeButton("Cancel", null);
++        builder.show();
++    }
++
++    private void dismiss() {
++        if (dialog != null && dialog.isShowing()) {
++            dialog.dismiss();
++        }
++    }
++
++    @Override
++    public void onDownloadProgress(DownloadItem item) {
++        refreshItems();
++    }
++
++    @Override
++    public void onDownloadCompleted(DownloadItem item) {
++        refreshItems();
++    }
++
++    @Override
++    public void onDownloadFailed(DownloadItem item, String error) {
++        refreshItems();
++    }
++
++    @Override
++    public void onQueueChanged() {
++        refreshItems();
++    }
++
++    private class DownloadsAdapter extends ArrayAdapter<DownloadItem> {
++
++        public DownloadsAdapter(Context context, List<DownloadItem> items) {
++            super(context, 0, items);
++        }
++
++        @NonNull
++        @Override
++        public View getView(int position, @Nullable View convertView, @NonNull ViewGroup parent) {
++            DownloadItem item = getItem(position);
++            if (item == null) return new View(context);
++
++            LinearLayout row = new LinearLayout(context);
++            row.setOrientation(LinearLayout.VERTICAL);
++            row.setBackgroundColor(Color.parseColor("#181818"));
++            row.setPadding(24, 20, 24, 20);
++
++            // Top row: Status icon, filename, and action buttons
++            LinearLayout topRow = new LinearLayout(context);
++            topRow.setOrientation(LinearLayout.HORIZONTAL);
++            topRow.setGravity(Gravity.CENTER_VERTICAL);
++
++            ImageView iconStatus = new ImageView(context);
++            if (item.getStatus() == DownloadStatus.COMPLETED) {
++                iconStatus.setImageResource(R.drawable.ic_check_circle);
++            } else if (item.getStatus() == DownloadStatus.FAILED) {
++                iconStatus.setImageResource(R.drawable.ic_error);
++            } else {
++                iconStatus.setImageResource(R.drawable.ic_download);
++            }
++            topRow.addView(iconStatus, new LinearLayout.LayoutParams(48, 48));
++
++            LinearLayout titleCol = new LinearLayout(context);
++            titleCol.setOrientation(LinearLayout.VERTICAL);
++            titleCol.setPadding(20, 0, 16, 0);
++
++            TextView tvName = new TextView(context);
++            tvName.setText(item.getFileName());
++            tvName.setTextColor(Color.WHITE);
++            tvName.setTextSize(14);
++            tvName.setSingleLine(true);
++            tvName.setEllipsize(TextUtils.TruncateAt.MIDDLE);
++            titleCol.addView(tvName);
++
++            topRow.addView(titleCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
++
++            // Link update button
++            ImageView btnLink = new ImageView(context);
++            btnLink.setImageResource(R.drawable.ic_link);
++            btnLink.setPadding(12, 12, 12, 12);
++            btnLink.setVisibility(item.getStatus().isActive() || item.getStatus() == DownloadStatus.COMPLETED
++                    || item.getStatus() == DownloadStatus.CANCELLED ? View.GONE : View.VISIBLE);
++            btnLink.setOnClickListener(v -> showUpdateLinkDialog(item));
++            topRow.addView(btnLink, new LinearLayout.LayoutParams(64, 64));
++
++            // Pause / Resume button
++            ImageView btnPauseResume = new ImageView(context);
++            if (item.getStatus().isActive() || item.getStatus().isWaiting()) {
++                btnPauseResume.setImageResource(R.drawable.ic_pause);
++                btnPauseResume.setOnClickListener(v -> engine.pause(item.getId()));
++            } else if (item.getStatus() == DownloadStatus.COMPLETED || item.getStatus() == DownloadStatus.CANCELLED) {
++                btnPauseResume.setVisibility(View.GONE);
++            } else {
++                btnPauseResume.setImageResource(R.drawable.ic_play);
++                btnPauseResume.setOnClickListener(v -> {
++                    if (item.getStatus() == DownloadStatus.FAILED) {
++                        DownloadRecoveryDialog.retry(context, engine, item);
++                    } else {
++                        engine.resume(item.getId());
++                    }
++                });
++            }
++            btnPauseResume.setPadding(12, 12, 12, 12);
++            topRow.addView(btnPauseResume, new LinearLayout.LayoutParams(64, 64));
++
++            // Delete button
++            ImageView btnDelete = new ImageView(context);
++            btnDelete.setImageResource(R.drawable.ic_delete);
++            btnDelete.setPadding(12, 12, 12, 12);
++            btnDelete.setOnClickListener(v -> {
++                engine.delete(item.getId(), true, removed -> Toast.makeText(context,
++                        removed ? "Download removed from queue" : "Could not remove download", Toast.LENGTH_SHORT).show());
++            });
++            topRow.addView(btnDelete, new LinearLayout.LayoutParams(64, 64));
++
++            row.addView(topRow);
++
++            // Progress bar
++            ProgressBar pb = new ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal);
++            pb.setMax(100);
++            pb.setProgress(item.getProgressPercentage());
++            pb.setPadding(0, 12, 0, 10);
++            if (item.getStatus() == DownloadStatus.COMPLETED) {
++                pb.setProgress(100);
++            }
++            row.addView(pb);
++
++            // Bottom Subtitle (sizes, percentage, speed, ETA)
++            TextView tvSub = new TextView(context);
++            tvSub.setTextSize(12);
++            tvSub.setTextColor(Color.GRAY);
++
++            if (item.getStatus() == DownloadStatus.COMPLETED) {
++                tvSub.setText(item.getFormattedTotalSize() + " • Completed");
++                tvSub.setTextColor(Color.parseColor("#4CAF50"));
++            } else if (item.getStatus().isActive()) {
++                String speed = item.getFormattedSpeed();
++                String eta = item.getFormattedEta();
++                tvSub.setText(item.getStatus() == DownloadStatus.PENDING ? "Queued" :
++                        item.getFormattedDownloadedSize() + " / " + item.getFormattedTotalSize()
++                                + " (" + item.getProgressPercentage() + "%) • " + speed + " • ETA: " + eta);
++            } else if (item.getStatus() == DownloadStatus.PAUSED) {
++                tvSub.setText(item.getFormattedDownloadedSize() + " / " + item.getFormattedTotalSize() + " • Paused");
++                tvSub.setTextColor(Color.parseColor("#FFB74D"));
++            } else if (item.getStatus().isWaiting()) {
++                tvSub.setText(item.getErrorMessage() == null ? "Waiting for download conditions" : item.getErrorMessage());
++                tvSub.setTextColor(Color.parseColor("#00E5FF"));
++            } else if (item.getStatus() == DownloadStatus.CANCELLED) {
++                tvSub.setText("Cancelled");
++            } else if (item.getStatus() == DownloadStatus.FAILED) {
++                tvSub.setText("Failed: " + (item.getErrorMessage() != null ? item.getErrorMessage() : "Unknown error"));
++                tvSub.setTextColor(Color.parseColor("#FF5252"));
++            }
++
++            row.addView(tvSub);
++
++            // Tap row to open completed file
++            if (item.getStatus() == DownloadStatus.COMPLETED) {
++                row.setOnClickListener(v -> openFile(item));
++            }
++
++            return row;
++        }
++
++        private void openFile(DownloadItem item) {
++            try {
++                context.startActivity(DownloadFileIntents.view(context, item.getId()));
++            } catch (Exception e) {
++                Toast.makeText(context, "Cannot open file: " + e.getMessage(), Toast.LENGTH_SHORT).show();
++            }
++        }
++    }
++}
+diff --git a/downloader/src/main/java/com/privacy/downloader/util/DownloadDestination.java b/downloader/src/main/java/com/privacy/downloader/util/DownloadDestination.java
+--- a/downloader/src/main/java/com/privacy/downloader/util/DownloadDestination.java
++++ b/downloader/src/main/java/com/privacy/downloader/util/DownloadDestination.java
+@@ -9,17 +9,12 @@
+ import java.text.Normalizer;
+ import java.util.Locale;
+ import java.util.Set;
+-import java.util.function.Predicate;
+ 
+ /** Name selection shared by every enqueue path. The caller must persist the claim atomically. */
+ public final class DownloadDestination {
+     private DownloadDestination() {}
+ 
+     public static File choose(File requested, Set<String> takenKeys) throws IOException {
+-        return choose(requested, takenKeys::contains);
+-    }
+-
+-    public static File choose(File requested, Predicate<String> claimed) throws IOException {
+         File directory = canonicalParent(requested);
+         String name = requested.getName();
+         requireFileName(name);
+@@ -28,7 +23,7 @@
+         String ext = dot > 0 ? name.substring(dot) : "";
+         for (int suffix = 0; suffix < 10000; suffix++) {
+             File candidate = new File(directory, suffix == 0 ? name : stem + "_" + suffix + ext);
+-            if (!claimed.test(pathKey(candidate)) && !entryExists(candidate)) return candidate;
++            if (!takenKeys.contains(pathKey(candidate)) && !entryExists(candidate)) return candidate;
+         }
+         throw new IOException("Too many downloads use this name. Choose a different file name.");
+     }
+diff --git a/downloader/src/main/res/layout/activity_downloads.xml b/downloader/src/main/res/layout/activity_downloads.xml
+--- a/downloader/src/main/res/layout/activity_downloads.xml
++++ b/downloader/src/main/res/layout/activity_downloads.xml
+@@ -328,20 +328,15 @@
+         android:layout_height="0dp"
+         android:layout_weight="1">
+ 
+-        <androidx.recyclerview.widget.RecyclerView
++        <ListView
+             android:id="@+id/list_downloads"
+             android:layout_width="match_parent"
+             android:layout_height="match_parent"
++            android:divider="@null"
++            android:dividerHeight="0dp"
+             android:paddingTop="2dp"
+             android:paddingBottom="16dp"
+             android:clipToPadding="false" />
+-
+-        <ProgressBar
+-            android:id="@+id/downloads_loading"
+-            android:layout_width="32dp"
+-            android:layout_height="32dp"
+-            android:layout_gravity="center"
+-            android:visibility="gone" />
+ 
+         <LinearLayout
+             android:id="@+id/layout_empty_state"

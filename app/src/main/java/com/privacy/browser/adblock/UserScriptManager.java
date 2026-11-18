@@ -8,15 +8,12 @@ import android.webkit.WebView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.webkit.WebViewCompat;
-import androidx.webkit.WebViewFeature;
 
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 
 /**
  * Manages standalone custom user scriptlets, handles metadata parsing (@run-at, @match, @enabled),
@@ -31,6 +28,7 @@ public class UserScriptManager {
         DOCUMENT_END("document-end");
 
         public final String identifier;
+        public String displayLabel() { return this == DOCUMENT_START ? "After page commit" : "After page load"; }
 
         RunAt(String id) {
             this.identifier = id;
@@ -101,7 +99,7 @@ public class UserScriptManager {
                 "popup_interceptor",
                 "*",
                 RunAt.DOCUMENT_START,
-                "Hooks window.open before page scripts run to suppress unwanted popups and background tabs.",
+                "Hooks window.open after the main page commits; cannot block scripts that already ran.",
                 "(function() {\n" +
                 "    'use strict';\n" +
                 "    // Intercept and sanitize window.open calls to suppress unwanted popups/redirects\n" +
@@ -117,9 +115,9 @@ public class UserScriptManager {
                 "yt_defuser",
                 "ytInitialPlayerResponse (YouTube)",
                 "yt_ad_defuser",
-                "*youtube.com*",
+                "https://*.youtube.com/*",
                 RunAt.DOCUMENT_START,
-                "Hooks ytInitialPlayerResponse at document-start before player initialization to prune adPlacements and adSlots.",
+                "Prunes adPlacements and adSlots from later ytInitialPlayerResponse assignments after page commit.",
                 "(function() {\n" +
                 "    'use strict';\n" +
                 "    // Intercept ytInitialPlayerResponse to strip adPlacements before player initialization\n" +
@@ -211,17 +209,16 @@ public class UserScriptManager {
         return instance;
     }
 
-    private final Context context;
     private final AdBlockFileManager fileManager;
     private volatile List<ScriptModel> cachedScripts = null;
 
     private UserScriptManager(@NonNull Context context) {
-        this.context = context;
         this.fileManager = AdBlockFileManager.getInstance(context);
     }
 
-    public void clearCache() {
+    public synchronized void clearCache() {
         cachedScripts = null;
+        WebScriptPolicy.changed();
     }
 
     @NonNull
@@ -267,8 +264,7 @@ public class UserScriptManager {
                     } else if (clean.startsWith("@run-at")) {
                         model.runAt = RunAt.fromString(clean.substring(7));
                     } else if (clean.startsWith("@match")) {
-                        String val = clean.substring(6).trim();
-                        if (!val.isEmpty()) model.match = val;
+                        model.match = clean.substring(6).trim();
                     } else if (clean.startsWith("@enabled")) {
                         String val = clean.substring(8).trim().toLowerCase(Locale.US);
                         model.enabled = !val.equals("false") && !val.equals("0");
@@ -289,93 +285,22 @@ public class UserScriptManager {
     }
 
     public static boolean isUrlMatched(@NonNull String pattern, @Nullable String url) {
-        if (pattern.equals("*") || pattern.equalsIgnoreCase("all") || TextUtils.isEmpty(pattern)) {
-            return true;
-        }
-        if (url == null || url.isEmpty()) {
-            return false;
-        }
-        String clean = pattern.trim().toLowerCase(Locale.US);
-        if (clean.equals("*") || clean.equals("<all_urls>")) {
-            return true;
-        }
-        if (clean.startsWith("*://")) clean = clean.substring(4);
-        else if (clean.startsWith("http://")) clean = clean.substring(7);
-        else if (clean.startsWith("https://")) clean = clean.substring(8);
-
-        while (clean.endsWith("/*")) clean = clean.substring(0, clean.length() - 2);
-        while (clean.endsWith("*")) clean = clean.substring(0, clean.length() - 1);
-        while (clean.startsWith("*.")) clean = clean.substring(2);
-        while (clean.startsWith("*")) clean = clean.substring(1);
-        if (clean.startsWith(".")) clean = clean.substring(1);
-
-        if (clean.isEmpty()) return true;
-
-        try {
-            Uri uri = Uri.parse(url);
-            String host = uri.getHost();
-            if (host != null) {
-                host = host.toLowerCase(Locale.US);
-                if (host.equals(clean) || host.endsWith("." + clean) || host.contains(clean)) {
-                    return true;
-                }
-            }
-        } catch (Exception ignored) {}
-
-        return url.toLowerCase(Locale.US).contains(clean);
+        return UserScriptMatch.matches(pattern, url);
     }
 
-    /**
-     * Injects all custom scripts matching the specified timing and current page URL.
-     */
-    public void injectForTiming(@NonNull WebView webView, @Nullable String url, @NonNull RunAt timing) {
-        if (webView.getContext() != null) {
-            AdBlockManager abm = AdBlockManager.getInstance(webView.getContext());
-            if (!abm.isAdBlockActiveForSite(url)) {
-                return;
-            }
-        }
-        List<ScriptModel> scripts = getLoadedScripts();
-        if (scripts.isEmpty()) return;
-
-        for (ScriptModel script : scripts) {
-            if (!script.enabled) continue;
-            if (script.runAt != timing) continue;
-            if (!isUrlMatched(script.match, url)) continue;
-
-            if (!TextUtils.isEmpty(script.code)) {
-                try {
-                    webView.evaluateJavascript(script.code, null);
-                } catch (Exception e) {
-                    Log.w(TAG, "Failed injecting user script: " + script.fileName, e);
-                }
-            }
-        }
-    }
-
-    /**
-     * Registers all global document-start user scripts via WebViewCompat document-start API.
-     */
-    public static void attachDocumentStart(@NonNull Context context, @NonNull WebView webView) {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            return;
-        }
-        List<ScriptModel> scripts = getInstance(context).getLoadedScripts();
-        if (scripts.isEmpty()) return;
-
-        Set<String> allowedOrigins = Collections.singleton("*");
-        for (ScriptModel script : scripts) {
-            if (!script.enabled || script.runAt != RunAt.DOCUMENT_START) continue;
-            if (script.match.equals("*") || script.match.equalsIgnoreCase("all")) {
-                try {
-                    String guardedCode = "(function() { " +
-                            "try { if (window.PrivacyAntiAdblockBridge && typeof window.PrivacyAntiAdblockBridge.isAdBlockActive === 'function') { " +
-                            "if (!window.PrivacyAntiAdblockBridge.isAdBlockActive(window.location.href)) return; } } catch(e) {} " +
-                            script.code + "\n})();";
-                    WebViewCompat.addDocumentStartJavaScript(webView, guardedCode, allowedOrigins);
-                } catch (Exception e) {
-                    Log.w(TAG, "Failed to register document_start for user script: " + script.fileName, e);
-                }
+    // Invoked only by the current WebView's policy. Legacy 'document-start' means the
+    // first verified commit, not before inline scripts or in child frames.
+    void injectOnPage(WebView view, String url, RunAt timing) {
+        for (ScriptModel script : getLoadedScripts()) {
+            if (!script.enabled || script.runAt != timing || !isUrlMatched(script.match, url) || TextUtils.isEmpty(script.code)) continue;
+            try {
+                String once = org.json.JSONObject.quote(script.fileName + ":" + timing.name());
+                view.evaluateJavascript(com.privacy.browser.InternalHome.guardExternalPage(url,
+                        "const installed=window.__privacyBrowserUserScripts||(window.__privacyBrowserUserScripts=Object.create(null));"
+                                + "if(installed[" + once + "])return;installed[" + once + "]=true;\n"
+                                + "(function(){\n" + script.code + "\n})();"), null);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "Provider rejected a user script evaluation", e);
             }
         }
     }

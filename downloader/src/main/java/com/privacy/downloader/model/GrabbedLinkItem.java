@@ -12,26 +12,11 @@ public class GrabbedLinkItem implements Serializable {
     private String status = "UNKNOWN"; // UNKNOWN, CHECKING, ONLINE, OFFLINE
     private long fileSize = -1;
 
-    private String referrer;
-
     public GrabbedLinkItem(String url, String title, String originalType) {
-        this(url, title, originalType, null);
-    }
-
-    public GrabbedLinkItem(String url, String title, String originalType, String referrer) {
         this.url = url;
         this.title = title != null ? title.trim() : "";
         this.category = determineCategory(url, originalType);
-        this.referrer = referrer;
         this.selected = true; // Selected by default
-    }
-
-    public String getReferrer() {
-        return referrer;
-    }
-
-    public void setReferrer(String referrer) {
-        this.referrer = referrer;
     }
 
     public String getUrl() {

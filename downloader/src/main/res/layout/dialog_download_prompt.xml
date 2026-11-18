@@ -110,6 +110,21 @@
                     android:padding="6dp" />
             </LinearLayout>
 
+            <EditText
+                android:id="@+id/prompt_edit_sha256"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="10dp"
+                android:background="?attr/bgInputBox"
+                android:hint="Expected file SHA-256 (optional)"
+                android:inputType="text|textNoSuggestions"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:singleLine="true"
+                android:textColor="?attr/textPrimary"
+                android:textColorHint="?attr/textMuted"
+                android:textSize="13sp" />
+
             <!-- Destination Folder Section -->
             <TextView
                 android:layout_width="wrap_content"
@@ -373,7 +388,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Download only over Wi-Fi network"
+                    android:text="Require Wi-Fi for this download"
                     android:textColor="?attr/textPrimary"
                     android:textSize="12sp"
                     android:fontFamily="sans-serif"
@@ -421,7 +436,7 @@
                     android:id="@+id/prompt_text_duplicate_msg"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Notice: An incomplete download for this file already exists. You can update the link and resume existing progress."
+                    android:text="An incomplete download for this file already exists. Saved progress must be verified before reuse."
                     android:textColor="#FFB74D"
                     android:textSize="12sp"
                     android:fontFamily="sans-serif" />
@@ -430,7 +445,7 @@
                     android:id="@+id/prompt_btn_resume_existing"
                     android:layout_width="wrap_content"
                     android:layout_height="32dp"
-                    android:text="Resume / Update Link"
+                    android:text="Update Link &amp; Retry"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp"
                     android:fontFamily="sans-serif-bold"

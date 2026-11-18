@@ -41,7 +41,7 @@
                 android:id="@+id/tv_cloud_endpoint_label"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Sync diffs across community and devices"
+                android:text="Data-only filter snapshots"
                 android:textColor="?attr/textSecondary"
                 android:textSize="11sp"
                 android:singleLine="true"
@@ -68,7 +68,7 @@
             android:contentDescription="Close" />
     </LinearLayout>
 
-    <!-- Top Mode Actions (Commit Current State vs Browse Cloud) -->
+    <!-- Top Mode Actions (Publish rules vs Browse Cloud) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -80,7 +80,7 @@
             android:layout_width="0dp"
             android:layout_height="38dp"
             android:layout_weight="1"
-            android:text="Commit Current State"
+            android:text="Publish rules"
             android:textColor="@android:color/white"
             android:textSize="12sp"
             android:fontFamily="sans-serif-medium"
@@ -110,7 +110,7 @@
             android:id="@+id/tv_cloud_states_header"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Community State Commits"
+            android:text="Community Rule Snapshots"
             android:textColor="?attr/textSecondary"
             android:textSize="12sp"
             android:fontFamily="sans-serif-medium"

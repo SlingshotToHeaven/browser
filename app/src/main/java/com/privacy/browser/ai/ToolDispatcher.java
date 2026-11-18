@@ -1,996 +1,297 @@
 package com.privacy.browser.ai;
 
+import android.app.AlertDialog;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
-import android.webkit.CookieManager;
-import android.webkit.ValueCallback;
-import android.webkit.WebStorage;
-import android.webkit.WebView;
+import android.os.SystemClock;
 
+import com.privacy.browser.BrowserDataPolicy;
 import com.privacy.browser.MainActivity;
-import com.privacy.browser.TabModel;
-import com.privacy.browser.TabsManager;
+import com.privacy.browser.ThemeManager;
 import com.privacy.browser.adblock.AdBlockFileManager;
-import com.privacy.browser.adblock.AdBlockManager;
+import com.privacy.browser.adblock.rules.FilterSnapshot;
+import com.privacy.browser.adblock.rules.RuleWork;
+import com.privacy.browser.adblock.rules.FilterSnapshot.Part;
 import com.privacy.browser.bookmarks.BookmarkDbHelper;
 import com.privacy.browser.bookmarks.BookmarkModel;
 import com.privacy.browser.history.HistoryDbHelper;
 import com.privacy.browser.history.HistoryModel;
-import com.privacy.downloader.db.DownloadDbHelper;
-import com.privacy.downloader.model.DownloadItem;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.json.JSONTokener;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.function.Supplier;
 
-public class ToolDispatcher {
-
-    public interface ExecutionCallback {
-        void onCompleted(String resultJson);
-        void onError(String error);
+/** The only dispatch entry point is a native, one-shot review of a typed action. UI thread only. */
+final class ToolDispatcher implements AgentSessionManager.Reviews {
+    interface ExecutionCallback {
+        void onCompleted(JSONObject result);
+        void onStopped(String status, String reason);
     }
 
     private final Context context;
-    private final Handler mainHandler;
-    private WebView currentWebView;
-    private TabsManager tabsManager;
-    private MainActivity mainActivity;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private MainActivity activity;
+    private AlertDialog review;
+    private Runnable invalidateReview;
 
-    public ToolDispatcher(Context context) {
-        this.context = context.getApplicationContext();
-        this.mainHandler = new Handler(Looper.getMainLooper());
-    }
+    ToolDispatcher(Context context) { this.context = context.getApplicationContext(); }
 
-    public void setCurrentWebView(WebView webView) {
-        this.currentWebView = webView;
-    }
-
-    public void setActivityAndTabs(MainActivity activity, TabsManager tabsManager) {
-        this.mainActivity = activity;
-        this.tabsManager = tabsManager;
-    }
-
-    public boolean isConfirmationRequired(String toolName) {
-        return "history_delete".equals(toolName)
-                || "bookmarks_delete".equals(toolName)
-                || "downloads_delete".equals(toolName)
-                || "privacy_clear_site_data".equals(toolName)
-                || "adblock_save_and_commit".equals(toolName)
-                || "automation_schedule_task".equals(toolName)
-                || "automation_cancel_task".equals(toolName)
-                || "termux_execute_command".equals(toolName);
-    }
-
-    public void executeTool(final String name, final JSONObject args, final ExecutionCallback callback) {
-        try {
-            switch (name) {
-                // Group 1: Navigation & Tabs
-                case "nav_open_url":
-                    handleNavOpenUrl(args, callback);
-                    break;
-                case "nav_get_active_tab_info":
-                    handleNavGetActiveTabInfo(callback);
-                    break;
-                case "nav_reload_page":
-                    handleNavReload(args, callback);
-                    break;
-                case "nav_go_back_or_forward":
-                    handleNavBackForward(args, callback);
-                    break;
-                case "nav_list_tabs":
-                    handleNavListTabs(callback);
-                    break;
-                case "nav_switch_tab":
-                    handleNavSwitchTab(args, callback);
-                    break;
-                case "nav_close_tab":
-                    handleNavCloseTab(args, callback);
-                    break;
-
-                // Group 2: DOM Console
-                case "dom_click_element":
-                    handleDomClick(args, callback);
-                    break;
-                case "dom_type_text":
-                    handleDomType(args, callback);
-                    break;
-                case "dom_get_page_content":
-                    handleDomGetContent(args, callback);
-                    break;
-                case "dom_scroll_page":
-                    handleDomScroll(args, callback);
-                    break;
-                case "dom_find_elements":
-                    handleDomFindElements(args, callback);
-                    break;
-                case "dom_select_dropdown":
-                    handleDomSelectDropdown(args, callback);
-                    break;
-
-                // Group 3: Vision
-                case "vision_capture_viewport":
-                    handleVisionCaptureViewport(args, callback);
-                    break;
-                case "vision_capture_element":
-                    handleVisionCaptureElement(args, callback);
-                    break;
-
-                // Group 4: History, Bookmarks & Downloads
-                case "history_search":
-                    handleHistorySearch(args, callback);
-                    break;
-                case "history_delete":
-                    handleHistoryDelete(args, callback);
-                    break;
-                case "bookmarks_search":
-                    handleBookmarksSearch(args, callback);
-                    break;
-                case "bookmarks_create":
-                    handleBookmarksCreate(args, callback);
-                    break;
-                case "bookmarks_delete":
-                    handleBookmarksDelete(args, callback);
-                    break;
-                case "downloads_list":
-                    handleDownloadsList(args, callback);
-                    break;
-                case "downloads_delete":
-                    handleDownloadsDelete(args, callback);
-                    break;
-
-                // Group 5: Storage & Cookies
-                case "privacy_get_site_data":
-                    handlePrivacyGetSiteData(args, callback);
-                    break;
-                case "privacy_clear_site_data":
-                    handlePrivacyClearSiteData(args, callback);
-                    break;
-
-                // Group 6: Adblock Self-Healing
-                case "adblock_inspect_page":
-                    handleAdblockInspectPage(callback);
-                    break;
-                case "adblock_test_rule":
-                    handleAdblockTestRule(args, callback);
-                    break;
-                case "adblock_save_and_commit":
-                    handleAdblockSaveAndCommit(args, callback);
-                    break;
-
-                // Group 7: Timed Automations
-                case "automation_schedule_task":
-                    handleAutomationSchedule(args, callback);
-                    break;
-                case "automation_list_tasks":
-                    handleAutomationList(callback);
-                    break;
-                case "automation_cancel_task":
-                    handleAutomationCancel(args, callback);
-                    break;
-                case "termux_execute_command":
-                    handleTermuxExecuteCommand(args, callback);
-                    break;
-
-                default:
-                    callback.onError("Tool '" + name + "' is not implemented or unrecognized.");
-                    break;
-            }
-        } catch (Exception e) {
-            callback.onError("Execution failed: " + e.getMessage());
+    @Override public void attach(MainActivity owner) {
+        if (owner != activity) {
+            cancelReview();
+            activity = owner;
         }
     }
 
-    // --- Navigation & Tab Handlers ---
-    private void handleNavOpenUrl(final JSONObject args, final ExecutionCallback callback) {
-        final String url = args.optString("url", "");
-        final boolean inNewTab = args.optBoolean("in_new_tab", false);
-        if (url.isEmpty()) {
-            callback.onError("Missing destination URL");
+    @Override public void detach(MainActivity owner) { if (activity == owner) attach(null); }
+    @Override public MainActivity owner() { return activity; }
+    @Override public AssistantApproval.Page page() { return activity == null ? null : activity.assistantPage(); }
+
+    @Override public void cancelReview() { if (invalidateReview != null) invalidateReview.run(); }
+
+    @Override public void review(AssistantAction action, AssistantApproval.Source source, AssistantApproval.Scope expected,
+                                 Supplier<AssistantApproval.Scope> live, ExecutionCallback result) {
+        if (Looper.myLooper() != Looper.getMainLooper() || activity == null || review != null) {
+            result.onStopped("unavailable", "Only one visible browser action can be reviewed at a time.");
             return;
         }
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                if (inNewTab && tabsManager != null && mainActivity != null) {
-                    TabModel tab = tabsManager.createTab(mainActivity, url);
-                    tabsManager.switchTab(tabsManager.getTabCount() - 1);
-                    callback.onCompleted("{\"status\":\"opened_in_new_tab\",\"url\":\"" + url + "\"}");
-                } else if (currentWebView != null) {
-                    currentWebView.loadUrl(url);
-                    callback.onCompleted("{\"status\":\"success\",\"loaded_url\":\"" + url + "\"}");
-                } else {
-                    callback.onError("No active WebView available.");
-                }
+        final AssistantApproval approval;
+        try { approval = AssistantApproval.request(action, source, expected, live.get(), SystemClock.elapsedRealtime()); }
+        catch (IllegalArgumentException e) { result.onStopped("stale", e.getMessage()); return; }
+        String note = source == AssistantApproval.Source.CHAT
+                ? "\n\nThis action's result can be sent to Google AI Studio."
+                : "\n\nThis step runs only if you approve it now. Other steps do not run automatically.";
+        if (action.kind == AssistantAction.Kind.CLICK || action.kind == AssistantAction.Kind.TYPE || action.kind == AssistantAction.Kind.SELECT) {
+            note += "\n\nThis may submit a form or trigger other site behavior.";
+        }
+        if (action.kind == AssistantAction.Kind.CLEAR) note += "\n\n" + BrowserDataPolicy.LIMITS;
+        if (action.kind == AssistantAction.Kind.REMIND) note += "\n\nIn-app only. The alarm marks the reminder due; it never opens the browser or runs a recipe.";
+        final String summary = note;
+        final MainActivity owner = activity;
+        boolean[] decided = {false};
+        AlertDialog dialog = new AlertDialog.Builder(owner, ThemeManager.getDialogTheme(owner))
+                .setTitle("Review one browser action")
+                .setMessage("Tab: " + JSONObject.quote(java.net.URI.create(expected.page.url).toASCIIString()) + "\n\n" + action.reviewText() + summary)
+                .setNegativeButton("Deny", null)
+                .setPositiveButton("Approve once", null).create();
+        java.util.function.BiConsumer<String, String> reject = (status, reason) -> {
+            if (review != dialog || decided[0]) return;
+            decided[0] = true;
+            approval.deny();
+            dialog.dismiss();
+            result.onStopped(status, reason);
+        };
+        Runnable expire = () -> reject.accept("timeout", "Action review expired. Nothing ran.");
+        dialog.setOnDismissListener(d -> {
+            main.removeCallbacks(expire);
+            if (review == dialog) {
+                review = null;
+                invalidateReview = null;
+            }
+            if (!decided[0]) {
+                approval.deny();
+                result.onStopped("denied", "Action was not approved. Nothing ran.");
             }
         });
+        review = dialog;
+        invalidateReview = () -> reject.accept("stale", "The review is no longer current. Nothing ran.");
+        try { dialog.show(); }
+        catch (android.view.WindowManager.BadTokenException hidden) {
+            decided[0] = true;
+            approval.deny();
+            review = null;
+            invalidateReview = null;
+            result.onStopped("unavailable", "The review could not be shown. Nothing ran.");
+            return;
+        }
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setFilterTouchesWhenObscured(true);
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            if (review != dialog || decided[0] || !dialog.isShowing()) return;
+            decided[0] = true;
+            // No posted click or mutable target between validation and dispatch.
+            AssistantAction accepted = approval.consume(live.get(), SystemClock.elapsedRealtime());
+            dialog.dismiss();
+            if (accepted == null || activity != owner) {
+                result.onStopped("stale", "Approval expired or the active session, tab or document changed. Nothing ran.");
+                return;
+            }
+            dispatch(accepted, owner, expected, approval, live, result);
+        });
+        main.postDelayed(expire, AssistantApproval.LIFETIME_MS);
     }
 
-    private void handleNavGetActiveTabInfo(final ExecutionCallback callback) {
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                if (currentWebView != null) {
-                    try {
-                        JSONObject info = new JSONObject();
-                        info.put("url", currentWebView.getUrl());
-                        info.put("title", currentWebView.getTitle());
-                        info.put("scroll_y", currentWebView.getScrollY());
-                        callback.onCompleted(info.toString());
-                    } catch (Exception e) {
-                        callback.onError(e.getMessage());
+    private void dispatch(AssistantAction action, MainActivity owner, AssistantApproval.Scope scope,
+                          AssistantApproval approval, Supplier<AssistantApproval.Scope> live, ExecutionCallback callback) {
+        try {
+            JSONObject args = action.args();
+            if (action.kind.scripts) {
+                evaluate(action, args, owner, scope, live, callback);
+                return;
+            }
+            switch (action.kind) {
+                case OPEN:
+                    if (!owner.openApprovedAssistantLink(scope.page, args.getString("url"), args.getBoolean("in_new_tab"))) {
+                        callback.onStopped("stale", "The link was not opened.");
+                    } else callback.onCompleted(new JSONObject().put("status", "navigation_requested"));
+                    break;
+                case RELOAD:
+                    if (!owner.reloadApprovedAssistantPage(scope.page)) callback.onStopped("stale", "The tab was not reloaded.");
+                    else callback.onCompleted(new JSONObject().put("status", "reload_requested"));
+                    break;
+                case INFO:
+                    callback.onCompleted(new JSONObject().put("url", scope.page.url).put("title", owner.assistantTitle(scope.page)));
+                    break;
+                case HISTORY:
+                    JSONArray visits = new JSONArray();
+                    for (HistoryModel visit : HistoryDbHelper.getInstance(context).searchHistory(args.getString("query"), args.getInt("limit"))) {
+                        visits.put(new JSONObject().put("title", shortText(visit.getTitle())).put("url", shortText(visit.getUrl())));
                     }
-                } else {
-                    callback.onError("No active WebView available.");
-                }
-            }
-        });
-    }
-
-    private void handleNavReload(final JSONObject args, final ExecutionCallback callback) {
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                if (currentWebView != null) {
-                    currentWebView.reload();
-                    callback.onCompleted("{\"status\":\"reloaded\"}");
-                } else {
-                    callback.onError("No active WebView available.");
-                }
-            }
-        });
-    }
-
-    private void handleNavBackForward(final JSONObject args, final ExecutionCallback callback) {
-        final String direction = args.optString("direction", "back");
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                if (currentWebView != null) {
-                    if ("forward".equalsIgnoreCase(direction)) {
-                        if (currentWebView.canGoForward()) {
-                            currentWebView.goForward();
-                            callback.onCompleted("{\"status\":\"navigated_forward\"}");
-                        } else {
-                            callback.onError("Cannot go forward; end of history.");
-                        }
-                    } else {
-                        if (currentWebView.canGoBack()) {
-                            currentWebView.goBack();
-                            callback.onCompleted("{\"status\":\"navigated_back\"}");
-                        } else {
-                            callback.onError("Cannot go back; start of history.");
-                        }
+                    callback.onCompleted(new JSONObject().put("items", visits));
+                    break;
+                case BOOKMARKS:
+                    JSONArray bookmarks = new JSONArray();
+                    for (BookmarkModel bookmark : BookmarkDbHelper.getInstance(context).searchBookmarks(args.getString("query"), args.getInt("limit"))) {
+                        if (!bookmark.isFolder()) bookmarks.put(new JSONObject().put("title", shortText(bookmark.getTitle())).put("url", shortText(bookmark.getUrl())));
                     }
-                } else {
-                    callback.onError("No active WebView available.");
-                }
-            }
-        });
-    }
-
-    private void handleNavListTabs(final ExecutionCallback callback) {
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                if (tabsManager != null) {
-                    try {
-                        JSONArray arr = new JSONArray();
-                        List<TabModel> tabs = tabsManager.getTabs();
-                        for (int i = 0; i < tabs.size(); i++) {
-                            TabModel t = tabs.get(i);
-                            JSONObject o = new JSONObject();
-                            o.put("index", i);
-                            o.put("id", t.getId());
-                            o.put("title", t.getTitle());
-                            o.put("url", t.getUrl());
-                            o.put("is_active", i == tabsManager.getActiveIndex());
-                            arr.put(o);
+                    callback.onCompleted(new JSONObject().put("items", bookmarks));
+                    break;
+                case BOOKMARK:
+                    if (BookmarkDbHelper.getInstance(context).addBookmark(args.getString("title"), args.getString("url"))) {
+                        callback.onCompleted(new JSONObject().put("status", "bookmark_saved"));
+                    } else callback.onStopped("error", "Bookmark was not saved.");
+                    break;
+                case CLEAR:
+                    BrowserDataPolicy.Plan plan = BrowserDataPolicy.fromTool(args.getString("domain"), args.getBoolean("clear_cookies"),
+                            args.getBoolean("clear_cache"), args.getBoolean("clear_storage"));
+                    owner.clearApprovedBrowserData(plan, json -> {
+                        try { if (!scope.matches(live.get())) {
+                            callback.onStopped("page_changed", "Cleanup was requested before the page or session changed. The report was not used.");
+                        } else callback.onCompleted(new JSONObject(json)); }
+                        catch (org.json.JSONException e) { callback.onStopped("error", "Could not read the cleanup report."); }
+                    }, error -> callback.onStopped("unavailable", error));
+                    break;
+                case SAVE_RULE:
+                    Part part = "user_network".equals(args.getString("target_file")) ? Part.NETWORK : Part.USER_FILTERS;
+                    AdBlockFileManager files = AdBlockFileManager.getInstance(context);
+                    FilterSnapshot before = files.ruleSnapshot();
+                    String rule = args.getString("rule_text");
+                    RuleWork.run(() -> appendRule(before, part, rule), (next, error) -> {
+                        if (activity != owner || !approval.current(live.get(), SystemClock.elapsedRealtime())) {
+                            callback.onStopped("stale", "The local rule was not saved because the review is no longer current.");
+                            return;
                         }
-                        JSONObject res = new JSONObject();
-                        res.put("count", tabs.size());
-                        res.put("tabs", arr);
-                        callback.onCompleted(res.toString());
-                    } catch (Exception e) {
-                        callback.onError(e.getMessage());
-                    }
-                } else {
-                    callback.onError("TabsManager is not available.");
-                }
-            }
-        });
-    }
-
-    private void handleNavSwitchTab(final JSONObject args, final ExecutionCallback callback) {
-        final int index = args.optInt("tab_id", -1);
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                if (tabsManager != null && index >= 0 && index < tabsManager.getTabCount()) {
-                    tabsManager.switchTab(index);
-                    callback.onCompleted("{\"status\":\"switched_tab\",\"index\":" + index + "}");
-                } else {
-                    callback.onError("Invalid tab index: " + index);
-                }
-            }
-        });
-    }
-
-    private void handleNavCloseTab(final JSONObject args, final ExecutionCallback callback) {
-        final int index = args.optInt("tab_id", -1);
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                if (tabsManager != null && mainActivity != null && index >= 0 && index < tabsManager.getTabCount()) {
-                    tabsManager.closeTab(index, mainActivity);
-                    callback.onCompleted("{\"status\":\"closed_tab\",\"index\":" + index + "}");
-                } else {
-                    callback.onError("Invalid tab index to close: " + index);
-                }
-            }
-        });
-    }
-
-    // --- DOM Handlers ---
-    private void handleDomClick(final JSONObject args, final ExecutionCallback callback) {
-        final String selector = args.optString("css_selector", "");
-        final int index = args.optInt("index", 0);
-        if (selector.isEmpty()) {
-            callback.onError("Missing css_selector");
-            return;
-        }
-
-        final String js = "(function() {"
-                + "  var els = document.querySelectorAll('" + selector.replace("'", "\\'") + "');"
-                + "  if (!els || els.length <= " + index + ") return JSON.stringify({status:'not_found'});"
-                + "  var el = els[" + index + "];"
-                + "  el.scrollIntoView({behavior:'smooth', block:'center'});"
-                + "  el.click();"
-                + "  return JSON.stringify({status:'clicked', tag: el.tagName, text: el.innerText ? el.innerText.substring(0, 50) : ''});"
-                + "})();";
-
-        executeJsOnWebView(js, callback);
-    }
-
-    private void handleDomType(final JSONObject args, final ExecutionCallback callback) {
-        final String selector = args.optString("css_selector", "");
-        final String text = args.optString("text", "");
-        final boolean clearFirst = args.optBoolean("clear_first", false);
-        final boolean pressEnter = args.optBoolean("press_enter", false);
-
-        if (selector.isEmpty()) {
-            callback.onError("Missing css_selector");
-            return;
-        }
-
-        final String js = "(function() {"
-                + "  var el = document.querySelector('" + selector.replace("'", "\\'") + "');"
-                + "  if (!el) return JSON.stringify({status:'not_found'});"
-                + "  el.focus();"
-                + (clearFirst ? "el.value = '';" : "")
-                + "  el.value = (el.value || '') + '" + text.replace("'", "\\'") + "';"
-                + "  el.dispatchEvent(new Event('input', { bubbles: true }));"
-                + "  el.dispatchEvent(new Event('change', { bubbles: true }));"
-                + (pressEnter ? "el.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true}));" : "")
-                + "  return JSON.stringify({status:'typed', current_value: el.value});"
-                + "})();";
-
-        executeJsOnWebView(js, callback);
-    }
-
-    private void handleDomGetContent(final JSONObject args, final ExecutionCallback callback) {
-        final String format = args.optString("format", "text");
-        String js = "";
-        if ("headings".equals(format)) {
-            js = "(function() {"
-                    + "  var headings = Array.from(document.querySelectorAll('h1, h2, h3')).map(function(h) { return h.innerText.trim(); });"
-                    + "  return JSON.stringify({headings: headings});"
-                    + "})();";
-        } else if ("links".equals(format)) {
-            js = "(function() {"
-                    + "  var links = Array.from(document.querySelectorAll('a[href]')).slice(0, 30).map(function(a) { return {text: a.innerText.trim(), href: a.href}; });"
-                    + "  return JSON.stringify({links: links});"
-                    + "})();";
-        } else {
-            js = "(function() {"
-                    + "  return JSON.stringify({title: document.title, url: window.location.href, text_sample: document.body ? document.body.innerText.substring(0, 500) : ''});"
-                    + "})();";
-        }
-        executeJsOnWebView(js, callback);
-    }
-
-    private void handleDomScroll(final JSONObject args, final ExecutionCallback callback) {
-        final String dir = args.optString("direction", "down");
-        final int px = args.optInt("pixels", 500);
-
-        String js = "";
-        if ("top".equals(dir)) {
-            js = "window.scrollTo({top: 0, behavior: 'smooth'}); JSON.stringify({status:'scrolled_top'});";
-        } else if ("bottom".equals(dir)) {
-            js = "window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'}); JSON.stringify({status:'scrolled_bottom'});";
-        } else if ("up".equals(dir)) {
-            js = "window.scrollBy({top: -" + px + ", behavior: 'smooth'}); JSON.stringify({status:'scrolled_up', pixels: " + px + "});";
-        } else {
-            js = "window.scrollBy({top: " + px + ", behavior: 'smooth'}); JSON.stringify({status:'scrolled_down', pixels: " + px + "});";
-        }
-        executeJsOnWebView(js, callback);
-    }
-
-    private void handleDomFindElements(final JSONObject args, final ExecutionCallback callback) {
-        final String selector = args.optString("css_selector", "");
-        if (selector.isEmpty()) {
-            callback.onError("Missing css_selector");
-            return;
-        }
-
-        final String js = "(function() {"
-                + "  var els = document.querySelectorAll('" + selector.replace("'", "\\'") + "');"
-                + "  var out = [];"
-                + "  for (var i = 0; i < Math.min(els.length, 15); i++) {"
-                + "    var el = els[i];"
-                + "    var rect = el.getBoundingClientRect();"
-                + "    out.push({"
-                + "      index: i,"
-                + "      tag: el.tagName,"
-                + "      id: el.id,"
-                + "      className: el.className,"
-                + "      text: el.innerText ? el.innerText.trim().substring(0, 60) : '',"
-                + "      visible: (rect.width > 0 && rect.height > 0)"
-                + "    });"
-                + "  }"
-                + "  return JSON.stringify({count: els.length, elements: out});"
-                + "})();";
-
-        executeJsOnWebView(js, callback);
-    }
-
-    private void handleDomSelectDropdown(final JSONObject args, final ExecutionCallback callback) {
-        final String selector = args.optString("css_selector", "");
-        final String option = args.optString("option_value_or_text", "");
-        if (selector.isEmpty()) {
-            callback.onError("Missing css_selector");
-            return;
-        }
-
-        final String js = "(function() {"
-                + "  var sel = document.querySelector('" + selector.replace("'", "\\'") + "');"
-                + "  if (!sel || sel.tagName !== 'SELECT') return JSON.stringify({status:'not_found'});"
-                + "  var val = '" + option.replace("'", "\\'") + "';"
-                + "  for (var i = 0; i < sel.options.length; i++) {"
-                + "    if (sel.options[i].value === val || sel.options[i].text.trim() === val) {"
-                + "      sel.selectedIndex = i;"
-                + "      sel.dispatchEvent(new Event('change', { bubbles: true }));"
-                + "      return JSON.stringify({status:'selected', selected_text: sel.options[i].text});"
-                + "    }"
-                + "  }"
-                + "  return JSON.stringify({status:'option_not_found'});"
-                + "})();";
-
-        executeJsOnWebView(js, callback);
-    }
-
-    // --- Vision Handlers ---
-    private void handleVisionCaptureViewport(JSONObject args, final ExecutionCallback callback) {
-        VisionToolExecutor.captureViewportBase64(currentWebView, new VisionToolExecutor.VisionCallback() {
-            @Override
-            public void onCaptured(String base64Jpeg) {
-                callback.onCompleted("{\"status\":\"captured\",\"image_attached\":true,\"bytes\":" + base64Jpeg.length() + "}");
-            }
-
-            @Override
-            public void onError(String error) {
-                callback.onError(error);
-            }
-        });
-    }
-
-    private void handleVisionCaptureElement(JSONObject args, final ExecutionCallback callback) {
-        String selector = args.optString("css_selector", "");
-        VisionToolExecutor.captureElementBase64(currentWebView, selector, new VisionToolExecutor.VisionCallback() {
-            @Override
-            public void onCaptured(String base64Jpeg) {
-                callback.onCompleted("{\"status\":\"element_cropped\",\"image_attached\":true,\"bytes\":" + base64Jpeg.length() + "}");
-            }
-
-            @Override
-            public void onError(String error) {
-                callback.onError(error);
-            }
-        });
-    }
-
-    // --- History & Bookmarks Handlers ---
-    private void handleHistorySearch(JSONObject args, ExecutionCallback callback) {
-        String query = args.optString("query", "");
-        int limit = args.optInt("limit", 25);
-        HistoryDbHelper db = HistoryDbHelper.getInstance(context);
-        List<HistoryModel> results = db.searchHistory(query, limit);
-
-        try {
-            JSONArray arr = new JSONArray();
-            for (HistoryModel m : results) {
-                JSONObject obj = new JSONObject();
-                obj.put("id", m.getId());
-                obj.put("title", m.getTitle());
-                obj.put("url", m.getUrl());
-                obj.put("visited_at", m.getVisitedAt());
-                arr.put(obj);
-            }
-            JSONObject res = new JSONObject();
-            res.put("count", results.size());
-            res.put("items", arr);
-            callback.onCompleted(res.toString());
-        } catch (Exception e) {
-            callback.onError(e.getMessage());
-        }
-    }
-
-    private void handleHistoryDelete(JSONObject args, ExecutionCallback callback) {
-        HistoryDbHelper db = HistoryDbHelper.getInstance(context);
-        JSONArray idsArray = args.optJSONArray("ids");
-        String queryFilter = args.optString("query_filter", "");
-
-        int deletedCount = 0;
-        if (idsArray != null && idsArray.length() > 0) {
-            List<Long> ids = new ArrayList<>();
-            for (int i = 0; i < idsArray.length(); i++) {
-                ids.add(idsArray.optLong(i));
-            }
-            db.deleteVisits(ids);
-            deletedCount = ids.size();
-        } else if (!queryFilter.isEmpty()) {
-            List<HistoryModel> matches = db.searchHistory(queryFilter, 500);
-            List<Long> ids = new ArrayList<>();
-            for (HistoryModel m : matches) {
-                ids.add(m.getId());
-            }
-            db.deleteVisits(ids);
-            deletedCount = ids.size();
-        }
-
-        callback.onCompleted("{\"status\":\"deleted\",\"count\":" + deletedCount + "}");
-    }
-
-    private void handleBookmarksSearch(JSONObject args, ExecutionCallback callback) {
-        String query = args.optString("query", "");
-        BookmarkDbHelper db = BookmarkDbHelper.getInstance(context);
-        List<BookmarkModel> results = db.searchBookmarks(query, 50);
-
-        try {
-            JSONArray arr = new JSONArray();
-            for (BookmarkModel b : results) {
-                if (!b.isFolder()) {
-                    JSONObject obj = new JSONObject();
-                    obj.put("id", b.getId());
-                    obj.put("title", b.getTitle());
-                    obj.put("url", b.getUrl());
-                    arr.put(obj);
-                }
-            }
-            JSONObject res = new JSONObject();
-            res.put("count", arr.length());
-            res.put("items", arr);
-            callback.onCompleted(res.toString());
-        } catch (Exception e) {
-            callback.onError(e.getMessage());
-        }
-    }
-
-    private void handleBookmarksCreate(JSONObject args, ExecutionCallback callback) {
-        String title = args.optString("title", "");
-        String url = args.optString("url", "");
-        if (url.isEmpty()) {
-            callback.onError("Missing bookmark URL");
-            return;
-        }
-        BookmarkDbHelper db = BookmarkDbHelper.getInstance(context);
-        boolean success = db.addBookmark(title, url);
-        callback.onCompleted("{\"status\":\"" + (success ? "created" : "failed") + "\",\"title\":\"" + title + "\",\"url\":\"" + url + "\"}");
-    }
-
-    private void handleBookmarksDelete(JSONObject args, ExecutionCallback callback) {
-        BookmarkDbHelper db = BookmarkDbHelper.getInstance(context);
-        JSONArray idsArray = args.optJSONArray("ids");
-        String urlPattern = args.optString("url_pattern", "");
-
-        int deletedCount = 0;
-        if (idsArray != null && idsArray.length() > 0) {
-            List<Long> ids = new ArrayList<>();
-            for (int i = 0; i < idsArray.length(); i++) {
-                ids.add(idsArray.optLong(i));
-            }
-            db.deleteItems(ids);
-            deletedCount = ids.size();
-        } else if (!urlPattern.isEmpty()) {
-            List<BookmarkModel> matches = db.searchBookmarks(urlPattern, 500);
-            List<Long> ids = new ArrayList<>();
-            for (BookmarkModel b : matches) {
-                ids.add(b.getId());
-            }
-            db.deleteItems(ids);
-            deletedCount = ids.size();
-        }
-
-        callback.onCompleted("{\"status\":\"deleted\",\"count\":" + deletedCount + "}");
-    }
-
-    // --- Downloads Handlers ---
-    private void handleDownloadsList(JSONObject args, ExecutionCallback callback) {
-        String namePattern = args.optString("name_pattern", "").toLowerCase();
-        DownloadDbHelper db = DownloadDbHelper.getInstance(context);
-        List<DownloadItem> all = db.getAllDownloads();
-
-        try {
-            JSONArray arr = new JSONArray();
-            for (DownloadItem item : all) {
-                if (namePattern.isEmpty() || (item.getFileName() != null && item.getFileName().toLowerCase().contains(namePattern))) {
-                    JSONObject obj = new JSONObject();
-                    obj.put("id", item.getId());
-                    obj.put("file_name", item.getFileName());
-                    obj.put("dest_path", item.getDestinationPath());
-                    obj.put("total_bytes", item.getTotalBytes());
-                    obj.put("status", item.getStatus() != null ? item.getStatus().name() : "");
-                    arr.put(obj);
-                }
-            }
-            JSONObject res = new JSONObject();
-            res.put("count", arr.length());
-            res.put("downloads", arr);
-            callback.onCompleted(res.toString());
-        } catch (Exception e) {
-            callback.onError(e.getMessage());
-        }
-    }
-
-    private void handleDownloadsDelete(JSONObject args, ExecutionCallback callback) {
-        JSONArray filePaths = args.optJSONArray("file_paths");
-        boolean removeFilesFromDisk = args.optBoolean("remove_files_from_disk", true);
-
-        if (filePaths == null || filePaths.length() == 0) {
-            callback.onError("Missing file_paths array.");
-            return;
-        }
-
-        DownloadDbHelper db = DownloadDbHelper.getInstance(context);
-        List<DownloadItem> all = db.getAllDownloads();
-        int deleted = 0;
-
-        for (int i = 0; i < filePaths.length(); i++) {
-            String path = filePaths.optString(i);
-            for (DownloadItem item : all) {
-                if (path.equals(item.getDestinationPath()) || path.equals(item.getFileName()) || path.equals(item.getId())) {
-                    db.deleteDownload(item.getId());
-                    if (removeFilesFromDisk && item.getDestinationPath() != null) {
+                        if (error != null) {
+                            callback.onStopped("error", RuleWork.message(error));
+                            return;
+                        }
                         try {
-                            File f = new File(item.getDestinationPath());
-                            if (f.exists()) f.delete();
-                        } catch (Exception ignored) {}
-                    }
-                    deleted++;
+                            // No worker gap after this final page/session guard and the atomic rule commit.
+                            files.applyRuleSnapshot(before, next);
+                            owner.refreshApprovedRules();
+                            callback.onCompleted(new JSONObject().put("status", before == next ? "already_present" : "rule_saved_locally")
+                                    .put("section", part.key));
+                        } catch (Exception failure) {
+                            callback.onStopped("error", RuleWork.message(failure));
+                        }
+                    });
                     break;
-                }
+                case REMIND:
+                    AutomationManager reminders = new AutomationManager(context);
+                    AutomationManager.Task task = reminders.schedule(args.getString("title"), args.getLong("trigger_time_epoch_ms"),
+                            RecipePlan.parse(args.getString("recipe_json")));
+                    callback.onCompleted(task.summary());
+                    break;
+                case REMINDERS:
+                    JSONArray tasks = new JSONArray();
+                    for (AutomationManager.Task saved : new AutomationManager(context).list()) tasks.put(saved.summary());
+                    callback.onCompleted(new JSONObject().put("reminders", tasks));
+                    break;
+                case CANCEL_REMINDER:
+                    boolean canceled = new AutomationManager(context).cancel(args.getString("task_id"));
+                    callback.onCompleted(new JSONObject().put("status", canceled ? "cancelled" : "not_found"));
+                    break;
+                default:
+                    callback.onStopped("unsupported", "This action is unavailable.");
+                    break;
             }
-        }
-
-        callback.onCompleted("{\"status\":\"deleted\",\"count\":" + deleted + "}");
-    }
-
-    // --- Privacy Handlers ---
-    private void handlePrivacyGetSiteData(final JSONObject args, final ExecutionCallback callback) {
-        final String domain = args.optString("domain", "");
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    CookieManager cm = CookieManager.getInstance();
-                    String cookies = cm.getCookie("https://" + domain);
-                    int count = 0;
-                    if (cookies != null && !cookies.isEmpty()) {
-                        count = cookies.split(";").length;
-                    }
-                    JSONObject res = new JSONObject();
-                    res.put("domain", domain);
-                    res.put("cookie_count", count);
-                    callback.onCompleted(res.toString());
-                } catch (Exception e) {
-                    callback.onError(e.getMessage());
-                }
-            }
-        });
-    }
-
-    private void handlePrivacyClearSiteData(final JSONObject args, final ExecutionCallback callback) {
-        final String domain = args.optString("domain", "*");
-        final boolean clearCookies = args.optBoolean("clear_cookies", true);
-        final boolean clearCache = args.optBoolean("clear_cache", true);
-        final boolean clearStorage = args.optBoolean("clear_storage", true);
-
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (clearCookies) {
-                        CookieManager.getInstance().removeAllCookies(null);
-                        CookieManager.getInstance().flush();
-                    }
-                    if (clearCache && currentWebView != null) {
-                        currentWebView.clearCache(true);
-                    }
-                    if (clearStorage) {
-                        WebStorage.getInstance().deleteAllData();
-                    }
-                    callback.onCompleted("{\"status\":\"success\",\"cleared_domain\":\"" + domain + "\"}");
-                } catch (Exception e) {
-                    callback.onError(e.getMessage());
-                }
-            }
-        });
-    }
-
-    // --- Adblock Self-Healing Handlers ---
-    private void handleAdblockInspectPage(final ExecutionCallback callback) {
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    AdBlockManager abm = AdBlockManager.getInstance(context);
-                    String tabId = null;
-                    if (tabsManager != null && tabsManager.getActiveTab() != null) {
-                        tabId = tabsManager.getActiveTab().getId();
-                    }
-
-                    int blockedCount = abm.getPageBlockedCount(tabId);
-                    int totalReq = abm.getPageRequestCount(tabId);
-                    Map<String, Integer> blockedHosts = abm.getBlockedHostsForPage(tabId);
-
-                    JSONObject res = new JSONObject();
-                    res.put("blocked_requests_count", blockedCount);
-                    res.put("total_requests_count", totalReq);
-
-                    JSONArray hostsArr = new JSONArray();
-                    for (Map.Entry<String, Integer> entry : blockedHosts.entrySet()) {
-                        JSONObject h = new JSONObject();
-                        h.put("host", entry.getKey());
-                        h.put("count", entry.getValue());
-                        hostsArr.put(h);
-                    }
-                    res.put("blocked_hosts", hostsArr);
-
-                    // Check page for anti-adblock overlay signatures in DOM
-                    String checkJs = "(function() {"
-                            + "  var hasBlocker = !!document.querySelector('.ad-block-message, .adblock-overlay, .adblock-backdrop, #blockadblock, [class*=\"adblock\"], [id*=\"adblock\"]');"
-                            + "  var overflowHidden = (document.body && window.getComputedStyle(document.body).overflow === 'hidden');"
-                            + "  return JSON.stringify({detected_overlay: hasBlocker, scroll_locked: overflowHidden});"
-                            + "})();";
-
-                    currentWebView.evaluateJavascript(checkJs, new ValueCallback<String>() {
-                        @Override
-                        public void onReceiveValue(String val) {
-                            try {
-                                if (val != null && val.startsWith("\"") && val.endsWith("\"") && val.length() >= 2) {
-                                    val = val.substring(1, val.length() - 1).replace("\\\"", "\"").replace("\\\\", "\\");
-                                }
-                                JSONObject domState = new JSONObject(val != null ? val : "{}");
-                                res.put("dom_inspection", domState);
-                                callback.onCompleted(res.toString());
-                            } catch (Exception e) {
-                                callback.onCompleted(res.toString());
-                            }
-                        }
-                    });
-
-                } catch (Exception e) {
-                    callback.onError(e.getMessage());
-                }
-            }
-        });
-    }
-
-    private void handleAdblockTestRule(final JSONObject args, final ExecutionCallback callback) {
-        final String ruleText = args.optString("rule_text", "");
-        final String ruleType = args.optString("rule_type", "cosmetic");
-
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                if (currentWebView == null) {
-                    callback.onError("No active WebView to test rule.");
-                    return;
-                }
-
-                if ("cosmetic".equalsIgnoreCase(ruleType)) {
-                    // Extract CSS selector
-                    String selector = ruleText;
-                    if (selector.contains("##")) {
-                        selector = selector.substring(selector.indexOf("##") + 2);
-                    }
-
-                    // Dynamically inject CSS style tag in-memory
-                    String injectCssJs = "(function() {"
-                            + "  var style = document.createElement('style');"
-                            + "  style.id = 'agent_test_cosmetic_rule';"
-                            + "  style.innerHTML = '" + selector.replace("'", "\\'") + " { display: none !important; visibility: hidden !important; }';"
-                            + "  document.head.appendChild(style);"
-                            + "  if (document.body) document.body.style.overflow = 'auto !important';"
-                            + "  return JSON.stringify({status:'injected', tested_selector: '" + selector.replace("'", "\\'") + "'});"
-                            + "})();";
-
-                    executeJsOnWebView(injectCssJs, callback);
-
-                } else if ("scriptlet".equalsIgnoreCase(ruleType)) {
-                    // Inject raw scriptlet into DOM
-                    executeJsOnWebView(ruleText, callback);
-                } else {
-                    callback.onCompleted("{\"status\":\"network_rules_require_full_reload\"}");
-                }
-            }
-        });
-    }
-
-    private void handleAdblockSaveAndCommit(final JSONObject args, final ExecutionCallback callback) {
-        final String ruleText = args.optString("rule_text", "");
-        final String targetFile = args.optString("target_file", "filters/cosmetic_rules.txt");
-        final String commitMsg = args.optString("commit_message", "Add filter rule via Agent");
-
-        if (ruleText.isEmpty()) {
-            callback.onError("Missing rule_text");
-            return;
-        }
-
-        try {
-            AdBlockFileManager fm = AdBlockFileManager.getInstance(context);
-            AdBlockFileManager.Category cat = AdBlockFileManager.Category.COSMETIC;
-            String fileName = AdBlockFileManager.FILE_USER_COSMETIC;
-
-            if (targetFile.contains("network") || targetFile.contains("hosts")) {
-                cat = AdBlockFileManager.Category.NETWORK;
-                fileName = AdBlockFileManager.FILE_USER_NETWORK;
-            }
-
-            String currentContent = fm.readFileContent(cat, fileName);
-            String newContent = currentContent + "\n" + ruleText + "\n";
-            boolean saved = fm.writeFileContent(cat, fileName, newContent);
-
-            callback.onCompleted("{\"status\":\"" + (saved ? "saved_and_committed" : "failed") + "\",\"file\":\"" + fileName + "\",\"commit_message\":\"" + commitMsg + "\"}");
         } catch (Exception e) {
-            callback.onError(e.getMessage());
+            callback.onStopped("error", e instanceof IllegalArgumentException || e instanceof java.io.IOException
+                    ? shortText(e.getMessage()) : "Browser action failed.");
         }
     }
 
-    // --- Automation Handlers ---
-    private void handleAutomationSchedule(JSONObject args, ExecutionCallback callback) {
-        String title = args.optString("title", "Scheduled Routine");
-        long triggerTime = args.optLong("trigger_time_epoch_ms", System.currentTimeMillis() + 60000);
-        String recipeJson = args.optString("recipe_json", "[]");
-
-        String id = UUID.randomUUID().toString();
-        AutomationManager.AutomationTask task = new AutomationManager.AutomationTask(id, title, triggerTime, recipeJson);
-        AutomationManager am = new AutomationManager(context);
-        am.scheduleTask(task);
-
-        callback.onCompleted("{\"status\":\"scheduled\",\"task_id\":\"" + id + "\",\"title\":\"" + title + "\",\"trigger_time_epoch_ms\":" + triggerTime + "}");
+    private static FilterSnapshot appendRule(FilterSnapshot before, Part part, String rule) {
+        String text = before.text(part);
+        for (String line : FilterSnapshot.lines(text)) if (line.trim().equals(rule)) return before;
+        String separator = text.isEmpty() || text.endsWith("\n") || text.endsWith("\r") ? "" : "\n";
+        return before.replace(part, text + separator + rule + "\n");
     }
 
-    private void handleAutomationList(ExecutionCallback callback) {
-        AutomationManager am = new AutomationManager(context);
-        List<AutomationManager.AutomationTask> tasks = am.listTasks();
-        try {
-            JSONArray arr = new JSONArray();
-            for (AutomationManager.AutomationTask t : tasks) {
-                arr.put(t.toJson());
-            }
-            JSONObject res = new JSONObject();
-            res.put("count", tasks.size());
-            res.put("tasks", arr);
-            callback.onCompleted(res.toString());
-        } catch (Exception e) {
-            callback.onError(e.getMessage());
+    private void evaluate(AssistantAction action, JSONObject args, MainActivity owner, AssistantApproval.Scope scope,
+                          Supplier<AssistantApproval.Scope> live, ExecutionCallback callback) throws Exception {
+        String body;
+        switch (action.kind) {
+            case CONTENT:
+                String format = args.getString("format");
+                if ("headings".equals(format)) body = "return {headings:Array.from(document.querySelectorAll('h1,h2,h3')).slice(0,25).map(e=>e.innerText.trim().slice(0,160))};";
+                else if ("links".equals(format)) body = "return {links:Array.from(document.links).slice(0,20).map(e=>({text:e.innerText.trim().slice(0,100),href:e.href.slice(0,512)}))};";
+                else body = "return {title:document.title.slice(0,160),text:document.body?document.body.innerText.slice(0,3000):''};";
+                break;
+            case FIND:
+                body = "const items=document.querySelectorAll(" + literal(args.getString("css_selector")) + ");"
+                        + "return {count:items.length,items:Array.from(items).slice(0,15).map(e=>({tag:e.tagName,id:e.id.slice(0,80),text:(e.innerText||'').slice(0,100)}))};";
+                break;
+            case SCROLL:
+                switch (args.getString("direction")) {
+                    case "top": body = "window.scrollTo(0,0);"; break;
+                    case "bottom": body = "window.scrollTo(0,document.documentElement.scrollHeight);"; break;
+                    case "up": body = "window.scrollBy(0,-" + args.getInt("pixels") + ");"; break;
+                    default: body = "window.scrollBy(0," + args.getInt("pixels") + ");"; break;
+                }
+                body += "return {status:'scroll_requested'};";
+                break;
+            case CLICK:
+                body = "const e=document.querySelectorAll(" + literal(args.getString("css_selector")) + ")[" + args.getInt("index") + "];"
+                        + "if(!e||!e.getClientRects().length)return {status:'not_found_or_not_visible'};"
+                        + "e.click();return {status:'click_dispatched'};";
+                break;
+            case TYPE:
+                body = "const e=document.querySelector(" + literal(args.getString("css_selector")) + ");"
+                        + "if(!e||!e.matches('textarea,input[type=text],input:not([type]),input[type=search]')||e.disabled||e.readOnly||!e.getClientRects().length)return {status:'not_editable'};"
+                        + "e.value=" + (args.getBoolean("clear_first") ? "" : "e.value+") + literal(args.getString("text")) + ";"
+                        + "e.dispatchEvent(new Event('input',{bubbles:true}));return {status:'input_dispatched'};";
+                break;
+            case SELECT:
+                body = "const e=document.querySelector(" + literal(args.getString("css_selector")) + ");"
+                        + "if(!e||e.tagName!=='SELECT'||e.disabled||!e.getClientRects().length)return {status:'not_editable'};"
+                        + "const wanted=" + literal(args.getString("option_value_or_text")) + ";"
+                        + "const opts=Array.from(e.options);const i=opts.findIndex(o=>!o.disabled&&(o.value===wanted||o.text.trim()===wanted));"
+                        + "if(i<0)return {status:'option_not_found'};e.selectedIndex=i;e.dispatchEvent(new Event('change',{bubbles:true}));return {status:'selection_dispatched'};";
+                break;
+            default: throw new IllegalArgumentException("Unsupported page action.");
         }
-    }
-
-    private void handleAutomationCancel(JSONObject args, ExecutionCallback callback) {
-        String taskId = args.optString("task_id", "");
-        AutomationManager am = new AutomationManager(context);
-        boolean cancelled = am.cancelTask(taskId);
-        callback.onCompleted("{\"status\":\"" + (cancelled ? "cancelled" : "not_found") + "\",\"task_id\":\"" + taskId + "\"}");
-    }
-
-    private void handleTermuxExecuteCommand(final JSONObject args, final ExecutionCallback callback) {
-        final String command = args.optString("command", "").trim();
-        final int timeout = args.optInt("timeout_seconds", 30);
-
-        if (command.isEmpty()) {
-            callback.onError("Missing 'command' argument for termux_execute_command.");
-            return;
-        }
-
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                AiConfigManager configManager = new AiConfigManager(context);
-                String endpoint = configManager.getTermuxEndpoint();
-                if (endpoint == null || endpoint.isEmpty()) {
-                    endpoint = AiConfigManager.DEFAULT_TERMUX_ENDPOINT;
-                }
-                String execUrl = endpoint.endsWith("/") ? (endpoint + "exec") : (endpoint + "/exec");
-
-                try {
-                    JSONObject payload = new JSONObject();
-                    payload.put("command", command);
-                    payload.put("timeout", timeout);
-
-                    URL url = new URL(execUrl);
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setRequestMethod("POST");
-                    conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                    conn.setConnectTimeout(8000);
-                    conn.setReadTimeout((timeout + 10) * 1000);
-                    conn.setDoOutput(true);
-
-                    byte[] postBytes = payload.toString().getBytes(StandardCharsets.UTF_8);
-                    conn.setFixedLengthStreamingMode(postBytes.length);
-
-                    try (OutputStream os = conn.getOutputStream()) {
-                        os.write(postBytes);
-                        os.flush();
-                    }
-
-                    int code = conn.getResponseCode();
-                    InputStream stream = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
-                    StringBuilder sb = new StringBuilder();
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        sb.append(line);
-                    }
-                    reader.close();
-                    conn.disconnect();
-
-                    if (code >= 200 && code < 300) {
-                        callback.onCompleted(sb.toString());
-                    } else {
-                        callback.onError("Termux exec failed (" + code + "): " + sb.toString());
-                    }
-
-                } catch (Exception e) {
-                    callback.onError("Termux Bridge connection failed: " + e.getMessage());
-                }
+        if (!owner.evaluateApprovedAssistantScript(scope.page, "try{" + body + "}catch(_){return {status:'page_action_failed'};}", value -> {
+            if (!scope.matches(live.get())) {
+                callback.onStopped("page_changed", "Page changed after dispatch; the effect may already have occurred. No page result was used.");
+                return;
             }
-        }).start();
+            try {
+                if (value == null || value.length() > 24 * 1024 || !RecipePlan.boundedJson(value, 6)) throw new IllegalArgumentException();
+                Object json = new JSONTokener(value).nextValue();
+                if (!(json instanceof JSONObject)) throw new IllegalArgumentException();
+                callback.onCompleted((JSONObject) json);
+            } catch (Exception e) { callback.onStopped("unavailable", "No usable result from the approved document."); }
+        })) callback.onStopped("unavailable", "No current scripted page is available for this action.");
     }
 
-    private void executeJsOnWebView(final String js, final ExecutionCallback callback) {
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                if (currentWebView != null) {
-                    currentWebView.evaluateJavascript(js, new ValueCallback<String>() {
-                        @Override
-                        public void onReceiveValue(String value) {
-                            if (value != null && value.startsWith("\"") && value.endsWith("\"") && value.length() >= 2) {
-                                value = value.substring(1, value.length() - 1)
-                                        .replace("\\\"", "\"")
-                                        .replace("\\\\", "\\");
-                            }
-                            callback.onCompleted(value != null ? value : "{}");
-                        }
-                    });
-                } else {
-                    callback.onError("No active WebView available.");
-                }
-            }
-        });
+    private static String shortText(String value) {
+        return value == null ? "" : value.substring(0, Math.min(value.length(), 450));
+    }
+
+    private static String literal(String value) {
+        return JSONObject.quote(value).replace("\u2028", "\\u2028").replace("\u2029", "\\u2029");
     }
 }

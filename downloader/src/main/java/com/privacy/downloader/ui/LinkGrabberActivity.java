@@ -2,6 +2,7 @@ package com.privacy.downloader.ui;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.text.Editable;
@@ -22,15 +23,18 @@ import androidx.annotation.Nullable;
 
 import com.privacy.downloader.R;
 import com.privacy.downloader.engine.DownloadEngine;
-import com.privacy.downloader.engine.DownloadTask;
 import com.privacy.downloader.model.DownloadItem;
 import com.privacy.downloader.model.DownloadStatus;
 import com.privacy.downloader.model.GrabbedLinkItem;
+
+import com.privacy.downloader.net.RequestContext;
+import com.privacy.downloader.net.ScopedHttp;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -38,10 +42,21 @@ import java.util.UUID;
 
 public class LinkGrabberActivity extends Activity {
 
-    public static final String EXTRA_LINKS_JSON = "extra_links_json";
-    public static final String EXTRA_COOKIES = "extra_cookies";
-    public static final String EXTRA_USER_AGENT = "extra_user_agent";
-    public static final String EXTRA_REFERRER = "extra_referrer";
+    private static final String EXTRA_LINKS_JSON = "extra_links_json";
+    private static final String EXTRA_PAGE_ORIGIN = "extra_page_origin";
+
+    public static void launch(Context context, String links, RequestContext request) {
+        if (request.isPrivate()) {
+            Toast.makeText(context, RequestContext.PRIVATE_UNAVAILABLE, Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent intent = new Intent(context, LinkGrabberActivity.class);
+        intent.putExtra(EXTRA_LINKS_JSON, links);
+        // This Activity is not exported. Only the native page's origin, not its URL, UA or
+        // cookies, crosses this boundary. DOM data cannot opt in to a session.
+        intent.putExtra(EXTRA_PAGE_ORIGIN, request.pageOrigin());
+        context.startActivity(intent);
+    }
 
     private final List<GrabbedLinkItem> allItems = new ArrayList<>();
     private final List<GrabbedLinkItem> filteredItems = new ArrayList<>();
@@ -56,9 +71,7 @@ public class LinkGrabberActivity extends Activity {
     private String currentCategoryFilter = "All";
     private String currentSearchQuery = "";
 
-    private String pageCookies;
-    private String pageUserAgent;
-    private String pageReferrer;
+    private RequestContext pageRequest;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -66,9 +79,7 @@ public class LinkGrabberActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_link_grabber);
 
-        pageCookies = getIntent().getStringExtra(EXTRA_COOKIES);
-        pageUserAgent = getIntent().getStringExtra(EXTRA_USER_AGENT);
-        pageReferrer = getIntent().getStringExtra(EXTRA_REFERRER);
+        pageRequest = RequestContext.fromBrowser(getIntent().getStringExtra(EXTRA_PAGE_ORIGIN), null, false);
 
         parseIncomingLinks();
         initViews();
@@ -87,10 +98,9 @@ public class LinkGrabberActivity extends Activity {
                 String url = obj.optString("url");
                 String title = obj.optString("title");
                 String type = obj.optString("type");
-                String referrer = obj.optString("referrer", null);
 
                 if (url != null && !url.trim().isEmpty() && (url.startsWith("http://") || url.startsWith("https://"))) {
-                    allItems.add(new GrabbedLinkItem(url, title, type, referrer));
+                    allItems.add(new GrabbedLinkItem(url, title, type));
                 }
             }
         } catch (Exception ignored) {}
@@ -277,49 +287,32 @@ public class LinkGrabberActivity extends Activity {
 
         DownloadEngine engine = DownloadEngine.getInstance(this);
         File downloadsDir = DownloadPromptDialog.getSafeDownloadsDir(this);
-        String ua = (pageUserAgent != null && !pageUserAgent.trim().isEmpty())
-                ? pageUserAgent
-                : DownloadTask.DEFAULT_USER_AGENT;
-
         int queuedCount = 0;
+        String queueError = null;
         for (GrabbedLinkItem grabbed : toQueue) {
             String fileName = grabbed.getFileName();
-            if (com.privacy.downloader.engine.StreamDetector.isStream(grabbed.getUrl(), null)) {
-                fileName = com.privacy.downloader.engine.StreamDetector.ensureMp4Extension(fileName);
-            }
             File destFile = new File(downloadsDir, fileName);
-
-            int collision = 1;
-            while (destFile.exists()) {
-                int dot = fileName.lastIndexOf('.');
-                String base = (dot != -1) ? fileName.substring(0, dot) : fileName;
-                String ext = (dot != -1) ? fileName.substring(dot) : "";
-                destFile = new File(downloadsDir, base + "_" + collision + ext);
-                collision++;
-            }
 
             DownloadItem item = new DownloadItem();
             item.setId(UUID.randomUUID().toString());
             item.setUrl(grabbed.getUrl());
             item.setOriginalUrl(grabbed.getUrl());
-            item.setFileName(destFile.getName());
+            item.setFileName(fileName);
             item.setDestinationPath(destFile.getAbsolutePath());
-            item.setTempPath(destFile.getAbsolutePath() + ".part");
             item.setNumSegments(4);
-            item.setCookies(pageCookies);
-            item.setUserAgent(ua);
-            String ref = (grabbed.getReferrer() != null && !grabbed.getReferrer().trim().isEmpty())
-                    ? grabbed.getReferrer()
-                    : pageReferrer;
-            item.setReferrer(ref);
             item.setStatus(DownloadStatus.PENDING);
 
-            engine.enqueue(item);
-            queuedCount++;
+            try {
+                engine.enqueue(item, pageRequest);
+                queuedCount++;
+            } catch (IOException e) {
+                if (queueError == null) queueError = e.getMessage();
+            }
         }
 
-        Toast.makeText(this, "Queued " + queuedCount + " downloads in background", Toast.LENGTH_SHORT).show();
-        finish();
+        String result = "Queued " + queuedCount + " of " + toQueue.size() + " downloads";
+        Toast.makeText(this, queueError == null ? result : result + ". " + queueError, Toast.LENGTH_LONG).show();
+        if (queuedCount > 0) finish();
     }
 
     private class GrabbedLinksAdapter extends BaseAdapter {
@@ -460,26 +453,9 @@ public class LinkGrabberActivity extends Activity {
 
             for (GrabbedLinkItem item : allItems) {
                 pool.execute(() -> {
-                    try {
-                        java.net.URL url = new java.net.URL(item.getUrl());
-                        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                        conn.setRequestMethod("HEAD");
-                        conn.setConnectTimeout(6000);
-                        conn.setReadTimeout(6000);
-                        conn.setInstanceFollowRedirects(true);
-                        if (pageUserAgent != null && !pageUserAgent.trim().isEmpty()) {
-                            conn.setRequestProperty("User-Agent", pageUserAgent);
-                        }
-                        if (pageCookies != null && !pageCookies.trim().isEmpty()) {
-                            conn.setRequestProperty("Cookie", pageCookies);
-                        }
-                        if (pageReferrer != null && !pageReferrer.trim().isEmpty()) {
-                            conn.setRequestProperty("Referer", pageReferrer);
-                        }
-
-                        int code = conn.getResponseCode();
-                        long len = conn.getContentLengthLong();
-                        conn.disconnect();
+                    try (ScopedHttp.Response response = ScopedHttp.head(item.getUrl(), pageRequest, null, 6000)) {
+                        int code = response.status;
+                        long len = response.connection.getContentLengthLong();
 
                         if (code >= 200 && code < 400) {
                             item.setStatus("ONLINE");

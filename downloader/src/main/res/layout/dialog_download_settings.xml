@@ -195,7 +195,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="GLOBAL SPEED LIMIT"
+                android:text="QUEUED HTTP SPEED LIMIT"
                 android:textColor="?attr/accentColor"
                 android:textSize="11sp"
                 android:fontFamily="sans-serif-bold"
@@ -205,7 +205,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Enter limit in KB/s (0 = unlimited throughput)"
+                android:text="Shared by queued HTTP files and streams. KiB/s; 0 = unlimited."
                 android:textColor="?attr/textSecondary"
                 android:textSize="12sp"
                 android:layout_marginTop="2dp" />
@@ -234,7 +234,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="KB/s"
+                    android:text="KiB/s"
                     android:textColor="?attr/accentColor"
                     android:textSize="12sp"
                     android:fontFamily="sans-serif-bold" />
@@ -265,7 +265,7 @@
                     android:layout_width="0dp"
                     android:layout_height="32dp"
                     android:layout_weight="1"
-                    android:text="1 MB/s"
+                    android:text="1 MiB/s"
                     android:textColor="?attr/textSecondary"
                     android:textSize="11sp"
                     android:fontFamily="sans-serif-medium"
@@ -278,7 +278,7 @@
                     android:layout_width="0dp"
                     android:layout_height="32dp"
                     android:layout_weight="1"
-                    android:text="5 MB/s"
+                    android:text="5 MiB/s"
                     android:textColor="?attr/textSecondary"
                     android:textSize="11sp"
                     android:fontFamily="sans-serif-medium"
@@ -291,7 +291,7 @@
                     android:layout_width="0dp"
                     android:layout_height="32dp"
                     android:layout_weight="1"
-                    android:text="20 MB/s"
+                    android:text="20 MiB/s"
                     android:textColor="?attr/textSecondary"
                     android:textSize="11sp"
                     android:fontFamily="sans-serif-medium"
@@ -516,7 +516,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Pause transfers on cellular and resume on Wi-Fi"
+                        android:text="Require Wi-Fi for all downloads"
                         android:textColor="?attr/textSecondary"
                         android:textSize="11sp"
                         android:layout_marginTop="2dp" />
@@ -556,7 +556,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Pause active downloads when battery is below 15%"
+                        android:text="Wait at 15% battery or less until plugged in or above 15%"
                         android:textColor="?attr/textSecondary"
                         android:textSize="11sp"
                         android:layout_marginTop="2dp" />

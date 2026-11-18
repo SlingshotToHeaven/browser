@@ -328,15 +328,20 @@
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <ListView
+        <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/list_downloads"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:divider="@null"
-            android:dividerHeight="0dp"
             android:paddingTop="2dp"
             android:paddingBottom="16dp"
             android:clipToPadding="false" />
+
+        <ProgressBar
+            android:id="@+id/downloads_loading"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center"
+            android:visibility="gone" />
 
         <LinearLayout
             android:id="@+id/layout_empty_state"

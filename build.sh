@@ -1,45 +1,41 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# Minimalist Android Build Script (Ultra-fast direct CLI / Gradle fallback)
-# ==============================================================================
+# Build the debug APK with the checked-in Gradle wrapper.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
-# Locate Android SDK
-ANDROID_SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
-if [[ ! -d "$ANDROID_SDK" ]]; then
-    echo "ERROR: Android SDK not found at $ANDROID_SDK. Please set ANDROID_HOME." >&2
+sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+# Let AGP resolve sdk.dir itself when Android Studio supplied local.properties.
+if [[ -z "$sdk" && ! -f local.properties && -n "${HOME:-}" ]]; then
+    for candidate in "$HOME/Android/Sdk" "$HOME/Library/Android/sdk"; do
+        if [[ -d "$candidate" ]]; then
+            sdk="$candidate"
+            break
+        fi
+    done
+fi
+
+if [[ -n "$sdk" ]]; then
+    if [[ ! -d "$sdk" ]]; then
+        printf 'ERROR: Android SDK directory does not exist: %s\n' "$sdk" >&2
+        exit 1
+    fi
+    # Normalize the alias so AGP doesn't see conflicting SDK paths.
+    export ANDROID_HOME="$sdk"
+    unset ANDROID_SDK_ROOT
+elif [[ ! -f local.properties ]]; then
+    printf 'ERROR: Android SDK not found. Set ANDROID_HOME or configure sdk.dir in local.properties.\n' >&2
     exit 1
 fi
 
-# Locate Java (Target JDK 21 for Android Gradle Plugin compatibility)
-if [[ -d "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" ]]; then
-    export JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
-fi
-JAVA_BIN="${JAVA_HOME:-/opt/homebrew/opt/openjdk}/bin"
-export PATH="$JAVA_BIN:$PATH"
-
-echo "=== Building Privacy Browser ==="
-echo "SDK: $ANDROID_SDK"
-echo "Java: $(java -version 2>&1 | head -n 1)"
-
-# Check if release keystore exists per signing.prompt
-RELEASE_KEYSTORE="$HOME/keys/release.keystore"
-DEBUG_KEYSTORE="$HOME/keys/debug.keystore"
-
-if command -v gradle &>/dev/null; then
-    echo "Running Gradle build..."
-    gradle assembleDebug --no-daemon
-else
-    echo "Gradle not in PATH, checking gradle wrapper..."
-    if [[ -f "./gradlew" ]]; then
-        ./gradlew assembleDebug --no-daemon
-    else
-        echo "Please install gradle or run via Android Studio."
+if [[ -n "${JAVA_HOME:-}" ]]; then
+    if [[ ! -x "$JAVA_HOME/bin/java" || ! -x "$JAVA_HOME/bin/javac" ]]; then
+        printf 'ERROR: JAVA_HOME must point to a JDK (use JDK 17).\n' >&2
         exit 1
     fi
+elif ! command -v java >/dev/null || ! command -v javac >/dev/null; then
+    printf 'ERROR: JDK not found. Install JDK 17 and set JAVA_HOME or add it to PATH.\n' >&2
+    exit 1
 fi
 
-echo "=== Build Complete ==="
+exec ./gradlew --no-daemon :app:assembleDebug "$@"

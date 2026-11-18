@@ -53,8 +53,8 @@ public class MarkdownRenderer {
         icMatcher.appendTail(sb);
         text = sb.toString();
 
-        // 4. Markdown links [title](url)
-        text = LINK_PATTERN.matcher(text).replaceAll("<a href=\"$2\">$1</a>");
+        // Provider text is readable, not an Android intent or a shortcut around review.
+        text = LINK_PATTERN.matcher(text).replaceAll("$1 ($2)");
 
         // 5. Bold **text**
         text = BOLD_PATTERN.matcher(text).replaceAll("<b>$1</b>");

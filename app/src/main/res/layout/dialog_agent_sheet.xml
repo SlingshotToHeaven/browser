@@ -105,7 +105,7 @@
                     android:gravity="center"
                     android:paddingStart="10dp"
                     android:paddingEnd="10dp"
-                    android:text="Raw"
+                    android:text="Text only"
                     android:singleLine="true"
                     android:maxLines="1"
                     android:textSize="10sp" />
@@ -195,7 +195,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Raw Mode (Preview)"
+                android:text="Text-only chat"
                 android:textSize="12sp"
                 android:textStyle="bold"
                 android:textColor="#F59E0B" />
@@ -205,7 +205,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="Raw direct script orchestration is in preview. Structured Mode is currently active."
+                android:text="No tools or direct page access in this mode."
                 android:textSize="11sp" />
         </LinearLayout>
 
@@ -242,7 +242,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:gravity="center"
-                android:text="Inspect, automate, or summarize the active page"
+                android:text="Review each browser action before it runs"
                 android:textSize="12sp" />
 
             <!-- Suggestion Chips Container -->
@@ -282,7 +282,7 @@
                     android:gravity="center"
                     android:paddingStart="14dp"
                     android:paddingEnd="14dp"
-                    android:text="Check page security &amp; trackers"
+                    android:text="Inspect page controls"
                     android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>
@@ -310,52 +310,6 @@
             android:paddingEnd="12dp"
             android:paddingTop="8dp"
             android:paddingBottom="10dp">
-
-            <!-- Pending Attachment Preview Bar (shown when screenshot captured) -->
-            <LinearLayout
-                android:id="@+id/ll_pending_attachment_bar"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginStart="4dp"
-                android:layout_marginBottom="6dp"
-                android:paddingStart="6dp"
-                android:paddingEnd="10dp"
-                android:paddingTop="4dp"
-                android:paddingBottom="4dp"
-                android:background="@drawable/bg_agent_pending_attachment"
-                android:visibility="gone">
-
-                <ImageView
-                    android:id="@+id/iv_pending_attachment_thumb"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:scaleType="centerCrop"
-                    android:background="@drawable/bg_agent_thumb_round"
-                    android:contentDescription="Attached Screenshot" />
-
-                <TextView
-                    android:id="@+id/tv_pending_attachment_label"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:text="Screenshot attached"
-                    android:textSize="12sp"
-                    android:textColor="#94A3B8"
-                    android:fontFamily="sans-serif-medium" />
-
-                <ImageButton
-                    android:id="@+id/btn_remove_pending_attachment"
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:layout_marginStart="8dp"
-                    android:src="@drawable/ic_close"
-                    android:tint="#94A3B8"
-                    android:background="?android:attr/selectableItemBackgroundBorderless"
-                    android:scaleType="centerInside"
-                    android:contentDescription="Remove Screenshot" />
-            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/ll_input_bar_pill"

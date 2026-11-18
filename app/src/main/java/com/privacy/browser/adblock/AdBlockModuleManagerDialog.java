@@ -26,8 +26,10 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.privacy.browser.R;
+import com.privacy.browser.adblock.rules.FilterSnapshot;
+import com.privacy.browser.adblock.rules.RuleWork;
+import com.privacy.browser.adblock.rules.FilterSnapshot.Part;
 import com.privacy.browser.ThemeManager;
-import com.privacy.browser.adblock.rules.UserFiltersManager;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -43,6 +45,7 @@ public class AdBlockModuleManagerDialog {
 
     public enum ActiveTab {
         NETWORK,
+        CUSTOM_NETWORK,
         COSMETIC,
         SCRIPT_ANTI_ADBLOCK,
         SCRIPT_COSMETIC_PRUNER,
@@ -71,6 +74,7 @@ public class AdBlockModuleManagerDialog {
         ImageButton btnClose = view.findViewById(R.id.btn_close_manager);
         Button btnCloudStates = view.findViewById(R.id.btn_open_cloud_states);
         Button btnTabNetwork = view.findViewById(R.id.btn_tab_network);
+        Button btnTabCustomNetwork = view.findViewById(R.id.btn_tab_custom_network);
         Button btnTabCosmetic = view.findViewById(R.id.btn_tab_cosmetic);
         Button btnTabScriptAntiAb = view.findViewById(R.id.btn_tab_script_anti_adblock);
         Button btnTabScriptCosmetic = view.findViewById(R.id.btn_tab_script_cosmetic_pruner);
@@ -92,7 +96,9 @@ public class AdBlockModuleManagerDialog {
         Button btnDeleteUserScript = view.findViewById(R.id.btn_delete_user_script);
 
         final ActiveTab[] currentTab = new ActiveTab[]{ActiveTab.SCRIPT_ANTI_ADBLOCK};
+        final boolean[] savingRules = {false};
         final String[] activeUserScript = new String[]{""};
+        final FilterSnapshot[] loadedRules = {fileManager.ruleSnapshot()};
         final String[] loadedInitialContent = new String[]{""};
         final String[] activeBundledContent = new String[]{""};
         final boolean[] isCurrentlyDeviated = new boolean[]{false};
@@ -146,8 +152,7 @@ public class AdBlockModuleManagerDialog {
         Runnable updateStats = () -> {
             if (currentTab[0] == ActiveTab.NETWORK) {
                 int count = AdBlockManager.getInstance(context).getBlockedHostsCount();
-                File hFile = fileManager.getFile(AdBlockFileManager.Category.NETWORK, AdBlockFileManager.FILE_HOSTS);
-                double sizeKb = hFile.exists() ? (hFile.length() / 1024.0) : 0;
+                double sizeKb = fileManager.ruleSnapshot().bytes(Part.HOSTS) / 1024.0;
                 tvFileStats.setText(String.format(Locale.US, "%d rules | %.1f KB (Database View)", count, sizeKb));
                 return;
             }
@@ -181,11 +186,11 @@ public class AdBlockModuleManagerDialog {
             String bundled = "";
             String label = "";
             boolean isJs = false;
+            loadedRules[0] = fileManager.ruleSnapshot();
             switch (currentTab[0]) {
                 case NETWORK:
                     label = "hosts.txt (Network Database - 100k+ rules)";
-                    File hFile = fileManager.getFile(AdBlockFileManager.Category.NETWORK, AdBlockFileManager.FILE_HOSTS);
-                    long hSize = hFile.exists() ? hFile.length() : 0;
+                    long hSize = fileManager.ruleSnapshot().bytes(Part.HOSTS);
                     int hRules = AdBlockManager.getInstance(context).getBlockedHostsCount();
                     String preview = fileManager.readFilePreview(AdBlockFileManager.Category.NETWORK, AdBlockFileManager.FILE_HOSTS, 150);
                     content = "# ==============================================================================\n" +
@@ -199,9 +204,14 @@ public class AdBlockModuleManagerDialog {
                               preview;
                     bundled = content;
                     break;
+                case CUSTOM_NETWORK:
+                    label = "user_network.txt (Custom block and exception rules)";
+                    content = loadedRules[0].text(Part.NETWORK);
+                    bundled = fileManager.readBundledAssetContent(AdBlockFileManager.Category.NETWORK, AdBlockFileManager.FILE_USER_NETWORK);
+                    break;
                 case COSMETIC:
                     label = "cosmetic_rules.txt (EasyList Cosmetic)";
-                    content = fileManager.readFileContent(AdBlockFileManager.Category.COSMETIC, AdBlockFileManager.FILE_COSMETIC_RULES);
+                    content = loadedRules[0].text(Part.COSMETIC);
                     bundled = fileManager.readBundledAssetContent(AdBlockFileManager.Category.COSMETIC, AdBlockFileManager.FILE_COSMETIC_RULES);
                     break;
                 case SCRIPT_ANTI_ADBLOCK:
@@ -211,7 +221,7 @@ public class AdBlockModuleManagerDialog {
                     isJs = true;
                     break;
                 case SCRIPT_COSMETIC_PRUNER:
-                    label = "cosmetic_pruner.js (Early Collapse Scriptlet)";
+                    label = "cosmetic_pruner.js (Cosmetic Stylesheet)";
                     content = fileManager.readFileContent(AdBlockFileManager.Category.SCRIPTLETS, AdBlockFileManager.FILE_SCRIPTLET_COSMETIC_PRUNER);
                     bundled = fileManager.readBundledAssetContent(AdBlockFileManager.Category.SCRIPTLETS, AdBlockFileManager.FILE_SCRIPTLET_COSMETIC_PRUNER);
                     isJs = true;
@@ -239,7 +249,11 @@ public class AdBlockModuleManagerDialog {
             loadedInitialContent[0] = content;
             activeBundledContent[0] = bundled;
 
-            tvActiveFile.setText("Editing: " + label);
+            Part dataPart = editorPart(currentTab[0]);
+            String warning = dataPart == null ? null : fileManager.ruleWarning();
+            int unsupported = dataPart == null ? 0 : loadedRules[0].unsupported(dataPart);
+            tvActiveFile.setText("Editing: " + label + (warning != null ? "\n" + warning
+                    : unsupported > 0 ? "\n" + unsupported + " unsupported legacy lines are inactive." : ""));
             editContent.setText(content);
             btnValidateSyntax.setVisibility(isJs ? View.VISIBLE : View.GONE);
             updateStats.run();
@@ -248,7 +262,7 @@ public class AdBlockModuleManagerDialog {
                 llUserScriptControls.setVisibility(View.VISIBLE);
                 btnRestoreDefault.setVisibility(View.GONE);
                 UserScriptManager.ScriptModel model = UserScriptManager.parseScript(activeUserScript[0], content);
-                btnScriptTiming.setText(model.runAt.identifier);
+                btnScriptTiming.setText(model.runAt.displayLabel());
             } else if (currentTab[0] == ActiveTab.NETWORK) {
                 llUserScriptControls.setVisibility(View.GONE);
                 btnRestoreDefault.setVisibility(View.GONE);
@@ -258,16 +272,17 @@ public class AdBlockModuleManagerDialog {
             }
 
             boolean isNetworkDb = (currentTab[0] == ActiveTab.NETWORK);
-            editContent.setEnabled(!isNetworkDb);
-            btnSaveAndApply.setEnabled(!isNetworkDb);
+            editContent.setEnabled(!isNetworkDb && warning == null);
+            btnSaveAndApply.setEnabled(!savingRules[0] && !isNetworkDb && warning == null);
             btnSaveAndApply.setAlpha(isNetworkDb ? 0.35f : 1.0f);
 
             // Check deviation immediately at start of tab load
             boolean initialDeviation = !content.equals(bundled);
-            updateRestoreButtonState.accept(initialDeviation);
+            updateRestoreButtonState.accept(initialDeviation && warning == null);
 
             // Highlight selected tab button
             applyTabStyle.accept(btnTabNetwork, currentTab[0] == ActiveTab.NETWORK);
+            applyTabStyle.accept(btnTabCustomNetwork, currentTab[0] == ActiveTab.CUSTOM_NETWORK);
             applyTabStyle.accept(btnTabCosmetic, currentTab[0] == ActiveTab.COSMETIC);
             applyTabStyle.accept(btnTabScriptAntiAb, currentTab[0] == ActiveTab.SCRIPT_ANTI_ADBLOCK);
             applyTabStyle.accept(btnTabScriptCosmetic, currentTab[0] == ActiveTab.SCRIPT_COSMETIC_PRUNER);
@@ -323,6 +338,10 @@ public class AdBlockModuleManagerDialog {
 
         if (btnCloudStates != null) {
             btnCloudStates.setOnClickListener(v -> {
+                if (!editContent.getText().toString().equals(loadedInitialContent[0])) {
+                    Toast.makeText(context, "Save or close the current draft before reviewing cloud rules.", Toast.LENGTH_LONG).show();
+                    return;
+                }
                 com.privacy.browser.adblock.cloud.AdBlockCloudStatesDialog.show(context, () -> {
                     loadTab.run();
                     if (onReloadNeeded != null) {
@@ -334,6 +353,12 @@ public class AdBlockModuleManagerDialog {
 
         btnTabNetwork.setOnClickListener(v -> {
             currentTab[0] = ActiveTab.NETWORK;
+            activeUserScript[0] = "";
+            refreshCustomTabs.run();
+            loadTab.run();
+        });
+        btnTabCustomNetwork.setOnClickListener(v -> {
+            currentTab[0] = ActiveTab.CUSTOM_NETWORK;
             activeUserScript[0] = "";
             refreshCustomTabs.run();
             loadTab.run();
@@ -533,8 +558,8 @@ public class AdBlockModuleManagerDialog {
                         : UserScriptManager.RunAt.DOCUMENT_START;
                 String updatedText = UserScriptManager.updateRunAtInContent(curText, nextTiming);
                 editContent.setText(updatedText);
-                btnScriptTiming.setText(nextTiming.identifier);
-                Toast.makeText(context, "Timing changed to " + nextTiming.identifier, Toast.LENGTH_SHORT).show();
+                btnScriptTiming.setText(nextTiming.displayLabel());
+                Toast.makeText(context, "Timing changed to " + nextTiming.displayLabel(), Toast.LENGTH_SHORT).show();
             });
         }
 
@@ -572,7 +597,10 @@ public class AdBlockModuleManagerDialog {
                 btnConfirmDel.setOnClickListener(v2 -> {
                     deleteDialog.dismiss();
                     String deletedFile = activeUserScript[0];
-                    fileManager.deleteUserScript(deletedFile);
+                    if (!fileManager.deleteUserScript(deletedFile)) {
+                        Toast.makeText(context, "Could not delete script", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
                     UserScriptManager.getInstance(context).clearCache();
                     Toast.makeText(context, "Deleted " + deletedFile, Toast.LENGTH_SHORT).show();
                     currentTab[0] = ActiveTab.NETWORK;
@@ -593,25 +621,50 @@ public class AdBlockModuleManagerDialog {
             });
         }
 
-        // Syntax Validator using headless WebView
+        // A short-lived local parser view, with no network or host-file access.
+        WebView[] validationView = new WebView[1];
+        Runnable disposeValidator = () -> {
+            WebView closing = validationView[0];
+            validationView[0] = null;
+            if (closing != null) com.privacy.browser.WebViewDisposal.detachAndDestroy(closing);
+        };
+        dialog.setOnDismissListener(d -> disposeValidator.run());
         btnValidateSyntax.setOnClickListener(v -> {
-            String jsCode = editContent.getText() != null ? editContent.getText().toString() : "";
+            disposeValidator.run();
+            String code = editContent.getText() == null ? "" : editContent.getText().toString();
+            if (code.length() > 256 * 1024) {
+                Toast.makeText(context, "Script is too large to validate here", Toast.LENGTH_SHORT).show();
+                return;
+            }
             try {
                 WebView testView = new WebView(context);
+                validationView[0] = testView;
                 testView.getSettings().setJavaScriptEnabled(true);
-                // Wrap in new Function() to syntax-parse without executing dangerous side effects
-                String testSnippet = "try { new Function(" + android.net.Uri.encode(jsCode) + "); 'SYNTAX_OK'; } catch(e) { 'SYNTAX_ERROR: ' + e.message; }";
-                testView.evaluateJavascript("try { new Function(" + quoteJs(jsCode) + "); 'SYNTAX_OK'; } catch(e) { 'SYNTAX_ERROR: ' + e.message; }", result -> {
-                    if (result != null && result.contains("SYNTAX_OK")) {
-                        Toast.makeText(context, "JavaScript syntax is valid", Toast.LENGTH_SHORT).show();
-                    } else {
-                        String err = result != null ? result.replace("\"", "") : "Unknown error";
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show();
+                testView.getSettings().setBlockNetworkLoads(true);
+                testView.getSettings().setAllowFileAccess(false);
+                testView.getSettings().setAllowContentAccess(false);
+                testView.setWebViewClient(new android.webkit.WebViewClient() {
+                    @Override
+                    public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+                        if (view == validationView[0]) {
+                            disposeValidator.run();
+                            if (dialog.isShowing()) Toast.makeText(context, "Syntax checker stopped; try again", Toast.LENGTH_SHORT).show();
+                        }
+                        return true;
                     }
-                    testView.destroy();
                 });
-            } catch (Exception e) {
-                Toast.makeText(context, "Validation check error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                testView.evaluateJavascript("try { new Function(" + org.json.JSONObject.quote(code)
+                        + "); 'SYNTAX_OK'; } catch(e) { 'SYNTAX_ERROR: ' + e.message; }", result -> {
+                    if (validationView[0] != testView) return;
+                    disposeValidator.run();
+                    if (dialog.isShowing()) {
+                        String message = "\"SYNTAX_OK\"".equals(result) ? "JavaScript syntax is valid" : "JavaScript syntax could not be validated";
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
+                    }
+                });
+            } catch (RuntimeException e) {
+                disposeValidator.run();
+                Toast.makeText(context, "Syntax check unavailable", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -619,12 +672,14 @@ public class AdBlockModuleManagerDialog {
         btnRestoreDefault.setOnClickListener(v -> {
             boolean restored = false;
             switch (currentTab[0]) {
-                case NETWORK:
-                    restored = fileManager.restoreToDefault(AdBlockFileManager.Category.NETWORK, AdBlockFileManager.FILE_HOSTS);
-                    break;
+                case CUSTOM_NETWORK:
                 case COSMETIC:
-                    restored = fileManager.restoreToDefault(AdBlockFileManager.Category.COSMETIC, AdBlockFileManager.FILE_COSMETIC_RULES);
-                    break;
+                    editContent.setText(activeBundledContent[0]);
+                    updateRestoreButtonState.accept(false);
+                    Toast.makeText(context, "Default loaded into the editor. Save to apply it.", Toast.LENGTH_LONG).show();
+                    return;
+                case NETWORK:
+                    return; // Never save/reset the hosts preview as an editable document.
                 case SCRIPT_ANTI_ADBLOCK:
                     restored = fileManager.restoreToDefault(AdBlockFileManager.Category.SCRIPTLETS, AdBlockFileManager.FILE_SCRIPTLET_ANTI_ADBLOCK);
                     break;
@@ -639,6 +694,14 @@ public class AdBlockModuleManagerDialog {
                     break;
             }
             if (restored) {
+                switch (currentTab[0]) {
+                    case SCRIPT_ANTI_ADBLOCK:
+                    case SCRIPT_COSMETIC_PRUNER: AntiAdblockDefuser.clearCache(); break;
+                    case SCRIPT_POPUPS: PopupClickDefuser.clearCache(); break;
+                    case SCRIPT_YOUTUBE: YouTubeAdDefuser.clearCache(); break;
+                    default: break;
+                }
+                if (onReloadNeeded != null) onReloadNeeded.run();
                 Toast.makeText(context, "Restored default configuration", Toast.LENGTH_SHORT).show();
                 loadTab.run();
             } else {
@@ -651,14 +714,37 @@ public class AdBlockModuleManagerDialog {
             String newContent = editContent.getText() != null ? editContent.getText().toString() : "";
             boolean saved = false;
             switch (currentTab[0]) {
-                case NETWORK:
-                    saved = fileManager.writeFileContent(AdBlockFileManager.Category.NETWORK, AdBlockFileManager.FILE_HOSTS, newContent);
-                    if (saved) AdBlockManager.getInstance(context).reloadRules();
-                    break;
+                case CUSTOM_NETWORK:
                 case COSMETIC:
-                    saved = fileManager.writeFileContent(AdBlockFileManager.Category.COSMETIC, AdBlockFileManager.FILE_COSMETIC_RULES, newContent);
-                    if (saved) UserFiltersManager.getInstance(context).loadRules();
-                    break;
+                    if (savingRules[0]) return;
+                    savingRules[0] = true;
+                    btnSaveAndApply.setEnabled(false);
+                    Part editing = editorPart(currentTab[0]);
+                    FilterSnapshot expected = loadedRules[0];
+                    RuleWork.run(() -> {
+                        FilterSnapshot next = expected.replace(editing, newContent);
+                        fileManager.applyRuleSnapshot(expected, next);
+                        return next;
+                    }, (next, error) -> {
+                        savingRules[0] = false;
+                        if (context instanceof android.app.Activity) {
+                            android.app.Activity owner = (android.app.Activity) context;
+                            if (owner.isFinishing() || owner.isDestroyed()) return;
+                        }
+                        if (error == null && next != expected && onReloadNeeded != null) onReloadNeeded.run();
+                        if (!dialog.isShowing()) return;
+                        btnSaveAndApply.setEnabled(currentTab[0] != ActiveTab.NETWORK && fileManager.ruleWarning() == null);
+                        if (error != null) {
+                            Toast.makeText(context, "Rules not saved: " + RuleWork.message(error), Toast.LENGTH_LONG).show();
+                        } else {
+                            // Do not clobber another section or a newer unsaved draft while the worker was busy.
+                            if (editing == editorPart(currentTab[0]) && newContent.equals(editContent.getText().toString())) loadTab.run();
+                            Toast.makeText(context, "Saved local rules", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                    return;
+                case NETWORK:
+                    return;
                 case SCRIPT_ANTI_ADBLOCK:
                     saved = fileManager.writeFileContent(AdBlockFileManager.Category.SCRIPTLETS, AdBlockFileManager.FILE_SCRIPTLET_ANTI_ADBLOCK, newContent);
                     if (saved) AntiAdblockDefuser.clearCache();
@@ -700,6 +786,12 @@ public class AdBlockModuleManagerDialog {
         loadTab.run();
 
         dialog.show();
+    }
+
+    private static Part editorPart(ActiveTab tab) {
+        if (tab == ActiveTab.CUSTOM_NETWORK) return Part.NETWORK;
+        if (tab == ActiveTab.COSMETIC) return Part.COSMETIC;
+        return null;
     }
 
     private static String quoteJs(String str) {

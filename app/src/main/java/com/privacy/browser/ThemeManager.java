@@ -138,28 +138,15 @@ public final class ThemeManager {
      * Configures a PrivacyWebView's settings based on the user's Web Content Appearance preference.
      */
     public static void applyWebTheme(@NonNull PrivacyWebView webView) {
-        android.webkit.WebSettings settings = webView.getSettings();
+        applyWebTheme(webView, webView.getUrl());
+    }
+
+    static void applyWebTheme(@NonNull PrivacyWebView webView, String targetUrl) {
         Context context = webView.getContext();
-
-        // If currently viewing the local home page, sync theme directly with the app theme
-        String url = webView.getUrl();
-        if (url != null && url.startsWith("file:///android_asset/home.html")) {
-            boolean isDark = isAppDarkTheme(context);
-            if (!isDark) {
-                if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-                    WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, false);
-                }
-                if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
-                    WebSettingsCompat.setForceDark(settings, WebSettingsCompat.FORCE_DARK_OFF);
-                }
-                webView.evaluateJavascript("if (typeof applyTheme === 'function') applyTheme('light');", null);
-                return;
-            } else {
-                webView.evaluateJavascript("if (typeof applyTheme === 'function') applyTheme('dark');", null);
-            }
-        }
-
-        String webTheme = getWebTheme(context);
+        boolean lightHome = InternalHome.isHome(targetUrl) && !isAppDarkTheme(context);
+        String webTheme = lightHome ? WEB_THEME_LIGHT : getWebTheme(context);
+        if (!webView.changeWebTheme(webTheme)) return;
+        android.webkit.WebSettings settings = webView.getSettings();
 
         if (WEB_THEME_FORCE_DARK.equals(webTheme)) {
             // Algorithmic force darkening (auto-inverts white web pages)
@@ -206,4 +193,12 @@ public final class ThemeManager {
             }
         }
     }
+
+    /** Once per finished Home document; appearance refreshes do not re-evaluate this script. */
+    static void applyHomeUi(PrivacyWebView view) {
+        if (!InternalHome.isHome(view.getUrl()) || !view.getSettings().getJavaScriptEnabled()) return;
+        view.evaluateJavascript("if(location.origin==='" + InternalHome.ORIGIN + "' && typeof applyTheme==='function') applyTheme('"
+                + (isAppDarkTheme(view.getContext()) ? "dark" : "light") + "');", null);
+    }
+
 }

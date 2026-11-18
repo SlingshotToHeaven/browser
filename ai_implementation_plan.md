@@ -1,4 +1,7 @@
 # AI Integration Architecture and Implementation Plan
+
+> Historical design, not setup instructions. Termux execution, Antigravity OAuth, unattended recipes, and new image attachments are disabled. See [current Agent behavior](README.md#agent-actions-reminders-and-image-sharing).
+
 Branch: `ai-in`
 Target Module: `01-androidx-webview-injection`
 Created: 2026-11-03

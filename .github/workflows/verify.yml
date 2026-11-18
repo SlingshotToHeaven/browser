@@ -1,0 +1,63 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: Local fixture smoke tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Check the build entry point, local fixtures, and release inputs
+        run: |
+          bash -n build.sh
+          sh -n gradlew
+          sha256sum -c docs/native-arm64.sha256 docs/release-assets-build-inputs.sha256
+          python3 -B tools/verify_release_apk.py native downloader/src/main/jniLibs/arm64-v8a
+          python3 -B -m unittest discover -s tests -v
+      - name: Test blob intake, filter work, YouTube script policy, and media discovery
+        run: node --test tests/blob_intake.test.mjs tests/youtube_policy.test.mjs tests/comic_detector.test.mjs tests/filter_work.test.mjs tests/media_discovery.test.mjs
+      - name: Install pinned Worker fixture dependencies
+        run: npm ci --prefix cloudflare-worker --no-audit --no-fund
+      - name: Test the v2 rule catalog in local Workerd
+        run: npm test --prefix cloudflare-worker
+
+  android:
+    name: Android build, JVM tests, and lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install SDK packages
+        run: sdkmanager --sdk_root="$ANDROID_HOME" 'platforms;android-34' 'build-tools;34.0.0' 'build-tools;35.0.0'
+      - name: Assemble debug and instrumentation APKs and run JVM tests
+        run: |
+          ./gradlew --no-daemon --stacktrace :app:assembleDebug :app:assembleDebugAndroidTest \
+            :app:testDebugUnitTest :downloader:testDebugUnitTest :image-search:testDebugUnitTest
+      - name: Run Android lint
+        run: ./gradlew --no-daemon --stacktrace :app:lintDebug :downloader:lintDebug :image-search:lintDebug
+      - name: Assemble and inspect the unsigned minified candidate (no distribution)
+        run: |
+          ./gradlew --no-daemon --stacktrace :app:assembleRelease :app:lintRelease
+          python3 -B tools/verify_release_apk.py apk app/build/outputs/apk/release/app-release-unsigned.apk \
+            --build-tools "$ANDROID_HOME/build-tools/35.0.0" --inspect-only

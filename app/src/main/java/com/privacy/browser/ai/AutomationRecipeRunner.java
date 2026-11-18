@@ -1,192 +1,94 @@
 package com.privacy.browser.ai;
 
-import android.content.Context;
-import android.os.Handler;
-import android.os.Looper;
-import android.util.Log;
-import android.webkit.ValueCallback;
-import android.webkit.WebView;
+import android.app.AlertDialog;
+import android.text.InputFilter;
+import android.widget.EditText;
 import android.widget.Toast;
 
-import org.json.JSONArray;
+import com.privacy.browser.MainActivity;
+import com.privacy.browser.ThemeManager;
+
 import org.json.JSONObject;
 
-/**
- * Executes dynamic, AI-generated multi-step automation recipes sequentially.
- * Supports arbitrary tool dispatching, async delays, and smart DOM condition polling.
- */
-public class AutomationRecipeRunner {
-    private static final String TAG = "AutomationRecipeRunner";
+import java.text.DateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.function.BooleanSupplier;
 
-    public interface RecipeCallback {
-        void onStepStarted(int stepIndex, String actionName);
-        void onStepFinished(int stepIndex, String actionName, boolean success);
-        void onRecipeCompleted(boolean success, String summary);
-    }
+/** Manual recipe review UI; selecting one step never starts the others. */
+final class AutomationRecipeRunner {
+    private AutomationRecipeRunner() { }
 
-    private final Context context;
-    private final Handler handler;
-    private final ToolDispatcher toolDispatcher;
-    private WebView currentWebView;
-
-    public AutomationRecipeRunner(Context context, ToolDispatcher toolDispatcher, WebView webView) {
-        this.context = context.getApplicationContext();
-        this.handler = new Handler(Looper.getMainLooper());
-        this.toolDispatcher = toolDispatcher;
-        this.currentWebView = webView;
-    }
-
-    public void setWebView(WebView webView) {
-        this.currentWebView = webView;
-        if (toolDispatcher != null) {
-            toolDispatcher.setCurrentWebView(webView);
-        }
-    }
-
-    public void runRecipe(final String recipeJsonStr, final RecipeCallback callback) {
-        handler.post(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    JSONArray steps = new JSONArray(recipeJsonStr);
-                    if (steps.length() == 0) {
-                        if (callback != null) callback.onRecipeCompleted(true, "Recipe was empty.");
-                        return;
-                    }
-                    executeStep(steps, 0, callback);
-                } catch (Exception e) {
-                    Log.e(TAG, "Failed parsing recipe JSON: " + recipeJsonStr, e);
-                    if (callback != null) callback.onRecipeCompleted(false, "Invalid recipe JSON: " + e.getMessage());
-                }
+    static void paste(MainActivity owner, AgentSessionManager session, BooleanSupplier visible) {
+        EditText input = new EditText(owner);
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(RecipePlan.MAX_RECIPE)});
+        input.setHint("[{\"action\":\"nav_get_active_tab_info\",\"params\":{}}]");
+        input.setMinLines(3);
+        AlertDialog dialog = builder(owner, "Review recipe JSON").setView(input)
+                .setMessage("Paste a recipe to inspect its steps. Nothing runs on import.")
+                .setNegativeButton("Cancel", null).setPositiveButton("Review steps", null).create();
+        dialog.setOnShowListener(event -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            if (!visible.getAsBoolean()) { dialog.dismiss(); return; }
+            try {
+                RecipePlan plan = RecipePlan.parse(input.getText().toString());
+                dialog.dismiss();
+                showSteps(owner, session, visible, plan);
+            } catch (Exception invalid) {
+                input.setError(invalid instanceof IllegalArgumentException ? invalid.getMessage() : "Invalid recipe JSON.");
             }
-        });
+        }));
+        dialog.show();
     }
 
-    private void executeStep(final JSONArray steps, final int index, final RecipeCallback callback) {
-        if (index >= steps.length()) {
-            Log.d(TAG, "All recipe steps executed successfully.");
-            Toast.makeText(context, "Automation completed successfully (" + steps.length() + " steps)", Toast.LENGTH_SHORT).show();
-            if (callback != null) callback.onRecipeCompleted(true, "All " + steps.length() + " steps completed successfully.");
-            return;
-        }
+    private static void showSteps(MainActivity owner, AgentSessionManager session, BooleanSupplier visible, RecipePlan plan) {
+        String[] descriptions = new String[plan.steps.size()];
+        for (int i = 0; i < descriptions.length; i++) descriptions[i] = (i + 1) + ". " + plan.steps.get(i).kind.label;
+        builder(owner, "Choose one step to review").setItems(descriptions, (prompt, index) ->
+                session.reviewManualStep(owner, visible, plan.steps.get(index), new ToolDispatcher.ExecutionCallback() {
+                    @Override public void onCompleted(JSONObject outcome) {
+                        if (visible.getAsBoolean()) builder(owner, "Step result").setMessage(outcome.toString())
+                                .setPositiveButton("Close", null).show();
+                    }
+                    @Override public void onStopped(String status, String reason) {
+                        if (visible.getAsBoolean()) Toast.makeText(owner, reason, Toast.LENGTH_LONG).show();
+                    }
+                })).setNegativeButton("Close", null).show();
+    }
 
+    static void reminders(MainActivity owner, AgentSessionManager session, BooleanSupplier visible) {
+        AutomationManager manager = new AutomationManager(owner);
         try {
-            JSONObject step = steps.getJSONObject(index);
-            final String action = step.optString("action", "");
-            final JSONObject params = step.optJSONObject("params") != null ? step.optJSONObject("params") : new JSONObject();
-
-            Log.d(TAG, "Executing Recipe Step " + (index + 1) + "/" + steps.length() + ": " + action);
-            if (callback != null) callback.onStepStarted(index, action);
-
-            // Special orchestrator control flow: wait_for_element
-            if ("wait_for_element".equalsIgnoreCase(action)) {
-                handleWaitForElement(params, new Runnable() {
-                    @Override
-                    public void run() {
-                        if (callback != null) callback.onStepFinished(index, action, true);
-                        executeStep(steps, index + 1, callback);
-                    }
-                }, new Runnable() {
-                    @Override
-                    public void run() {
-                        if (callback != null) callback.onStepFinished(index, action, false);
-                        executeStep(steps, index + 1, callback); // proceed resiliently
-                    }
-                });
+            List<AutomationManager.Task> tasks = manager.list();
+            String explanation = "In-app only. Reminders do not open the app, send notifications, or run recipes."
+                    + (manager.hasLegacyRecipes() ? " Old scheduled recipes were disabled; their original data was kept." : "");
+            if (tasks.isEmpty()) {
+                builder(owner, "Recipe reminders").setMessage("No review reminders.\n\n" + explanation).setPositiveButton("Close", null).show();
                 return;
             }
-
-            // Special orchestrator control flow: delay
-            if ("delay".equalsIgnoreCase(action)) {
-                long delayMs = params.optLong("ms", 1500);
-                handler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (callback != null) callback.onStepFinished(index, action, true);
-                        executeStep(steps, index + 1, callback);
-                    }
-                }, delayMs);
-                return;
-            }
-
-            // Standard tool execution via ToolDispatcher
-            toolDispatcher.executeTool(action, params, new ToolDispatcher.ExecutionCallback() {
-                @Override
-                public void onCompleted(String resultJson) {
-                    Log.d(TAG, "Step " + (index + 1) + " (" + action + ") finished: " + resultJson);
-                    if (callback != null) callback.onStepFinished(index, action, true);
-
-                    // Add small safety pause between sequential page interactions
-                    handler.postDelayed(new Runnable() {
-                        @Override
-                        public void run() {
-                            executeStep(steps, index + 1, callback);
-                        }
-                    }, 500);
-                }
-
-                @Override
-                public void onError(String error) {
-                    Log.w(TAG, "Step " + (index + 1) + " (" + action + ") error: " + error);
-                    if (callback != null) callback.onStepFinished(index, action, false);
-
-                    // Proceed to next step to allow resilient recovery
-                    handler.postDelayed(new Runnable() {
-                        @Override
-                        public void run() {
-                            executeStep(steps, index + 1, callback);
-                        }
-                    }, 500);
-                }
-            });
-
-        } catch (Exception e) {
-            Log.e(TAG, "Exception executing step " + index, e);
-            if (callback != null) callback.onStepFinished(index, "unknown", false);
-            executeStep(steps, index + 1, callback);
+            String[] labels = new String[tasks.size()];
+            for (int i = 0; i < labels.length; i++) labels[i] = tasks.get(i).title + "\n" + tasks.get(i).statusLabel();
+            builder(owner, "Recipe review reminders").setItems(labels, (prompt, index) -> {
+                AutomationManager.Task task = tasks.get(index);
+                builder(owner, "Reminder details").setMessage(task.title + "\n" + DateFormat.getDateTimeInstance().format(new Date(task.trigger))
+                                + "\n" + task.statusLabel() + "\n\n" + explanation)
+                        .setPositiveButton("Review recipe", (confirm, button) -> {
+                            if (!visible.getAsBoolean()) return;
+                            try { showSteps(owner, session, visible, RecipePlan.parse(task.recipe)); }
+                            catch (Exception invalid) { Toast.makeText(owner, "Saved recipe is not supported.", Toast.LENGTH_LONG).show(); }
+                        }).setNeutralButton("Cancel reminder", (confirm, button) -> {
+                            if (!visible.getAsBoolean()) return;
+                            try {
+                                boolean removed = manager.cancel(task.id);
+                                Toast.makeText(owner, removed ? "Reminder cancelled" : "Reminder no longer exists", Toast.LENGTH_SHORT).show();
+                            } catch (Exception error) { Toast.makeText(owner, "Could not confirm cancellation", Toast.LENGTH_LONG).show(); }
+                        }).setNegativeButton("Close", null).show();
+            }).setNegativeButton("Close", null).show();
+        } catch (Exception error) {
+            builder(owner, "Reminders unavailable").setMessage("Could not verify the saved reminder state.").setPositiveButton("Close", null).show();
         }
     }
 
-    private void handleWaitForElement(final JSONObject params, final Runnable onSuccess, final Runnable onTimeout) {
-        final String selector = params.optString("css_selector", "");
-        final long timeoutMs = params.optLong("timeout_ms", 8000);
-        final long pollIntervalMs = 400;
-        final long startTime = System.currentTimeMillis();
-
-        if (selector.isEmpty() || currentWebView == null) {
-            onSuccess.run();
-            return;
-        }
-
-        final Runnable[] checkRunnable = new Runnable[1];
-        checkRunnable[0] = new Runnable() {
-            @Override
-            public void run() {
-                if (System.currentTimeMillis() - startTime > timeoutMs) {
-                    Log.w(TAG, "Timeout waiting for element: " + selector);
-                    onTimeout.run();
-                    return;
-                }
-
-                String js = "(function() {"
-                        + "  var el = document.querySelector('" + selector.replace("'", "\\'") + "');"
-                        + "  return !!el;"
-                        + "})();";
-
-                currentWebView.evaluateJavascript(js, new ValueCallback<String>() {
-                    @Override
-                    public void onReceiveValue(String value) {
-                        if ("true".equalsIgnoreCase(value)) {
-                            Log.d(TAG, "Element found in DOM: " + selector);
-                            onSuccess.run();
-                        } else {
-                            handler.postDelayed(checkRunnable[0], pollIntervalMs);
-                        }
-                    }
-                });
-            }
-        };
-
-        handler.post(checkRunnable[0]);
+    private static AlertDialog.Builder builder(MainActivity owner, String title) {
+        return new AlertDialog.Builder(owner, ThemeManager.getDialogTheme(owner)).setTitle(title);
     }
 }

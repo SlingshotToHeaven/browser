@@ -131,33 +131,67 @@ public class AdBlockDashboardDialog {
 
         // Per-Site Granular uBlock Switches
         Switch switchJs = view.findViewById(R.id.switch_site_js);
-        if (switchJs != null) {
-            switchJs.setChecked(manager.isSiteJavaScriptEnabled(targetHost));
-            switchJs.setOnCheckedChangeListener((btn, isChecked) -> manager.setSiteJavaScriptEnabled(targetHost, isChecked));
-        }
+        View clearNoScript = view.findViewById(R.id.btn_clear_no_script_rules);
+        TextView noScriptStatus = view.findViewById(R.id.tv_no_script_status);
+        Runnable renderNoScript = () -> {
+            boolean active = manager.hasNoScriptRules();
+            clearNoScript.setEnabled(active);
+            noScriptStatus.setVisibility(active ? View.VISIBLE : View.GONE);
+        };
+        boolean isWebSite = com.privacy.downloader.net.RequestContext.origin(currentUrl) != null
+                && !com.privacy.browser.InternalHome.ownsHost(currentUrl);
+        switchJs.setEnabled(isWebSite);
+        switchJs.setChecked(isWebSite && !manager.isSiteJavaScriptEnabled(targetHost));
+        switchJs.setOnCheckedChangeListener((btn, isChecked) -> {
+            if (!isWebSite) return;
+            manager.setSiteJavaScriptEnabled(targetHost, !isChecked);
+            renderNoScript.run();
+            if (onReloadNeeded != null) onReloadNeeded.run();
+        });
+        renderNoScript.run();
+        clearNoScript.setOnClickListener(v -> new android.app.AlertDialog.Builder(context, ThemeManager.getDialogTheme(context))
+                .setTitle("Re-enable JavaScript in all tabs?")
+                .setMessage("This removes all saved NoScript rules and reloads the open pages without their Back history.")
+                .setPositiveButton("Enable JavaScript", (confirm, which) -> {
+                    manager.clearNoScriptRules();
+                    dialog.dismiss();
+                    if (onReloadNeeded != null) onReloadNeeded.run();
+                }).setNegativeButton("Cancel", null).show());
 
         Switch switchPopups = view.findViewById(R.id.switch_site_popups);
         if (switchPopups != null) {
             switchPopups.setChecked(manager.isSitePopupsBlocked(targetHost));
-            switchPopups.setOnCheckedChangeListener((btn, isChecked) -> manager.setSitePopupsBlocked(targetHost, isChecked));
+            switchPopups.setOnCheckedChangeListener((btn, isChecked) -> {
+                manager.setSitePopupsBlocked(targetHost, isChecked);
+                if (onReloadNeeded != null) onReloadNeeded.run();
+            });
         }
 
         Switch switchCosmetic = view.findViewById(R.id.switch_site_cosmetic);
         if (switchCosmetic != null) {
             switchCosmetic.setChecked(manager.isSiteCosmeticEnabled(targetHost));
-            switchCosmetic.setOnCheckedChangeListener((btn, isChecked) -> manager.setSiteCosmeticEnabled(targetHost, isChecked));
+            switchCosmetic.setOnCheckedChangeListener((btn, isChecked) -> {
+                manager.setSiteCosmeticEnabled(targetHost, isChecked);
+                if (onReloadNeeded != null) onReloadNeeded.run();
+            });
         }
 
         Switch switchFonts = view.findViewById(R.id.switch_site_fonts);
         if (switchFonts != null) {
             switchFonts.setChecked(manager.isSiteFontsBlocked(targetHost));
-            switchFonts.setOnCheckedChangeListener((btn, isChecked) -> manager.setSiteFontsBlocked(targetHost, isChecked));
+            switchFonts.setOnCheckedChangeListener((btn, isChecked) -> {
+                manager.setSiteFontsBlocked(targetHost, isChecked);
+                if (onReloadNeeded != null) onReloadNeeded.run();
+            });
         }
 
         Switch switchMedia = view.findViewById(R.id.switch_site_media);
         if (switchMedia != null) {
             switchMedia.setChecked(manager.isSiteLargeMediaBlocked(targetHost));
-            switchMedia.setOnCheckedChangeListener((btn, isChecked) -> manager.setSiteLargeMediaBlocked(targetHost, isChecked));
+            switchMedia.setOnCheckedChangeListener((btn, isChecked) -> {
+                manager.setSiteLargeMediaBlocked(targetHost, isChecked);
+                if (onReloadNeeded != null) onReloadNeeded.run();
+            });
         }
 
         // Anti-Adblock Defeater Details
