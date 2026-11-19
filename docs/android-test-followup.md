@@ -2,7 +2,54 @@
 
 Use the source supplied for each retest and record its identity. Follow the [isolated testing rules](antigravity-device-test.md#1-keep-the-installed-app-and-the-mac-safe): test only the disposable `com.browser` / `com.browser.test` pair, with synthetic data and an explicitly selected device. Keep the old browser and its data untouched. This is a retest, not a release or a GitHub operation.
 
-## Latest report: scoped downloads, blob intake and single-file Share
+## Report 6: saved download checkpoints after relaunch
+
+Report 6 used `c0843fa475fb65ef591b8d0cba0ec3a7dddbd596` (ZIP SHA-256 `214458c6e2b4e44e12b2f7f3d68ce94872a692aeaa93e2fec986924d3eb1c4c7`) with the same `com.browser` debug APK, SHA-256 `cd8c9b95c6eee6c1e4f9844bf988c925ac3b68c28961894c21372605043acb6c`. Galaxy S21 FE, API 36, ARM64 with **4 KiB** pages, WebView `137.0.7151.115`. The original browser and unrelated files were reported untouched.
+
+| Scoped check | Reported observation |
+| --- | --- |
+| DL-01 / DL-02 active job | The running `interrupted.bin` stopped at force-stop. No new requests were observed in the five seconds before explicit launch. After launch and opening Downloads, without Resume/Retry, its first body was conditional HTTP 206 from byte **1,703,936** with a matching ETag. |
+| DL-01 / DL-02 manual pause | `manual-pause.bin` stayed Paused and made no requests through relaunch and completion of the other job. After a Resume tap, its first body was conditional HTTP 206 from byte **1,507,328** with a matching ETag. |
+| DL-03 resumed requests | Both initial native probes and bodies carried the scoped synthetic cookie and origin-only referrer. Both actual resumed bodies omitted both headers. |
+| Integrity | Both outputs were independently measured by the lab at **4,194,304 bytes**, each with its own matching fixture SHA-256. The resumed ranges and output hashes were checked against the pinned source; the APK and device run were not reproduced here. |
+
+This covers two eligible one-connection jobs with stable ETags and app-owned storage. The resumed ranges and exact outputs show checkpoint reuse; rounded UI progress and host `body_end` counts aren't durable-byte measurements. A single cold-launch measurement is not a speed comparison. Upgrade, power/network constraints, changed representations, publication races, and unattended recovery are not demonstrated.
+
+## Next device run
+
+Run **HTTP resume rejection and late destination collision (DL-01 / Step 03 subset)**, not the prior suites. Only the host fixture, its tests, and docs changed. Reuse the exact verified report-6 debug APK if installed in the confirmed disposable `com.browser` slot; otherwise use `./gradlew :app:assembleDebug` with JDK 17/Platform 34 and verify the debug ID, APK hash and expected lab signer. Install with `-r` only over a confirmed disposable, same-signer build. Preserve both old app IDs, existing apps/files and data. No uninstall, clear-data, downgrade, device settings changes, broad storage access, or release signing.
+
+First confirm that host port 8019 and the authorized phone's reverse mapping are unused. On the Mac use Python 3.9+ and start `python3 -B tests/fixtures/download_recovery.py` with no flag, then add `adb -s "$serial" reverse --no-rebind tcp:8019 tcp:8019`. Select the phone with `-s "$serial"` for **every** device command. Leave that mapping in place during any host fixture restart. Use a committed regular test tab at `http://127.0.0.1:8019/start`. For each job, **long-press → Download Link with Manager**, choose **one connection**, and a fresh, simple filename in the dedicated **app-owned** test folder. Use **File Details & Diagnostics** to confirm the actual reserved path; don't guess from the suggested name. Run one job at a time under existing settings. If an owned test path or required capability isn't available, mark the dependent check **Blocked**.
+
+### A. Changed validator at the same URL
+
+1. Start the **Manually paused job** (`/jobs/manual-pause.bin`, version 1). **Leave Expected SHA-256 blank** in the prompt, so a checksum check can't mask a resume protocol error. Capture the initial conditional 206 body with `version=1 if_range_version=1` (not just its probe). Let progress advance for at least eight seconds, then manually Pause and wait for the old body to drain. Confirm Paused, nonzero progress, and no published file.
+2. Stop **only** the Mac fixture process and restart it with `python3 -B tests/fixtures/download_recovery.py --replace-paused`. Keep the same device URL, port, reverse and job; do not reload/enqueue the link or edit the URL. Confirm the fixture prints version 2 of `manual-pause.bin`, whose length is unchanged but whose strong ETag and all fixture data were generated separately. `interrupted.bin` remains version 1.
+3. Tap **Resume** for that paused job. Capture the stale request: `GET`, `version=2`, `range_present=True`, `requested_start>0`, `if_range_version=1`, `validator_match=False`, `conditional=True`, `probe=False`, `status=200`, **served** `start=0`. The app must reject the 200 as a resume response, show `FAILED` with a range/Start over reason, and not publish anything. If those request conditions weren't exercised, don't infer rejection from a generic error. Record the exact failure before proceeding.
+4. From that failed row choose **Retry or start over → Start over**, not Retry or a new job. Expect a fresh full `GET status=200` with `version=2`, `range_present=False`, `requested_start=None`, `if_range_version=none`, `conditional=False`, `start=0`. Independently verify the completed file against the version-2 digest below. There must be no automatic publication before the explicit action. On a failure to drain or to start, capture the exact status/message instead of resetting data.
+
+| Fixture | Expected bytes | SHA-256 |
+| --- | ---: | --- |
+| `manual-pause.bin` version 1 (old representation) | 4,194,304 | `dd57a6043af06c13671a06e145115b4c1903a6684ef0c41feefe50ee9caef6c4` |
+| `manual-pause.bin` version 2 (only valid completed output in A) | 4,194,304 | `51b5d0a129098c43c19989171c8307df017e92f99219a1e5c225fa0ff5481f05` |
+| `interrupted.bin` version 1 (fixture body in B, not the expected on-device file) | 4,194,304 | `3f594a89bfe61cdd0fdeb4592211e70737211891cfdcde17d52464d9648f66b2` |
+| Case B sentinel (`android-report-7-occupied` plus one LF) | 26 | `45508a98fac27025251c3ca1a1169a1cf31db697cfbdac5171cdf36ac892f315` |
+
+### B. Destination becomes occupied after admission
+
+1. Start the **Interrupted active job** (`/jobs/interrupted.bin`), but **do not interrupt it**. Use a different fresh name. After its actual conditional 206 body starts and while still transferring, confirm the exact reserved **vacant** app-owned final path and create the 26-byte synthetic sentinel there. Do not touch its staging file. The transfer takes about 64 seconds with one connection. If it finishes before sentinel creation, the collision was **not exercised**.
+2. For a simple verified path `dest` under `/storage/emulated/0/Android/data/com.browser/files/Download/` (only ASCII letters, digits, `/`, `.`, `_`, `-`; no `..` components or symlinked folders), this selected-device command creates only a new entry and refuses to overwrite. Do not use it on an uncertain or shared path. If `run-as` cannot write here, mark this case **Blocked**; don't broaden permissions.
+
+   ```sh
+   create_marker='test ! -e "$1" && test ! -L "$1" && set -C && printf "%s\n" android-report-7-occupied > "$1"'
+   adb -s "$serial" shell -T "run-as com.browser sh -c '$create_marker' sh '$dest'"
+   ```
+
+3. Verify the sentinel's size and SHA-256 before the final outcome, and record that it was created after the transfer started and before its body ended. Let the host body finish. Expect `FAILED` with a destination-exists message, no completed record or alternate output for that job, and the sentinel **unchanged** (exact size and digest). Don't remove it or tap Retry before gathering evidence. A conflict while initially choosing a name, a generic failed transfer, or a timing miss is not a pass for late collision.
+
+For hashes, read only the exact authorized fixture or sentinel file, e.g. `adb -s "$serial" exec-out run-as com.browser cat "$dest"` into a fresh Mac scratch file, check the read succeeded, and use `wc -c` and `shasum -a 256`. Return `out/android-test-report-7.md` with source ZIP/APK IDs and hashes, device/API/ABI/page size/WebView, **Pass / Fail / Blocked / Not run** for each case, sanitized fixture lines distinguishing requested/served offsets and new/reused validators, the exact UI reasons and action order, and independent file sizes/hashes or missing-file evidence. No serial, raw headers or unrelated logs. Remove only the files and mapping you can identify as created for this run and stop the host fixture; don't sweep staging files. Record intentional leftovers. This is not a crash during copy/commit, in-place upgrade, network/power, paired performance, or release run.
+
+## Report 5: scoped downloads, blob intake and single-file Share
 
 Report 5 used `8c7ed592ea6ff99e578a1c14015594fb430d60a9` (ZIP SHA-256 `cfb7a3d53a555d3eeade19feb275d577d642d9368e2daf9f7d9be34ec22c09de`) and reused the verified `com.browser` debug APK, SHA-256 `cd8c9b95c6eee6c1e4f9844bf988c925ac3b68c28961894c21372605043acb6c`. Same Galaxy S21 FE, API 36, ARM64 with **4 KiB** pages, WebView `137.0.7151.115`. The reported run used app-owned test storage and left the original browser untouched.
 
@@ -12,7 +59,9 @@ Report 5 used `8c7ed592ea6ff99e578a1c14015594fb430d60a9` (ZIP SHA-256 `cfb7a3d53
 | DL-05 (4/4) | Dismiss kept zero fetches and no row. Normal produced the exact 262,147-byte file. One-byte-short and same-address reload after the first stalled chunk both failed without a final file; the new document did not fetch for the old job. | Queue-admission, timeout, cancel, other frame/origin, and destination-collision cases remain separate. |
 | DL-04 single Share (1/1) | An approved offline receiver completed a single-file read from the app-owned output; its byte count and SHA-256 matched the original. This closes the missing single-file read evidence from report 4. | Other Open surface, full grant confinement and destination/permission cases aren't implied. The separate-UID grant/revoke test is separate evidence. |
 
-## Next device run
+## Previous checkpoint run
+
+These were the instructions for report 6; do not repeat them by default.
 
 Run the **download restart and checkpoint test (DL-01 / DL-02 subset)** below, not the previous suites. This update only changes host tests, a fixture and docs. Reuse the exact verified report-5 debug APK if already installed in the confirmed disposable `com.browser` slot; otherwise build `./gradlew :app:assembleDebug` with JDK 17/Platform 34 and verify package, hash and lab signer. Never replace an uncertain install; `-r` is only for a confirmed disposable same-signer install. Use only app-owned synthetic storage. Leave both old app IDs and their data untouched. No installation downgrade, clear-data, device settings changes, or release signing. **Keep Wi-Fi and the ADB link up**; this is deliberately not the connectivity/charging/schedule matrix.
 
