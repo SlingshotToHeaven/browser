@@ -1,80 +1,125 @@
 #!/usr/bin/env python3
-"""Two loopback origins for manual Android tests; logs presence, never cookie/header values."""
+"""Loopback-only HTTP download fixtures. Log decisions, not request URLs or header values."""
+from contextlib import contextmanager
+from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 import re
 from threading import Thread
-from urllib.parse import urlsplit
 
+HOST = "127.0.0.1"
 PRIMARY = 8001
 OTHER = 8002
 COOKIE = "scoped_download_fixture=synthetic"
 ETAG = '"step06-fixture"'
 BODY = b"row,message\n" + b"0,step 06 synthetic download\n" * 4096
+BLOB_PAGE = Path(__file__).with_name("blob_download.html").read_bytes()
 PAGE = b"""<!doctype html><meta charset=utf-8><title>Scoped download fixture</title>
 <h1>Scoped download fixture</h1>
-<p>Click a link in the normal or private tab being tested, then check the device and server output.</p>
+<p>In a disposable regular tab, long-press each CSV link and choose Download Link with Manager.
+Do not navigate to the links: regular WebView requests are not the native downloader.</p>
 <ul>
 <li><a href="/session/local.csv">Same-origin range download</a></li>
 <li><a href="/session/redirect.csv">Redirect to another port (different origin)</a></li>
+<li><a href="/session/round-trip.csv">Redirect to another origin and back</a></li>
+<li><a href="/blob_download.html">Blob download fixture</a></li>
 </ul>
 """
+CSV_PATHS = {(True, "/session/local.csv"), (False, "/session/foreign.csv"), (True, "/session/return.csv")}
+REDIRECTS = {
+    (True, "/session/redirect.csv"): (False, "/session/foreign.csv"),
+    (True, "/session/round-trip.csv"): (False, "/session/bounce.csv"),
+    (False, "/session/bounce.csv"): (True, "/session/return.csv"),
+}
 
 
 class Fixture(BaseHTTPRequestHandler):
     def handle_request(self):
-        port = self.server.server_port
-        path = urlsplit(self.path).path
-        referrer = self.headers.get("Referer")
-        cookie = COOKIE in self.headers.get("Cookie", "").split("; ")
-        ranged = self.headers.get("Range")
-        print(f"{port} {self.command} {path} fixture_cookie={cookie} "
-              f"referer_present={referrer is not None} origin_only={referrer == f'http://127.0.0.1:{PRIMARY}/'} "
-              f"range={ranged is not None} conditional={self.headers.get('If-Range') is not None}", flush=True)
-        if port == PRIMARY and path == "/start":
-            self.respond(200, PAGE, [("Content-Type", "text/html; charset=utf-8"),
-                                     ("Set-Cookie", COOKIE + "; Path=/session/; SameSite=Lax")])
-        elif port == PRIMARY and path == "/session/redirect.csv":
-            self.respond(302, b"", [("Location", f"http://127.0.0.1:{OTHER}/session/foreign.csv")])
-        elif (port, path) in {(PRIMARY, "/session/local.csv"), (OTHER, "/session/foreign.csv")}:
-            headers = [("Content-Type", "text/csv"), ("ETag", ETAG)]
-            if ranged and self.headers.get("If-Range", ETAG) == ETAG:
-                match = re.fullmatch(r"bytes=([0-9]+)-([0-9]+)", ranged)
-                if match:
-                    start, end = map(int, match.groups())
-                    if 0 <= start <= end < len(BODY):
-                        self.respond(206, BODY[start:end + 1], headers + [("Content-Range", f"bytes {start}-{end}/{len(BODY)}")])
-                        return
-                self.respond(416, b"", [("Content-Range", f"bytes */{len(BODY)}")])
-                return
-            self.respond(200, BODY, headers)
+        primary = self.server.server_port == self.server.primary_port
+        path = self.path.partition("?")[0]
+        route = (primary, path)
+        if route == (True, "/start"):
+            self.respond(path, 200, PAGE, [("Content-Type", "text/html; charset=utf-8"),
+                                           ("Set-Cookie", COOKIE + "; Path=/session/; SameSite=Lax")])
+        elif route == (True, "/blob_download.html"):
+            self.respond(path, 200, BLOB_PAGE, [("Content-Type", "text/html; charset=utf-8")])
+        elif route in REDIRECTS:
+            target_primary, target = REDIRECTS[route]
+            port = self.server.primary_port if target_primary else self.server.other_port
+            self.respond(path, 302, b"", [("Location", f"http://{HOST}:{port}{target}")])
+        elif route in CSV_PATHS:
+            self.csv_response(path)
         else:
-            self.respond(404, b"", [])
+            self.respond("unmatched", 404, b"", [])
 
     do_GET = handle_request
     do_HEAD = handle_request
 
-    def respond(self, status, body, headers):
+    def csv_response(self, path):
+        headers = [("Content-Type", "text/csv"), ("ETag", ETAG), ("Accept-Ranges", "bytes")]
+        ranged = self.headers.get("Range")
+        if ranged is not None and self.headers.get("If-Range", ETAG) == ETAG:
+            match = re.fullmatch(r"bytes=([0-9]{1,9})-([0-9]{1,9})", ranged)
+            if match:
+                start, end = map(int, match.groups())
+                if 0 <= start <= end < len(BODY):
+                    self.respond(path, 206, BODY[start:end + 1],
+                                 headers + [("Content-Range", f"bytes {start}-{end}/{len(BODY)}")])
+                    return
+            self.respond(path, 416, b"", headers + [("Content-Range", f"bytes */{len(BODY)}")])
+            return
+        self.respond(path, 200, BODY, headers)
+
+    def respond(self, route, status, body, headers):
+        cookies = self.headers.get_all("Cookie", [])
+        fixture_cookie = any(part.strip() == COOKIE for value in cookies for part in value.split(";"))
+        referers = self.headers.get_all("Referer", [])
+        origin_only = referers == [f"http://{HOST}:{self.server.primary_port}/"]
+        ranged = self.headers.get("Range")
+        print(f"{self.server.server_port} {self.command} {route} status={status} "
+              f"fixture_cookie={fixture_cookie} cookie_present={bool(cookies)} "
+              f"referer_present={bool(referers)} origin_only={origin_only} "
+              f"range={ranged is not None} probe={ranged == 'bytes=0-0'} "
+              f"conditional={self.headers.get('If-Range') is not None}", flush=True)
         self.send_response(status)
         for name, value in headers:
             self.send_header(name, value)
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if self.command != "HEAD":
             try:
                 self.wfile.write(body)
             except (BrokenPipeError, ConnectionResetError):
-                pass  # Expected when a metadata probe closes without reading the body.
+                pass  # A probe may close without reading the response body.
 
     def log_message(self, *_args):
         pass
 
 
-if __name__ == "__main__":
-    with ThreadingHTTPServer(("127.0.0.1", PRIMARY), Fixture) as primary, \
-            ThreadingHTTPServer(("127.0.0.1", OTHER), Fixture) as other:
-        Thread(target=other.serve_forever, daemon=True).start()
-        print(f"Fixture: http://127.0.0.1:{PRIMARY}/start?query=not-a-referer", flush=True)
+@contextmanager
+def loopback_servers(primary_port=PRIMARY, other_port=OTHER):
+    with ThreadingHTTPServer((HOST, primary_port), Fixture) as primary, \
+            ThreadingHTTPServer((HOST, other_port), Fixture) as other:
+        primary.primary_port = other.primary_port = primary.server_port
+        primary.other_port = other.other_port = other.server_port
+        yield primary, other
+
+
+def main():
+    with loopback_servers() as (primary, other):
+        thread = Thread(target=other.serve_forever, daemon=True)
+        thread.start()
+        print(f"Fixture: http://{HOST}:{PRIMARY}/start?query=not-a-referer", flush=True)
+        print(f"Expected CSV: {len(BODY)} bytes, SHA-256 {sha256(BODY).hexdigest()}", flush=True)
         try:
             primary.serve_forever()
         except KeyboardInterrupt:
+            pass
+        finally:
             other.shutdown()
+            thread.join()
+
+
+if __name__ == "__main__":
+    main()

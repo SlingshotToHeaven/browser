@@ -14,7 +14,8 @@
     </select>
 </label>
 <p><a id="download" download="blob-fixture.bin">Request download (262,147 bytes)</a></p>
-<output id="status">Downloader fetches: 0</output>
+<p><output id="status">Downloader fetches: 0</output></p>
+<p><output id="chunks">Synthetic stream chunks supplied: 0</output></p>
 <script>
 (() => {
     const bytes = new Uint8Array(262147).fill(0xa5);
@@ -22,11 +23,14 @@
     document.querySelector('#download').href = url;
     const nativeFetch = window.fetch.bind(window);
     const status = document.querySelector('#status');
+    const chunkStatus = document.querySelector('#chunks');
     let requests = 0;
     window.fetch = (input, options) => {
         if (input !== url) return nativeFetch(input, options);
         const mode = document.querySelector('#mode').value;
         status.textContent = `Downloader fetches: ${++requests}`;
+        let chunks = 0;
+        chunkStatus.textContent = 'Synthetic stream chunks supplied: 0';
         if (mode === 'normal') return nativeFetch(input, options);
         const end = bytes.length - (mode === 'short' ? 1 : 0);
         let offset = 0;
@@ -46,6 +50,7 @@
                     const next = Math.min(offset + 65536, end);
                     controller.enqueue(bytes.subarray(offset, next));
                     offset = next;
+                    chunkStatus.textContent = `Synthetic stream chunks supplied: ${++chunks}`;
                 }
             },
         }, {highWaterMark: 0});

@@ -2,6 +2,53 @@
 
 Use the source supplied for each retest and record its identity. Follow the [isolated testing rules](antigravity-device-test.md#1-keep-the-installed-app-and-the-mac-safe): test only the disposable `com.browser` / `com.browser.test` pair, with synthetic data and an explicitly selected device. Keep the old browser and its data untouched. This is a retest, not a release or a GitHub operation.
 
+## Latest manual report: settled restart and debug playback
+
+Report 4 identifies handoff commit `80d96c80f2cc2339ed601e410bf613ea85eb90d4` (source ZIP SHA-256 `690f5246724d6bdf861639df6e801056f216b830370e8be34afcfde3e33e2291`). It reused the verified report-3 debug APK, SHA-256 `cd8c9b95c6eee6c1e4f9844bf988c925ac3b68c28961894c21372605043acb6c`, on the Galaxy S21 FE, API 36, ARM64, **4 KiB** pages and WebView `137.0.7151.115`. The original browser was reported untouched.
+
+| Check | Reported evidence | Still open or not implied |
+| --- | --- | --- |
+| WV-01 / PERF-01-R settled restart | After 3 s selected and 6 s background, relaunch restored two tabs and selected step **1** before reload; Forward to 2 and Back to 1 worked. The dummy login still responded **Signed in** after reload. | This run did not test interruption during publication, corrupt snapshot fallback or installed upgrade. The launch time is not a paired performance result. |
+| DL-06 debug ARM64 | MPEG-TS and ranged fMP4 (HTTP 206) produced 54,043- and 53,843-byte MP4s with H.264/AAC. Both played moving video and tone on the phone. Missing audio failed with no completed row or output. | Not direct companion A/V, encryption/interruption coverage, a minified runtime test or 16 KiB hardware evidence. |
+| DL-04 actual delivery | Open from `DownloadsActivity` played both files. An offline receiver read enough to archive both selected files with their expected sizes. Single Share reached a recipient's save dialog. | The single-file report does not show a completed read or checksum, and Open from the other surface wasn't shown. Outputs were in shared Downloads, so these observations don't prove URI-only access. The separate-UID grant/revoke fixture remains distinct evidence. |
+
+## Next device run
+
+Focus on **DL-03 and DL-05** below, plus the optional single-file Share check. This update changes only host tests, fixtures and docs; the app build is unchanged. Extract the pinned ZIP into a new folder. Reuse the exact verified report-4 `com.browser` debug APK if it is already the confirmed disposable install. If you need a new build, use `./gradlew :app:assembleDebug` with JDK 17/Platform 34 and check the debug ID, digest and expected lab signer. Use `-r` only over the confirmed disposable `com.browser` with the same lab signer; stop on a mismatch or uncertain install. Do not rebuild baselines, sign a release or rerun the green suites for this pass.
+
+- Use a confirmed synthetic test profile and dedicated **app-owned** fixture destination, with fresh distinct filenames for every case. Do not use the shared Downloads root, delete any preexisting files, grant broad storage permissions or change system settings. If the test destination or approved offline receiver is unavailable, report the dependent check as **Blocked**. Do not touch either old app ID.
+- On the Mac, start `python3 -B tests/fixtures/scoped_downloads.py` in a separate terminal. It serves only fixed pages and synthetic files on loopback. Use `adb -s "$serial"` for every device command, verify the authorized device and unused ports, and check `adb -s "$serial" reverse --list` before adding `adb -s "$serial" reverse --no-rebind tcp:8001 tcp:8001` and the same mapping for `tcp:8002`. Record the fixture's log lines for each case separately. Don't replace other mappings or expose the server to the LAN.
+
+### A. Native download header scope (DL-03 subset)
+
+On a regular test tab load `http://127.0.0.1:8001/start?query=not-a-referer` and let it commit. The response sets a dummy cookie only for `/session/`, not for the initiating `/start` page. **Long-press** each CSV link and use **Download Link with Manager**, then confirm one job at a time. Don't click to navigate to the files: ordinary WebView navigation is not the native download, and cookies are not port-scoped in the WebView jar.
+
+| Case | Expected native log |
+| --- | --- |
+| Same-origin link | On 8001, the probe and body request both have `fixture_cookie=True`, `cookie_present=True`, `referer_present=True`, `origin_only=True`. |
+| Foreign redirect | The job's initial 8001 probe has the authorized headers as in the positive control; 8002 must have **both** `cookie_present=False` and `referer_present=False`, including the body request. |
+| Round-trip redirect | The initial 8001 probe is scoped as above. After 8001 → 8002 → 8001, both `/session/bounce.csv` and `/session/return.csv` stay anonymous (`cookie_present=False`, `referer_present=False`), including the body request to the returned path. |
+| Unbound Add Download | In Downloads, use **Add Download** (the add button) and enter `http://127.0.0.1:8001/session/redirect.csv`, not the address bar or an opened browser link. Both origins must stay anonymous. |
+
+For the confirmed job the 1-byte probe is `GET ... probe=True conditional=False`; look separately for the actual range with `probe=False conditional=True` (`If-Range`) and HTTP 206. HEAD or the one-byte probe alone is not evidence about the body. Verify each completed CSV is **118,796 bytes**, SHA-256 `14474f4a1a4ba155fd15dd82d2ec168c219e85094a4e2f87e72b806179cf92ba`. Missing or ambiguous requests are incomplete evidence, not a pass. Do not include cookie values, full referrers, or other browsing traffic in the report.
+
+### B. Real WebView blob intake (DL-05 subset)
+
+On a regular test tab with scripts allowed, open `http://127.0.0.1:8001/blob_download.html`. Use a fresh page load and filename for each case. The page counters indicate fetch and synthetic chunk activity, not durable storage. If the WebView lacks supported origin-aware messaging, record the app's refusal and the unsupported case; don't enable a fallback.
+
+1. **Dismiss**: with Normal selected, tap the link, wait for the prompt, then dismiss. `Downloader fetches` must stay **0**, with no new row or fixture file.
+2. **Confirm Normal**: verify one fetch and one completed file with **262,147 bytes**, SHA-256 `3906393794f65f3ce67995cc639367320caa7f1c8554e6f7f6603948e1fb3bbf`. Measure the exact synthetic file, not the rounded UI size.
+3. **One byte short**: confirm, then wait for the job to fail. The fixture declares 262,147 bytes but emits 262,146. Expect no completed row or published file; check after the job drains.
+4. **First chunk, then stall → reload**: confirm, wait for **Synthetic stream chunks supplied: 1** while the job is active, then reload the *source* tab at the same address before the idle timeout. Record that the first chunk was observed before reload. The old job must not complete/publish, and the new document must not fetch or take over the old job. An idle timeout before reload is a different result. Do not reuse the old source via Retry.
+
+### Optional: finish the single-file Share evidence
+
+If an already installed, approved offline receiver can safely save or independently read a test file, share one verified CSV or blob from the app-owned test destination through **Share File**. Complete the read into a new test-only location and verify the received bytes or SHA-256 match the source. Record the chooser delivery and completed read separately. A prefilled save dialog is not a read. Otherwise mark this check **Blocked**; do not install a receiver, choose an upload destination or edit its unrelated data.
+
+For hashes, read only the exact synthetic output in the confirmed test folder (for example, `adb -s "$serial" exec-out run-as com.browser cat "$fixture_path"` into a fresh Mac scratch file with a simple, known fixture path). Check the read succeeds and use `wc -c` and `shasum -a 256` on that copy. If you cannot verify the exact file safely, report incomplete evidence rather than using a rounded UI size or changing permissions.
+
+Return `out/android-test-report-5.md` with source ZIP and APK digests, app ID and public lab signer fingerprint, device/API/ABI/page size/WebView, one outcome per case, sanitized fixture log lines distinguishing probe and body, and exact file sizes/hashes or expected-vs-actual failure evidence. For blob failures include the counter before the action and whether a row or file remained after drain. Mark blocked/unrun cases explicitly. Stop the host fixture and remove only the reverses and test outputs you created, never other data. Full retry/queue/timeout/migration checks, paired performance and signed release still need separate evidence.
+
 ## Latest retest: the three targeted checks passed
 
 Report 3 identifies tested commit `006a0cf9830f1e3998615e2bebf50ce8de3e2ef3`, source ZIP SHA-256 `a5ce0a0bad59855d9616d85b7516d8949018d8d5c09fe49da31e9a74fcd40685`, JDK 17 and Platform 34. The reported phone was a Galaxy S21 FE, Android 16/API 36, ARM64 with **4 KiB** pages and WebView `137.0.7151.115`. The original installed app was reported untouched.
@@ -16,11 +63,11 @@ Report 3 identifies tested commit `006a0cf9830f1e3998615e2bebf50ce8de3e2ef3`, so
 - Tested instrumentation APK SHA-256: `63c1e37d32f62898a4be74e271f1fd7e0982daa136d2ddd637bd2b9f9cefc481`.
 - Inspected unsigned APK SHA-256: `ebf0e78e9fb18f534cd5471055bb12f7f201a45859b487c72655bab8a327b34a` (unchanged from report 2).
 
-The current handoff update changes documentation only. The earlier targeted rerun steps are kept below for reproductions; don't treat them as failures to rerun by default.
+The earlier targeted rerun steps are kept below for reproductions; don't treat them as failures to rerun by default.
 
-## Next device run
+## Previous manual run: settled restart and playback
 
-Run this small **debug-only** pass on the authorized phone before proceeding to the full checklist or paired performance runs. It exercises real app restart and actual delivery/playback, separately from the now-passing instrumentation. Don't rebuild baselines, sign/release, or rerun all suites for this pass.
+These were the instructions for report 4. Keep them for reproducing those cases; do not repeat the full run by default.
 
 - Extract the supplied pinned ZIP to a fresh folder. Record its commit and SHA-256, plus the ID, digest and public lab signer fingerprint of the debug APK actually used. If the exact verified report-3 debug APK is already installed in the confirmed disposable test slot, reuse it and record that. Otherwise build `./gradlew :app:assembleDebug` with JDK 17/Platform 34, or use the verified matching APK. Before installing, verify `com.browser` (**Browser (Test)**, debuggable) and the expected lab signer; use `-r` only with the same signer and confirmed disposable install. Stop on a mismatch; no uninstall, clear-data, or forced downgrade.
 - Confirm the test slot contains only synthetic data; leave the original app and its data untouched. Use `adb -s "$serial"` for every device command. Check host ports and `adb -s "$serial" reverse --list` before adding a reverse; don't replace or remove unrelated mappings. Don't change system settings or install a receiver just to pass a test. If a manual action/observation is unavailable, ask the operator or report **Blocked**.

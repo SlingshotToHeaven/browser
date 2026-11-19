@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { setImmediate } from 'node:timers/promises';
 import vm from 'node:vm';
@@ -136,5 +137,73 @@ test('bad origins, oversized streams and short declared streams never send an en
         assert.equal(tab.frames.at(-1), 'attempt-1:error');
         assert.ok(tab.frames.every(frame => !frame.startsWith('attempt-1:end:')));
         assert.equal(tab.releases, 1);
+    }
+});
+
+const fixtureScript = readFileSync(new URL('fixtures/blob_download.html', import.meta.url), 'utf8')
+    .match(/<script>([\s\S]*?)<\/script>/)[1];
+
+function deviceFixture(mode) {
+    const elements = new Map([
+        ['#mode', { value: mode }], ['#download', {}],
+        ['#status', { textContent: 'Downloader fetches: 0' }],
+        ['#chunks', { textContent: 'Synthetic stream chunks supplied: 0' }],
+    ]);
+    const window = { fetch };
+    vm.runInNewContext(fixtureScript, {
+        window, document: { querySelector: selector => elements.get(selector) },
+        URL, Blob, Response, ReadableStream,
+    });
+    const href = elements.get('#download').href;
+    const abort = new AbortController();
+    return {
+        fetch: () => window.fetch(href, { signal: abort.signal }),
+        abort: () => abort.abort(),
+        status: selector => elements.get(selector).textContent,
+        close: () => URL.revokeObjectURL(href),
+    };
+}
+
+test('device fixture yields the known blob and an exactly one byte short response', async () => {
+    for (const mode of ['normal', 'short']) {
+        const fixture = deviceFixture(mode);
+        try {
+            assert.equal(fixture.status('#status'), 'Downloader fetches: 0');
+            const response = await fixture.fetch();
+            assert.equal(fixture.status('#status'), 'Downloader fetches: 1');
+            assert.equal(response.headers.get('Content-Length'), '262147');
+            const bytes = Buffer.from(await response.arrayBuffer());
+            if (mode === 'normal') {
+                assert.equal(bytes.length, 262147);
+                assert.equal(createHash('sha256').update(bytes).digest('hex'),
+                    '3906393794f65f3ce67995cc639367320caa7f1c8554e6f7f6603948e1fb3bbf');
+            } else {
+                assert.equal(bytes.length, 262146);
+                assert.equal(fixture.status('#chunks'), 'Synthetic stream chunks supplied: 5');
+            }
+        } finally {
+            fixture.close();
+        }
+    }
+});
+
+test('device fixture signals the first stalled chunk before the abort', { timeout: 3000 }, async () => {
+    const fixture = deviceFixture('stall');
+    try {
+        const response = await fixture.fetch();
+        const reader = response.body.getReader();
+        assert.equal(fixture.status('#chunks'), 'Synthetic stream chunks supplied: 0');
+        const first = await reader.read();
+        assert.equal(first.done, false);
+        assert.equal(first.value.byteLength, 65536);
+        assert.equal(fixture.status('#chunks'), 'Synthetic stream chunks supplied: 1');
+        const rejected = assert.rejects(reader.read(), /Fixture aborted/);
+        await setImmediate();
+        fixture.abort();
+        await rejected;
+        assert.equal(fixture.status('#chunks'), 'Synthetic stream chunks supplied: 1');
+        reader.releaseLock();
+    } finally {
+        fixture.close();
     }
 });
