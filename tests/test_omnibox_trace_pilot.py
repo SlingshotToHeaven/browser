@@ -157,7 +157,8 @@ class TracePilotSqlTest(unittest.TestCase):
         self.assertEqual(0, self.diagnostics()[("config", "embedded_config_rows", None)])
         self.db.executescript("""
             INSERT INTO metadata VALUES ('trace_config_pbtxt', 'do not return arbitrary config text'),
-                ('trace_config_pbtxt', NULL), ('trace_config_pbtxt', ''), ('other_metadata', 'unrelated');
+                ('trace_config_pbtxt', NULL), ('trace_config_pbtxt', ''), ('other_metadata', 'unrelated'),
+                ('unique_session_name', 'unrelated session');
             INSERT INTO stats VALUES
                 ('traced_buf_buffer_size', 0, 'info', 16777216),
                 ('traced_buf_buffer_size', 1, 'info', 4194304),
@@ -171,6 +172,7 @@ class TracePilotSqlTest(unittest.TestCase):
         self.assertEqual(0, self.summary()["nonzero_data_loss_counters"])
         found = self.diagnostics()
         self.assertEqual(1, found[("config", "embedded_config_rows", None)])
+        self.assertEqual(0, found[("config", "retry_session_matches", None)])
         self.assertEqual(5, found[("stat", "traced_buf_chunks_overwritten", 0)])
         self.assertEqual(0, found[("stat", "traced_buf_chunks_discarded", 1)])
         self.assertEqual(2, found[("stat", "ftrace_cpu_overrun_delta", 3)])
@@ -179,6 +181,37 @@ class TracePilotSqlTest(unittest.TestCase):
         self.assertNotIn(("stat", "traced_buf_chunks_discarded", 0), found)
         self.assertNotIn(("stat", "unselected_zero", None), found)
         self.assertNotIn("arbitrary", repr(found))
+        self.db.execute("UPDATE metadata SET str_value = ? WHERE name = 'unique_session_name'",
+                        ("browser-omnibox-readiness-retry",))
+        self.assertEqual(1, self.diagnostics()[("config", "retry_session_matches", None)])
+
+
+class TraceSetupSqlTest(unittest.TestCase):
+    def test_counts_setup_categories_without_returning_message_text(self):
+        with closing(sqlite3.connect(":memory:")) as db:
+            db.executescript("""
+                CREATE TABLE __intrinsic_stats (name TEXT, key INTEGER);
+                CREATE TABLE __intrinsic_trace_import_logs (stat_key INTEGER, arg_set_id INTEGER);
+                CREATE TABLE args (arg_set_id INTEGER, key TEXT, string_value TEXT);
+                INSERT INTO __intrinsic_stats VALUES ('ftrace_setup_errors', 7), ('another_stat', 16);
+                INSERT INTO __intrinsic_trace_import_logs VALUES
+                    (7, 1), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (7, 7), (7, NULL), (16, 8);
+                INSERT INTO args VALUES
+                    (1, 'message', 'Ftrace event failed: ftrace/print'),
+                    (2, 'message', 'Ftrace event unknown: ftrace/print'),
+                    (3, 'message', 'Ftrace event failed: synthetic unrelated name'),
+                    (4, 'message', 'Ftrace event unknown: synthetic unrelated name'),
+                    (5, 'message', 'Atrace failures: synthetic app text'),
+                    (6, 'message', 'Ftrace exclusive feature error: synthetic detail'),
+                    (7, 'message', 'synthetic unrecognized notice'),
+                    (7, 'some_key', 'Ftrace event failed: ftrace/print'),
+                    (8, 'message', 'Atrace failures: irrelevant stat');
+            """)
+            query = (Path(__file__).parent / "fixtures/omnibox_trace_setup.sql").read_text()
+            self.assertEqual([
+                ("atrace_failure", 1), ("ftrace_event_failed", 1), ("ftrace_event_unknown", 1),
+                ("ftrace_exclusive_feature", 1), ("ftrace_print_setup", 2), ("other_or_missing_detail", 2),
+            ], db.execute(query).fetchall())
 
 
 if __name__ == "__main__":

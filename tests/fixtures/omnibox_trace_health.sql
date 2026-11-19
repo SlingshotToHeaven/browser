@@ -13,6 +13,8 @@ WITH slice_labels(name, pattern) AS (
 ), observations(section, name, idx, value) AS (
   SELECT 'config', 'embedded_config_rows', NULL, count(*) FROM metadata
     WHERE name = 'trace_config_pbtxt' AND length(str_value) > 0
+  UNION ALL SELECT 'config', 'retry_session_matches', NULL, count(*) FROM metadata
+    WHERE name = 'unique_session_name' AND str_value = 'browser-omnibox-readiness-retry'
   UNION ALL SELECT 'process', 'process_rows', NULL, count(*) FROM process
   UNION ALL SELECT 'process', 'named_processes', NULL, count(*) FROM process WHERE length(name) > 0
   UNION ALL SELECT 'process', 'processes_with_cmdline', NULL, count(*) FROM process WHERE length(cmdline) > 0

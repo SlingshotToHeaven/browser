@@ -2,6 +2,24 @@
 
 Use the source supplied for each retest and record its identity. Follow the [isolated testing rules](antigravity-device-test.md#1-keep-the-installed-app-and-the-mac-safe): test only the disposable `com.browser` / `com.browser.test` pair, with synthetic data and an explicitly selected device. Keep the old browser and its data untouched. This is a retest, not a release or a GitHub operation.
 
+## Report 9: ring buffer overwrite confirmed
+
+The lab analyzed the two unchanged report-8 traces offline using `0660b84187c5804882291a952c9ad4db0de93a2d` (ZIP SHA-256 `ab1efbd6d6acb2d9715dec0b23139659cf3ecef71df7bd19809824049b830aeb`) and local Trace Processor `v59.1-1e9c61e98`. There was **no device access, rebuild or install**. No raw traces or APKs were supplied here.
+
+| Scoped check | Reported evidence | Interpretation |
+| --- | --- | --- |
+| Input reconciliation | Both trace sizes and hashes matched the report-8 record. Each embedded config and the retained submitted config matched the pinned 20 s, one 16 MiB ring, `input` / `view` / `gfx` and `com.browser`; all sources targeted buffer 0. | The reported 64 MiB / `sched` description was a prose error, not evidence of a different executed config. |
+| Service-buffer loss | Buffer 0: **30,142,464 B** overwritten (1,045 chunks) on hit; **30,633,984 B** (1,060 chunks) on miss. Both wrapped twice. Service-level `traced_chunks_discarded` was 0 / 1, distinct from the per-buffer count. | The captures are incomplete: about **28.75 / 29.21 MiB** overwritten, respectively. Zero strict `data_loss`-severity counts do not contradict these [informational stats](https://github.com/google/perfetto/blob/v59.1/src/trace_processor/storage/stats.h). Bytes and wraps do not establish a lost time interval or which specific events were lost. |
+| Remaining signals | 386,824 / 387,923 raw ftrace print rows and 1,697 / 1,713 actual FrameTimeline rows (hit / miss). All target dispatch/app slice counts were zero even without the process filter, and neither process inventory had names/command lines. Strict app/frame joins remained empty. | Missing parsed slices, not just a failed process join. Raw prints and the `com.browser` layer label don't establish app dispatch, attribution, or presentation. |
+| Setup | `ftrace_setup_errors` was **37** in each trace; specific notice categories were not supplied. Stderr had the no-PTY warning, not a fatal error. | Unknown whether any notice affected a required producer. No Android 16 permission restriction, particular missing property, or app regression established. |
+| Build inputs and artifacts | The retained helper reported 29 restored hashes. All pins rechecked (step17 **2**, step18 **15**, step19 **12**); the two existing APKs matched the report-8 hashes and sizes. | Reconciles the manifest split and retained APK identities. Not an independent SDK build, installation or paired device result. |
+
+Independently verified here: the pinned ZIP, original config hash and fields, and 29 pins in freshly prepared source trees. The measured loss, setup stats, and artifact rehashes above are from the lab. **Trace readiness was not demonstrated**; the first required signal gap is an attributed input/edit, with no parsed dispatch or omnibox slices even before attribution. PERF-07 remains open.
+
+## Next device run
+
+**Pending explicit owner approval:** [one 8-second trace-readiness retry](omnibox-trace-retry.md) on the same authorized phone and retained verified disposable `com.browser` APK. Use only the pinned split-buffer config and one synthetic hit. No phone access without that approval; if blocked, report the exact missing prerequisite. The optional setup-category query can run offline on retained traces. No privilege, settings or APK changes, repeated captures, baseline rebuilds, seeding, paired timings, or repeats of reports 4–9. Return only `out/android-test-report-10.md`; keep raw artifacts local.
+
 ## Report 8: hit/miss and baseline preflight, trace attribution unresolved
 
 Report 8 used `9b79117a0c0170378c117db2e52c0d6ffd3aa8de` (ZIP SHA-256 `4996faa1278f527e64c497a8059d7a4858537068cd59698fe98c0246ce9d4d68`) and reused the same `com.browser` debug APK, SHA-256 `cd8c9b95c6eee6c1e4f9844bf988c925ac3b68c28961894c21372605043acb6c`. The lab reported the Galaxy S21 FE, API 36, ARM64, **4 KiB**, WebView `137.0.7151.115`.
@@ -21,11 +39,7 @@ Recorded artifact identities (**reported**, no raw traces/APKs supplied):
 | Step 17 debug APK | 9,940,744 | `4b80994b3f4db17b47e4e6c9094fe121f7acba753101e15e60b197971ab97faf` |
 | Step 18 debug APK | 9,957,128 | `57637b6da4361172fb62abf79638b89964fe6aaec1a17ad8e0b9701d84be5517` |
 
-The source ZIP and all restored-file pins were checked independently. The report describes a **64 MiB** buffer and `sched`; the ZIP config has a single **16 MiB** ring buffer with `input`, `view`, `gfx`. Until the trace's embedded config and explicit overwrite/discard counters are checked, treat this as a configuration/evidence gap, not an Android 16 restriction or app regression. Zero `data_loss`-severity rows alone does not resolve it. The lab reported removing the extra tab, one synthetic history entry, and the reverse, with the old browser and settings untouched. PERF-07 is still open.
-
-## Next device run
-
-**No phone run is requested for report 9.** Use the [Mac-only trace follow-up](omnibox-trace-diagnostics.md) to check the two existing traces, their embedded config, parsed source counts and loss/setup counters. Reconcile the retained baseline helper logs, source pins and APK hashes if available. Return only `out/android-test-report-9.md`; keep the raw traces local. If an artifact is missing, name it and stop that check. No ADB, new capture, rebuild, install, reseed, benchmark, settings changes, or repeats of reports 4–8. Decide separately whether a narrowly scoped recapture is warranted and authorized after reviewing the evidence.
+The source ZIP and restored-file pins were checked independently. The report initially described a **64 MiB** buffer and `sched`; report 9 reconciled the embedded config and the original submitted file to the pinned **16 MiB** ring with `input`, `view`, `gfx`, and found overwrite. The lab reported removing the extra tab, one synthetic history entry, and the reverse, with the old browser and settings untouched. PERF-07 is still open.
 
 ## Report 7: changed HTTP file and late destination collision
 

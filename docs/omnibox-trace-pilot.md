@@ -1,6 +1,6 @@
 # Address-bar trace pilot (PERF-07 readiness)
 
-This is the report-8 protocol. For the next handoff use the [offline diagnostics](omnibox-trace-diagnostics.md) rather than repeating these captures.
+This is the historical report-8 protocol. [Report 9](android-test-followup.md#report-9-ring-buffer-overwrite-confirmed) found substantial overwrite with this config. Do not repeat these captures; see the [retry protocol](omnibox-trace-retry.md), which requires explicit owner approval.
 
 This is a **capture check on the installed candidate**, not the paired performance run. It checks whether we can explain one real edit end to end: the visible hit or miss, the app's input/worker slices, and usable SurfaceFlinger FrameTimeline data. It uses one synthetic visit, not the 1k/50k seed. Do not run the [paired-run reseeding instructions](../README.md#device-procedure-perf-07) on the existing profile.
 

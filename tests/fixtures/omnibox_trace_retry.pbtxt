@@ -1,0 +1,30 @@
+# Report 10: one authorized synthetic hit, not a performance trial.
+# Separate DISCARD buffers protect earlier packets from being overwritten;
+# check the loss/discard counters rather than assuming these sizes are sufficient.
+unique_session_name: "browser-omnibox-readiness-retry"
+duration_ms: 8000
+buffers { size_kb: 32768 fill_policy: DISCARD }  # 0: ftrace / ATrace
+buffers { size_kb: 4096 fill_policy: DISCARD }   # 1: process and thread names
+buffers { size_kb: 8192 fill_policy: DISCARD }   # 2: FrameTimeline
+data_sources {
+  config {
+    name: "linux.ftrace"
+    target_buffer: 0
+    ftrace_config {
+      atrace_categories: "input"
+      atrace_categories: "view"
+      atrace_apps: "com.browser"
+    }
+  }
+}
+data_sources {
+  config {
+    name: "linux.process_stats"
+    target_buffer: 1
+    process_stats_config {
+      scan_all_processes_on_start: true
+      record_thread_names: true
+    }
+  }
+}
+data_sources { config { name: "android.surfaceflinger.frametimeline" target_buffer: 2 } }
