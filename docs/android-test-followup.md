@@ -2,6 +2,31 @@
 
 Use the source supplied for each retest and record its identity. Follow the [isolated testing rules](antigravity-device-test.md#1-keep-the-installed-app-and-the-mac-safe): test only the disposable `com.browser` / `com.browser.test` pair, with synthetic data and an explicitly selected device. Keep the old browser and its data untouched. This is a retest, not a release or a GitHub operation.
 
+## Report 8: hit/miss and baseline preflight, trace attribution unresolved
+
+Report 8 used `9b79117a0c0170378c117db2e52c0d6ffd3aa8de` (ZIP SHA-256 `4996faa1278f527e64c497a8059d7a4858537068cd59698fe98c0246ce9d4d68`) and reused the same `com.browser` debug APK, SHA-256 `cd8c9b95c6eee6c1e4f9844bf988c925ac3b68c28961894c21372605043acb6c`. The lab reported the Galaxy S21 FE, API 36, ARM64, **4 KiB**, WebView `137.0.7151.115`.
+
+| Scoped item | Reported evidence | Interpretation |
+| --- | --- | --- |
+| Synthetic address-bar behavior | The committed loopback visit matched `perf18tracehit`; `perf18tracehitx` showed the current fallback and no stale history row. Neither search was submitted. | A hit/miss sanity check, not the 1k/50k comparison. |
+| Capture and analysis | Both commands exited zero and produced parseable traces; `trace_processor_shell` `v59.1-1e9c61e98` ran the SQL. Overall FrameTimeline rows were present (1,697 hit / 1,713 miss). Process names and unfiltered input/omnibox sections were reported absent; all attributed counts were zero. | Trace transport and query execution passed. **Capture readiness is inconclusive.** No proof that permissions caused the missing signals or that no events were lost. |
+| Baseline preparation and SDK build | The lab reported `:app:assembleDebug` on step17 and step18 with JDK 17 / Platform 34 / Build Tools 34.0.0. Both were debuggable `com.browser` versionCode 1 with the same lab signer. Neither was installed. | Builds are reported, not reproduced here. The pinned manifest verifies 29 restored files across **step19 (12), step18 (15), step17 (2)**, not the per-tree split in the report. |
+
+Recorded artifact identities (**reported**, no raw traces/APKs supplied):
+
+| Artifact | Size (bytes) | SHA-256 |
+| --- | ---: | --- |
+| `hit.pftrace` | 16,709,721 | `bc1f93b3780279bd8c216c2cd15ac4d6d06686609f5caad23950ceaa2eccef15` |
+| `miss.pftrace` | 16,747,481 | `d85f4f005e3ffe44579f849f06f69eb895adcb525035edbe3d1660070259731b` |
+| Step 17 debug APK | 9,940,744 | `4b80994b3f4db17b47e4e6c9094fe121f7acba753101e15e60b197971ab97faf` |
+| Step 18 debug APK | 9,957,128 | `57637b6da4361172fb62abf79638b89964fe6aaec1a17ad8e0b9701d84be5517` |
+
+The source ZIP and all restored-file pins were checked independently. The report describes a **64 MiB** buffer and `sched`; the ZIP config has a single **16 MiB** ring buffer with `input`, `view`, `gfx`. Until the trace's embedded config and explicit overwrite/discard counters are checked, treat this as a configuration/evidence gap, not an Android 16 restriction or app regression. Zero `data_loss`-severity rows alone does not resolve it. The lab reported removing the extra tab, one synthetic history entry, and the reverse, with the old browser and settings untouched. PERF-07 is still open.
+
+## Next device run
+
+**No phone run is requested for report 9.** Use the [Mac-only trace follow-up](omnibox-trace-diagnostics.md) to check the two existing traces, their embedded config, parsed source counts and loss/setup counters. Reconcile the retained baseline helper logs, source pins and APK hashes if available. Return only `out/android-test-report-9.md`; keep the raw traces local. If an artifact is missing, name it and stop that check. No ADB, new capture, rebuild, install, reseed, benchmark, settings changes, or repeats of reports 4–8. Decide separately whether a narrowly scoped recapture is warranted and authorized after reviewing the evidence.
+
 ## Report 7: changed HTTP file and late destination collision
 
 Report 7 used `fbd0aa7e3556f1355ea62e8e92c0b46c5ad421b0` (ZIP SHA-256 `582e787c628e5b7ff435cbf22637293aa7ab219c846d05c8868130786783d4d5`) and the same `com.browser` debug APK, SHA-256 `cd8c9b95c6eee6c1e4f9844bf988c925ac3b68c28961894c21372605043acb6c`. Galaxy S21 FE, API 36, ARM64, **4 KiB**, WebView `137.0.7151.115`. Storage was app-owned. The lab reported eight passing observations across two cases:
@@ -12,10 +37,6 @@ Report 7 used `fbd0aa7e3556f1355ea62e8e92c0b46c5ad421b0` (ZIP SHA-256 `582e787c6
 | DL-01 late collision | A vacant reserved name was populated with a **26-byte** synthetic file after the conditional 206 body started. After it finished, the app reported that the destination already existed, with no completed row or alternative output. The marker retained its exact size and SHA-256 `45508a98fac27025251c3ca1a1169a1cf31db697cfbdac5171cdf36ac892f315`. | One app-owned external volume. Not a cut during link/copy/DB commit, or occupied-name reconciliation after process death. The host byte count isn't proof of publication. |
 
 The source ZIP and fixture expectations were independently rechecked; the device, APK and output measurements are from the lab report. The lab reported removing only its outputs and reverse, retaining the two `.part` files, and leaving existing app data and the old browser intact. No app fix is indicated by these cases.
-
-## Next device run
-
-Move to the [**address-bar trace pilot and matched build preflight**](omnibox-trace-pilot.md) for report 8. Reuse the verified disposable report-7 debug APK; only host tooling and docs changed. Capture one synthetic hit and one miss to check app input, worker and FrameTimeline signals. Prepare the `step17` and `step18` matched APKs on the Mac **without installing them**. No paired timings, seeding/replacing databases, clearing data, switching APKs, device settings changes, or repeating download reports 4–7. Keep the raw traces local and return `out/android-test-report-8.md` with sanitized findings; name the exact missing signal/tool if blocked. This does not close PERF-07, the remaining download/upgrade matrix, or release gates.
 
 ## Report 6: saved download checkpoints after relaunch
 
