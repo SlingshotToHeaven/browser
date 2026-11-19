@@ -14,6 +14,7 @@ BADGING = """package: name='com.browser' versionCode='4' versionName='1.0.1'
 sdkVersion:'26'
 targetSdkVersion:'34'
 """
+MODERN_BADGING = BADGING.replace("\nsdkVersion:", "\nminSdkVersion:")
 CERT = "1a" * 32  # synthetic public fingerprint, not signing material
 SIGNATURE = f"""Verifies
 Verified using v1 scheme (JAR signing): false
@@ -84,6 +85,19 @@ class ReleaseArtifactTest(unittest.TestCase):
             with self.subTest(message=message), self.assertRaisesRegex(verifier.FailedCheck, message):
                 verifier.manifest_summary(badging, minimum)
 
+    def test_both_minimum_sdk_spellings_must_report_exactly_26(self):
+        for badging in (BADGING, MODERN_BADGING, MODERN_BADGING + "sdkVersion:'26'\n"):
+            with self.subTest(badging=badging):
+                self.assertEqual(("4", "34"), verifier.manifest_summary(badging, 34))
+
+        for badging in (BADGING.replace("sdkVersion:'26'\n", ""),
+                        BADGING.replace("sdkVersion:'26'", "sdkVersion:'25'"),
+                        MODERN_BADGING.replace("minSdkVersion:'26'", "minSdkVersion:'27'"),
+                        BADGING + "minSdkVersion:'27'\n",
+                        MODERN_BADGING + "sdkVersion:'unknown'\n"):
+            with self.subTest(badging=badging), self.assertRaisesRegex(verifier.FailedCheck, "expected minSdkVersion 26"):
+                verifier.manifest_summary(badging, 34)
+
     def test_pins_expected_signer_and_requires_v2_or_later(self):
         self.assertIsNone(verifier.check_signature(SIGNATURE, CERT))
         self.assertEqual(CERT, verifier.fingerprint(":".join(["1A"] * 32)))
@@ -104,7 +118,7 @@ class ReleaseArtifactTest(unittest.TestCase):
 
             def fake_tool(directory, name, *args):
                 calls.append((name, *args))
-                return {"aapt2": BADGING, "zipalign": "", "apksigner": SIGNATURE}[name]
+                return {"aapt2": MODERN_BADGING, "zipalign": "", "apksigner": SIGNATURE}[name]
 
             with patch.object(verifier, "sdk_tool", fake_tool):
                 with contextlib.redirect_stdout(io.StringIO()) as output:

@@ -136,9 +136,10 @@ def manifest_summary(badging, min_target):
     require(package is not None and package[1] == APP_ID, f"expected release application ID {APP_ID}")
     require(not re.search(r"\bsplit=", package[0]), "split APKs require a separate package-set verification")
     require(not re.search(r"(?m)^application-debuggable\b", badging), "release APK is debuggable")
-    minimum = re.search(r"(?m)^sdkVersion:'(\d+)'$", badging)
+    # Accept both SDK tool spellings; if both appear, neither can contradict the other.
+    minimums = re.findall(r"(?m)^(?:sdkVersion|minSdkVersion):([^\n]*)$", badging)
     target = re.search(r"(?m)^targetSdkVersion:'(\d+)'$", badging)
-    require(minimum is not None and int(minimum[1]) == MIN_SDK, f"expected minSdkVersion {MIN_SDK}")
+    require(set(minimums) == {f"'{MIN_SDK}'"}, f"expected minSdkVersion {MIN_SDK}")
     require(target is not None and int(target[1]) >= MIN_SDK, "missing or invalid targetSdkVersion")
     require(int(target[1]) >= min_target, f"targetSdkVersion {target[1]} is below the requested minimum {min_target}")
     return package[2], target[1]

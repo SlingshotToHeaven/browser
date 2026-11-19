@@ -33,6 +33,9 @@ import static org.junit.Assume.assumeTrue;
 /** Opt-in provider experiment, not an implementation or qualification of private tabs. */
 public class ProviderProfileDeviceProbe {
     private static final Pattern UUID = Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+    // Chromium 137 can buffer profile-registry writes for 10 s. Cookie flush only
+    // covers cookies; actual registry and DOM storage persistence are checked on reopen.
+    private static final long PROFILE_WRITE_GRACE_MS = 15_000;
     private static final String MARKERS = "(localStorage.getItem('mark')||'missing')+'|'+document.cookie";
     private static final String CLEAR = "localStorage.removeItem('mark');document.cookie='mark=; Max-Age=0; Path=/; Secure';";
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
@@ -58,7 +61,8 @@ public class ProviderProfileDeviceProbe {
 
     @Test public void persistedMarkersRemainIsolatedAfterRestart() throws Exception {
         Fixture f = fixture();
-        assertTrue("Run the seed phase first with the same probe ID", exists(f));
+        assertTrue("Named profile missing on cold start; check that seed passed with the same ID and app data was retained",
+                exists(f));
         verifyBoth(f, Phase.REOPEN);
     }
 
@@ -67,7 +71,8 @@ public class ProviderProfileDeviceProbe {
         // Do not construct a view for, or retrieve, the named profile in this process
         // before deleteProfile. Destruction of its last WebView is not an unload API.
         assertTrue("No named profile to delete; preserve the fixture between phases", exists(f));
-        assertTrue(ui(() -> ProfileStore.getInstance().deleteProfile(f.profile)));
+        assertTrue("Provider did not retire the registered profile",
+                ui(() -> ProfileStore.getInstance().deleteProfile(f.profile)));
         assertFalse("Provider still advertises the deleted name", exists(f));
         verifyBoth(f, Phase.AFTER_DELETE);
     }
@@ -83,6 +88,8 @@ public class ProviderProfileDeviceProbe {
                 assertEquals("\"missing|\"", js(regular, CLEAR + MARKERS));
             }
             ui(() -> { CookieManager.getInstance().flush(); return null; });
+            // Give the provider time to write the registry deletion and DOM marker removal.
+            SystemClock.sleep(PROFILE_WRITE_GRACE_MS);
         } finally { destroy(regular); }
     }
 
@@ -128,9 +135,11 @@ public class ProviderProfileDeviceProbe {
                     WebViewCompat.getProfile(named).getCookieManager().flush();
                     return null;
                 });
-                // WebView has no localStorage flush API. Allow background writes while
-                // the views still exist; the reopen phase checks actual persistence.
-                SystemClock.sleep(6_000);
+            }
+            if (phase != Phase.REOPEN) {
+                // Wait inside instrumentation, off the UI thread and before finishing the
+                // process, for background writes after seed or delete-and-recreate.
+                SystemClock.sleep(PROFILE_WRITE_GRACE_MS);
             }
         } finally {
             if (isolated != null) destroy(isolated);

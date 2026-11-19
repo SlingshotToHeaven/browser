@@ -33,6 +33,7 @@ import static org.junit.Assert.*;
 public class TabSessionDeviceTest {
     private static final String URL = "https://session-fixture.invalid/";
     private static final String TITLE = "Session history fixture ";
+    private static final String TRAVERSED_TITLE = "Session history fixture popstate ";
     private static final byte[] PAGE = ("""
             <!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Session history fixture 0</title>
@@ -46,7 +47,9 @@ public class TabSessionDeviceTest {
                 history.pushState({n:index() + 1}, '', location.href);
                 show();
               });
-              window.addEventListener('popstate', show);
+              window.addEventListener('popstate', () => {
+                document.title = 'Session history fixture popstate ' + index();
+              });
             </script>
             """).getBytes(StandardCharsets.UTF_8);
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
@@ -76,34 +79,46 @@ public class TabSessionDeviceTest {
             assertTrue("WebView did not make the fixture available to draw", readyToDraw.await(5, TimeUnit.SECONDS));
             // Entries are created by actual Android input, not an unactivated JS injection.
             // This also keeps both the document and its native navigation controller foregrounded.
-            int before = historyUpdates.get();
             for (int entry = 1; entry <= 2; entry++) {
                 final int expected = entry;
+                int before = historyUpdates.get();
                 tapCenter(live);
                 await(live, "Trusted fixture tap did not commit entry " + expected,
-                        () -> at(live, expected + 1, expected));
+                        () -> historyUpdates.get() > before && at(live, expected + 1, expected)
+                                && (TITLE + expected).equals(live.getTitle()));
             }
-            await(live, "No native history callback for same-address entries", () -> historyUpdates.get() > before);
             TabSessionCheckpoint.History end = ui(() -> NativeTabSession.history(live, URL));
             assertNotNull("Third native entry did not describe the fixture URL", end);
             assertEquals(2, end.current);
 
-            assertTrue("Native Back was unavailable at the fixture's third entry", ui(() -> live.canGoBackOrForward(-1)));
-            ui(() -> { live.goBackOrForward(-1); return null; });
-            await(live, "Native Back did not return to same-address entry 1", () -> at(live, 3, 1));
+            int beforeBack = ui(() -> {
+                assertTrue("Native Back was unavailable at the fixture's third entry", live.canGoBackOrForward(-1));
+                int before = historyUpdates.get();
+                live.goBackOrForward(-1);
+                return before;
+            });
+            // Chromium can expose the pending index in copyBackForwardList while saveState
+            // serializes the last committed index. Require the native callback and a new
+            // renderer popstate marker before capturing the committed Back entry.
+            await(live, "Native Back did not commit same-address entry 1",
+                    () -> historyUpdates.get() > beforeBack && at(live, 3, 1)
+                            && (TRAVERSED_TITLE + "1").equals(live.getTitle()));
             TabSessionCheckpoint.History backed = ui(() -> NativeTabSession.history(live, URL));
             assertNotNull(backed);
             assertEquals(1, backed.current);
             assertEquals(end.entries, backed.entries);
             assertNotEquals(end, backed);
             byte[] bytes = ui(() -> NativeTabSession.capture(live, URL, backed));
-            assertNotNull(bytes);
-            assertTrue(bytes.length > 0);
+            assertNotNull("Committed native history was not captured", bytes);
+            assertTrue("The fixture snapshot was empty", bytes.length > 0);
             WebView recovered = restored = ui(() -> view(host, new AtomicInteger()));
-            assertEquals(backed, ui(() -> NativeTabSession.restore(recovered, bytes, URL)));
+            TabSessionCheckpoint.History roundTrip = ui(() -> NativeTabSession.restore(recovered, bytes, URL));
+            assertNotNull("Provider rejected the captured state", roundTrip);
+            assertEquals("restoreState selected the wrong history index", backed.current, roundTrip.current);
+            assertEquals("restoreState changed the ordered URL pairs", backed.entries, roundTrip.entries);
             WebBackForwardList copied = ui(recovered::copyBackForwardList);
-            assertEquals(3, copied.getSize());
-            assertEquals(1, copied.getCurrentIndex());
+            assertEquals("Recovered view lost history entries", 3, copied.getSize());
+            assertEquals("Recovered view did not retain the Back position", 1, copied.getCurrentIndex());
             for (int i = 0; i < copied.getSize(); i++) assertEquals(URL, copied.getItemAtIndex(i).getUrl());
             WebView wrong = mismatched = ui(() -> view(host, new AtomicInteger()));
             assertNull(ui(() -> NativeTabSession.restore(wrong, bytes, URL + "other")));
