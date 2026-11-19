@@ -1,0 +1,25 @@
+# Short Android 12+ capture for trace-source readiness, not performance results.
+# Use only on the authorized lab device. Raw traces stay on the Mac.
+duration_ms: 20000
+buffers { size_kb: 16384 fill_policy: RING_BUFFER }
+data_sources {
+  config {
+    name: "linux.ftrace"
+    ftrace_config {
+      atrace_categories: "input"
+      atrace_categories: "view"
+      atrace_categories: "gfx"
+      atrace_apps: "com.browser"
+    }
+  }
+}
+data_sources {
+  config {
+    name: "linux.process_stats"
+    process_stats_config {
+      scan_all_processes_on_start: true
+      record_thread_names: true
+    }
+  }
+}
+data_sources { config { name: "android.surfaceflinger.frametimeline" } }

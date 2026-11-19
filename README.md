@@ -249,6 +249,8 @@ On host SQLite 3.40.1, the large seed gave the following **SQL VM instruction co
 
 ### Device procedure (PERF-07)
 
+For an existing lab install, start with the [non-destructive trace pilot](docs/omnibox-trace-pilot.md). The paired procedure below is separate, and its data reset requires an independently authorized disposable profile; do not apply it to the retained test profile.
+
 1. **Match the APKs.** Use the `step17` and `step18` trees prepared from the [patched candidate](docs/device-handoff.md#matched-build-sources), not the original commit. Build both with the same SDK/JDK, variant and debug signing key, verify `com.browser`, and record APK hashes. Assemble and lint the final candidate and run `com.privacy.browser.OmniboxDeviceTest` on an Android runner, covering real SQLite, fallback under a held helper monitor, stale row taps/tab switches, and private-mode query policy without enabling private tabs. Repeat the typing check on the final candidate for regression.
 2. **Use identical synthetic data.** On a disposable debug install only, with the same WebView, keyboard, refresh rate and offline network state for both APKs, seed the app before launch. The commands below **erase the debug profile**. Run once with the large row counts and again with `--history 1000 --bookmarks 4000` in a fresh seed directory. Repeat seeding on each install. Do not use a personal device profile, clipboard or browsing data.
 

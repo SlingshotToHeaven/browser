@@ -2,6 +2,21 @@
 
 Use the source supplied for each retest and record its identity. Follow the [isolated testing rules](antigravity-device-test.md#1-keep-the-installed-app-and-the-mac-safe): test only the disposable `com.browser` / `com.browser.test` pair, with synthetic data and an explicitly selected device. Keep the old browser and its data untouched. This is a retest, not a release or a GitHub operation.
 
+## Report 7: changed HTTP file and late destination collision
+
+Report 7 used `fbd0aa7e3556f1355ea62e8e92c0b46c5ad421b0` (ZIP SHA-256 `582e787c628e5b7ff435cbf22637293aa7ab219c846d05c8868130786783d4d5`) and the same `com.browser` debug APK, SHA-256 `cd8c9b95c6eee6c1e4f9844bf988c925ac3b68c28961894c21372605043acb6c`. Galaxy S21 FE, API 36, ARM64, **4 KiB**, WebView `137.0.7151.115`. Storage was app-owned. The lab reported eight passing observations across two cases:
+
+| Scoped check | Reported evidence | Boundaries |
+| --- | --- | --- |
+| DL-01 changed representation | After Pause on version 1, Resume sent its old `If-Range` from offset **1,687,552**. The version-2 fixture ignored that range and served HTTP 200 from zero. The app failed the attempt with a Start over instruction and published nothing. Only an explicit Start over issued an unconditional full GET, producing **4,194,304** bytes with the version-2 hash `51b5d0a129098c43c19989171c8307df017e92f99219a1e5c225fa0ff5481f05`. | Same URL and size, changed strong ETag, direct HTTP with one connection. Does not exercise every malformed response, weak validator, or multi-segment case. |
+| DL-01 late collision | A vacant reserved name was populated with a **26-byte** synthetic file after the conditional 206 body started. After it finished, the app reported that the destination already existed, with no completed row or alternative output. The marker retained its exact size and SHA-256 `45508a98fac27025251c3ca1a1169a1cf31db697cfbdac5171cdf36ac892f315`. | One app-owned external volume. Not a cut during link/copy/DB commit, or occupied-name reconciliation after process death. The host byte count isn't proof of publication. |
+
+The source ZIP and fixture expectations were independently rechecked; the device, APK and output measurements are from the lab report. The lab reported removing only its outputs and reverse, retaining the two `.part` files, and leaving existing app data and the old browser intact. No app fix is indicated by these cases.
+
+## Next device run
+
+Move to the [**address-bar trace pilot and matched build preflight**](omnibox-trace-pilot.md) for report 8. Reuse the verified disposable report-7 debug APK; only host tooling and docs changed. Capture one synthetic hit and one miss to check app input, worker and FrameTimeline signals. Prepare the `step17` and `step18` matched APKs on the Mac **without installing them**. No paired timings, seeding/replacing databases, clearing data, switching APKs, device settings changes, or repeating download reports 4–7. Keep the raw traces local and return `out/android-test-report-8.md` with sanitized findings; name the exact missing signal/tool if blocked. This does not close PERF-07, the remaining download/upgrade matrix, or release gates.
+
 ## Report 6: saved download checkpoints after relaunch
 
 Report 6 used `c0843fa475fb65ef591b8d0cba0ec3a7dddbd596` (ZIP SHA-256 `214458c6e2b4e44e12b2f7f3d68ce94872a692aeaa93e2fec986924d3eb1c4c7`) with the same `com.browser` debug APK, SHA-256 `cd8c9b95c6eee6c1e4f9844bf988c925ac3b68c28961894c21372605043acb6c`. Galaxy S21 FE, API 36, ARM64 with **4 KiB** pages, WebView `137.0.7151.115`. The original browser and unrelated files were reported untouched.
@@ -15,7 +30,9 @@ Report 6 used `c0843fa475fb65ef591b8d0cba0ec3a7dddbd596` (ZIP SHA-256 `214458c6e
 
 This covers two eligible one-connection jobs with stable ETags and app-owned storage. The resumed ranges and exact outputs show checkpoint reuse; rounded UI progress and host `body_end` counts aren't durable-byte measurements. A single cold-launch measurement is not a speed comparison. Upgrade, power/network constraints, changed representations, publication races, and unattended recovery are not demonstrated.
 
-## Next device run
+## Previous HTTP integrity run
+
+These were the instructions for report 7; do not repeat them by default.
 
 Run **HTTP resume rejection and late destination collision (DL-01 / Step 03 subset)**, not the prior suites. Only the host fixture, its tests, and docs changed. Reuse the exact verified report-6 debug APK if installed in the confirmed disposable `com.browser` slot; otherwise use `./gradlew :app:assembleDebug` with JDK 17/Platform 34 and verify the debug ID, APK hash and expected lab signer. Install with `-r` only over a confirmed disposable, same-signer build. Preserve both old app IDs, existing apps/files and data. No uninstall, clear-data, downgrade, device settings changes, broad storage access, or release signing.
 

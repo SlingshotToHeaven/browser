@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Synthetic SQLite seed and host work/plan comparison for PERF-07. No browser data needed."""
+"""Synthetic SQLite seeds, host work counts, and a local PERF-07 trace pilot page."""
 import argparse
 from contextlib import closing
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
 from pathlib import Path
@@ -47,6 +48,26 @@ SCHEMA = {
     """,
 }
 TERMS = {"recent": "perf18recent", "common": "perf18common", "miss": "perf18absent"}
+TRACE_HOST, TRACE_PORT = "127.0.0.1", 8020
+TRACE_TERM = "perf18tracehit"
+TRACE_PATH = "/" + TRACE_TERM
+TRACE_PAGE = (f'<!doctype html><meta charset="utf-8"><title>Fixture {TRACE_TERM}</title>'
+              f'<h1>Fixture {TRACE_TERM}</h1><p>Local address-bar trace pilot; no external resources.</p>').encode("ascii")
+
+
+class TracePageHandler(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        pass  # Don't echo arbitrary paths or client data.
+
+    def do_GET(self):
+        found = self.path == TRACE_PATH
+        data = TRACE_PAGE if found else b""
+        self.send_response(200 if found else 404)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
 
 def entries(store, size):
@@ -125,10 +146,20 @@ def main():
     seed_parser.add_argument("directory", type=Path)
     bench_parser = commands.add_parser("benchmark", help="print plans, work counts and warm host-only timings")
     bench_parser.add_argument("--repeats", type=int, default=100)
+    commands.add_parser("serve-trace-pilot", help="serve one inert page for a test-only address-bar hit")
     for command in (seed_parser, bench_parser):
         command.add_argument("--history", type=int, default=50_000)
         command.add_argument("--bookmarks", type=int, default=20_000)
     args = parser.parse_args()
+    if args.command == "serve-trace-pilot":
+        with ThreadingHTTPServer((TRACE_HOST, TRACE_PORT), TracePageHandler) as server:
+            print(f"Trace pilot page: http://{TRACE_HOST}:{TRACE_PORT}{TRACE_PATH}", flush=True)
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                pass
+        return
+
     sizes = {"history": args.history, "bookmarks": args.bookmarks}
     if min(sizes.values()) < 10:
         parser.error("use at least ten rows per store")
