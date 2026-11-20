@@ -28,13 +28,27 @@ jobs:
       - name: Build and inspect the exact handoff source
         shell: bash
         run: |
+          set -Eeuo pipefail
+          stage=archive
+          trap 'code=$?; echo "::error title=ARM64 mux SDK preflight::$stage failed (exit $code)"; exit "$code"' ERR
           work=$(mktemp -d "$RUNNER_TEMP/arm64-mux.XXXXXX")
           git archive "$GITHUB_SHA" | tar -xf - -C "$work"
           cd "$work"
+          stage=fixtures
           python3 -B -m unittest discover -s tests -p 'test_arm64_mux_retest.py' -v
           sha256sum -c docs/native-arm64.sha256 docs/release-assets-build-inputs.sha256
-          sdkmanager --sdk_root="$ANDROID_HOME" 'platforms;android-34' 'build-tools;34.0.0'
+          stage=SDK
+          sdkmanager=$(command -v sdkmanager || true)
+          if [[ -z "$sdkmanager" ]]; then
+            for candidate in "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager; do
+              if [[ -x "$candidate" ]]; then sdkmanager=$candidate; break; fi
+            done
+          fi
+          [[ -n "$sdkmanager" ]]
+          "$sdkmanager" --sdk_root="$ANDROID_HOME" 'platforms;android-34' 'build-tools;34.0.0'
+          stage=Gradle
           ./gradlew --no-daemon --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest
+          stage=APK-badging
           PYTHONPATH=tools python3 -B - "$ANDROID_HOME/build-tools/34.0.0/aapt2" <<'PY'
           import os
           from pathlib import Path
