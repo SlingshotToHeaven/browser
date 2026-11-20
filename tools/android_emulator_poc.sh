@@ -30,7 +30,8 @@ if [[ "$(df -Pk "$RUNNER_TEMP" | awk 'END { print $4 }')" -lt 7340032 ]]; then
 fi
 mkdir "$root"
 mkdir -p "$root/source" "$root/proof" "$root/avd" "$root/android"
-export ANDROID_AVD_HOME="$root/avd" ANDROID_USER_HOME="$root/android" GRADLE_USER_HOME="$root/gradle"
+export ANDROID_AVD_HOME="$root/avd" ANDROID_USER_HOME="$root/android"
+# Gradle's default home is already outside this checkout on the disposable runner.
 unset ADB_SERVER_SOCKET ANDROID_ADB_SERVER_ADDRESS ANDROID_ADB_SERVER_PORT ADB_SERVER_PORT ANDROID_SERIAL
 
 sdk_tool() {
@@ -46,12 +47,48 @@ sdk_tool() {
 sdkmanager=$(sdk_tool sdkmanager)
 avdmanager=$(sdk_tool avdmanager)
 
+# Probe ordinary build dependencies before spending disk or time on an image.
+# The alternative is the same Maven Central repository, not a new dependency source.
+central_available() {
+  local endpoint=$1 coordinate
+  for coordinate in commons-codec/commons-codec/1.10/commons-codec-1.10.pom \
+    com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.pom; do
+    if ! curl -fLsS --max-time 12 "$endpoint/$coordinate" -o "$root/probe.pom" \
+      || ! grep -q '<project' "$root/probe.pom"; then
+      return 1
+    fi
+  done
+  return 0
+}
+build_args=()
+if central_available https://repo.maven.apache.org/maven2; then
+  echo 'Maven Central default endpoint served the required probe POMs.'
+elif central_available https://repo1.maven.org/maven2; then
+  echo 'Using the official Maven Central alternate endpoint for this disposable build.'
+  cat > "$root/central.init.gradle" <<'GRADLE'
+gradle.settingsEvaluated { settings ->
+    [settings.pluginManagement.repositories, settings.dependencyResolutionManagement.repositories].each { repos ->
+        repos.withType(org.gradle.api.artifacts.repositories.MavenArtifactRepository).configureEach { repo ->
+            if (repo.url?.host == 'repo.maven.apache.org' && repo.url.path in ['/maven2', '/maven2/']) {
+                repo.setUrl('https://repo1.maven.org/maven2')
+            }
+        }
+    }
+}
+GRADLE
+  build_args+=(--init-script "$root/central.init.gradle")
+else
+  echo 'Neither official Maven Central endpoint served the required build dependencies.' >&2
+  exit 1
+fi
+
 [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
 git archive "$GITHUB_SHA" | tar -x -C "$root/source"
 # Install exactly one system image, no APK/AVD or Gradle caches retained by the job.
 "$sdkmanager" --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0' platform-tools emulator "$image"
 "$emulator" -accel-check
-(cd "$root/source" && ./gradlew --no-daemon --max-workers=2 :app:assembleDebug)
+printf '::notice title=Emulator prerequisites checked::KVM and Android SDK tools are available; no AVD boot yet.\n'
+(cd "$root/source" && ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :app:assembleDebug)
 apk="$root/source/app/build/outputs/apk/debug/app-debug.apk"
 [[ -s "$apk" ]]
 
