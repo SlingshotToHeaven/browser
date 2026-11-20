@@ -1,5 +1,7 @@
 # Retained-trace attribution check (report 11)
 
+This procedure is complete; see the [report-11 findings and hold](android-test-followup.md#report-11-offline-attribution-complete-perf-07-blocked). Do not rerun this probe by default.
+
 **Mac only.** The owner's one-capture approval was used in the [report-10 device addendum](android-test-followup.md#report-10-split-buffer-retry-dispatch-link-unresolved). Do not connect to a device, use ADB, collect another trace, rebuild or install APKs, or change anything on the phone. Do not rerun the report-8/9 or report-10 preflights. The existing trace is the only input.
 
 ## Verify and query the retained trace

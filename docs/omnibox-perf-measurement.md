@@ -1,0 +1,22 @@
+# PERF-07: requirements before resuming physical measurement
+
+**Planning only. No new lab run is requested or authorized.** [Report 11](android-test-followup.md#report-11-offline-attribution-complete-perf-07-blocked) resolved the frame-data question, not the input-to-presented-content question. Repeating the same pilot or treating the nearest dispatch, an enclosing async window, or a later frame token as the answer would not establish that link. Keep the original strict query and existing reports unchanged.
+
+## Decide whether a new calibration is feasible
+
+The next useful test, if separately approved, is **one end-to-end measurement calibration**, not another capture just to check for slices. Before writing its device prompt, agree on:
+
+| Prerequisite | What to establish before a run |
+| --- | --- |
+| **Separate disposable state and authority** | Name the intended lab device and disposable test state without recording serials. Preserve the retained install/profile, original browser and files. Authorize only the specific synthetic capture or recording and any test instrumentation being proposed. Later APK swaps and seed installation need their own scope. Do not assume permission to clear data, change tracing/device settings or sideload anything from the earlier one-capture approval. |
+| **Known start boundary** | Choose the actual app key/input dispatch relevant to the workload and show how it is identified through the edit path. For asynchronous delivery, require trace-recorded identity or a controlled instrumented path that propagates an opaque test ID through the actual callback. A marker chosen by timestamp or an ID spanning only the framework windows is not enough. If the accessible boundary is a later editor command instead, label that metric and do not report it as original key dispatch. Keep synthetic injection and real IME cases distinct. |
+| **Known presented content and clock alignment** | Explain how the first presented frame with the expected new text, current fallback and correct local row is identified for that edit. Correlate a visible-content observation with the frame in the same clock domain, or establish and report the alignment and resolution of the recording. An external camera measuring key actuation to visible pixels is a separate metric unless actual app dispatch is also identified and aligned. Layout, app markers, display tokens and ADB round trips alone do not measure presentation. |
+| **Comparable, isolated evidence** | If additional instrumentation is needed, scope it to lab debug/test builds and use the equivalent boundary and overhead in the matching builds. Do not change production input behavior or log text, keys from real browsing, private data or device identifiers. Use an inert synthetic fixture and keep all raw captures on the Mac. |
+
+In a future authorized calibration, demonstrate the complete link for one synthetic hit with the correct visible fallback and local row. Return a sanitized assessment of the link, frame-content evidence and uncertainty. If any link or clock alignment is missing, stop and name the blocker. Do not turn a calibration into a benchmark, weaken the existing readiness predicate, or take repeated captures without a specific change to the measurement plan.
+
+## Keep the paired comparison separate
+
+- Isolate **Step 17 vs. Step 18** using matched APK identities, both synthetic seeds (1,000 history / 4,000 bookmarks and 50,000 / 20,000), and matched device, WebView, IME, refresh rate, data and environment. Compare **Step 18 vs. the final candidate** separately for regression. Verify the build/seed provenance; the report-8/9 build rechecks did not install or measure them.
+- Before collecting paired data, agree on the minimum meaningful typing/frame gain, the allowed settled correct-row latency including debounce, and the small-data regression tolerance. Include measurement uncertainty, repeated cold and warm trials, current text/fallback and correct rows, frame overruns and attributable query/clipboard work. On a miss, require no stale row and do not assign a local-row latency.
+- The [paired procedure](../README.md#device-procedure-perf-07) is not runnable on the retained profile. If a new authorized setup and a repeatable calibrated comparison are unavailable, leave **PERF-07 blocked**. Prior correctness, host work counts, trace availability, and the testing-branch ZIP do not authorize promotion or release.

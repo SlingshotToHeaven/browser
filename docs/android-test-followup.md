@@ -2,6 +2,22 @@
 
 Use the source supplied for each retest and record its identity. Follow the [isolated testing rules](antigravity-device-test.md#1-keep-the-installed-app-and-the-mac-safe): test only the disposable `com.browser` / `com.browser.test` pair, with synthetic data and an explicitly selected device. Keep the old browser and its data untouched. This is a retest, not a release or a GitHub operation.
 
+## Report 11: offline attribution complete, PERF-07 blocked
+
+The lab used `81e324eed14ce2b874454e39817b501da20e12ca` (ZIP SHA-256 `cc056bd161f29dca9da5472fdff81cd512e4099b6ba2dc73e134847095ca2060`) to analyze the retained report-10 retry on the Mac with Trace Processor `v59.1-1e9c61e98`. It rechecked the trace's **3,946,596-byte** size and SHA-256 `46a757b3cea07731d95a2c8592d850085be6246373d1859ffe28238c5281806b`. The ZIP and probe were independently checked here; the trace identity, execution and results are lab-reported. No phone access, rebuild, install or recapture occurred in report 11.
+
+| Diagnostic | Reported result | Interpretation |
+| --- | --- | --- |
+| Dispatches and framework ID matches | Two dispatches, one main edit. Dispatch 1 ended **3.018 ms before** edit start; dispatch 2 started **12.546 ms after** edit start. Both matched one framework async window by ID; only dispatch 1's window covered the edit. | The ID joins two framework markers, not the app edit. The offsets are chronology, not input latency or evidence of a posted app callback. |
+| Directed flow | **970** edges in the trace; **0** from the two dispatches or their matched async windows to the edit or an ancestor. | No direct trace-recorded link in the probe's scope. This does not rule out indirect delivery or establish a platform restriction. |
+| Frame pairs independent of nesting | **667** app surface slices completing after the edit, all with a matched SurfaceFlinger display token; **655** pairs completing after later `localRows`. | Frame telemetry is available independently of the strict join. These counts do not identify which frame showed the updated text, fallback or history row. |
+
+The unchanged strict `dispatched_edits = 0` and `post_edit_surface_display_pairs = 0` are carried forward from report 10. The offline probe passed as a diagnostic, not as trace readiness or a paired comparison. This report does not identify an app regression to fix. **Stop this diagnostic sequence here.** Do not repeat the same probe or capture; a new test should explicitly address the missing attribution and presentation evidence.
+
+## Next device run
+
+**None authorized or requested.** Preserve the current artifacts locally and do not repeat reports 8–11. If the owner wants to resume PERF-07, first agree on [a measurement calibration and its scope](omnibox-perf-measurement.md): separate disposable state, an actual dispatch boundary linked to the edit, and aligned evidence of the presented contents. The previous one-capture approval is spent. No ADB, further recordings, app changes, installs, reseeding, paired trials or release work is requested now.
+
 ## Report 10: split-buffer retry, dispatch link unresolved
 
 The lab used `08a19c28b62406050391e1e32bee217bfbcb2de0` (ZIP SHA-256 `b4eac544f07fa7fa4561323910371d2a6f0c058295bf76190fead1edab591166`) and kept the offline report separate from the device addendum. The offline preflight initially withheld device work. It classified all **37** recorded setup notices per report-8 trace as `ftrace_event_unknown`, with none classified as print or ATrace setup failures. This does not establish the exact event sources or that the old capture contained the required app signals.
@@ -16,10 +32,6 @@ The device addendum reports **one explicitly authorized capture** on the same Ga
 | Strict dispatch/frame association | **0** `dispatched_edits`, **0** `post_edit_surface_display_pairs`. The edit started **3.018 ms** after the end of one reported dispatch. | Not nested; chronology does not show an app looper post or identify the causal dispatch. The strict frame join depends on the missing dispatched edit, so its zero does not independently establish absence of app/SF pairs. |
 
 The retained report-10 retry `hit.pftrace` was **3,946,596 bytes**, SHA-256 `46a757b3cea07731d95a2c8592d850085be6246373d1859ffe28238c5281806b` (lab-reported; raw trace stays on Mac). The lab reported closing only its new tab, deleting only the new synthetic visit, removing its reverse, and stopping the fixture. No reinstall, resets or second capture were reported. **The one-capture authorization is spent. Strict trace readiness and PERF-07 remain open.**
-
-## Next device run
-
-**None requested.** Use the [Mac-only retained-trace attribution check](omnibox-trace-attribution.md) for report 11. Verify the exact report-10 trace, return the two dispatches' relative ordering and any recorded flow to the edit, and check frame-token pairs independently of the strict nesting predicate. Keep original results and strict SQL unchanged. No ADB, recapture, rebuild, install, profile changes, paired timings or repeats of previous checks. If the link or trace is missing, return that blocker; do not infer causality from proximity.
 
 ## Report 9: ring buffer overwrite confirmed
 

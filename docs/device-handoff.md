@@ -4,7 +4,7 @@ The source changes and offline fixtures are ready for an SDK-equipped runner. **
 
 ## Matched build sources
 
-For the macOS agent, start with [the Antigravity testing instructions](antigravity-device-test.md), or the [latest retest and next device run](android-test-followup.md#next-device-run) if continuing the report series. The supplied source ZIP contains the candidate, the Gradle wrapper, and [three verified source overlays](../tests/fixtures/perf_baselines/README.md). It needs no Arena patch or Git initialization. From a fresh extraction or a worktree at the supplied testing commit, use Python 3.9+ and Git to prepare the matched, build-only copies:
+For the macOS agent, check [the latest report and current testing status](android-test-followup.md#next-device-run) before using the general [Antigravity testing instructions](antigravity-device-test.md). The report series is paused; the procedures below do not authorize a new device run. The supplied source ZIP contains the candidate, the Gradle wrapper, and [three verified source overlays](../tests/fixtures/perf_baselines/README.md). It needs no Arena patch or Git initialization. From a fresh extraction or a worktree at the supplied testing commit, use Python 3.9+ and Git to prepare the matched, build-only copies:
 
 ```sh
 python3 -B tools/prepare_perf_baselines.py /path/to/new/baselines
