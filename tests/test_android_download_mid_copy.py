@@ -12,7 +12,7 @@ from xml.etree import ElementTree as ET
 from test_download_queue_sql import create
 from tools.check_android_download_mid_copy import (
     BODY, DIGEST, LENGTH, MID_COPY, PUBLISHER, PRE_COMMIT, SHARED_DIR, SHARED_PATH, CheckFailed,
-    bound_destination, copy_cut, require_no_file_actions, storage_blocked, verify_cut,
+    bound_destination, copy_cut, downloads_resumed, require_no_file_actions, share_refused, storage_blocked, verify_cut,
 )
 from tools.check_android_download_publication import read_state
 
@@ -79,6 +79,19 @@ class AndroidMidCopyEvidenceTest(unittest.TestCase):
             require_no_file_actions(root)
         with self.assertRaises(CheckFailed):
             require_no_file_actions(ET.Element('hierarchy'))
+
+    def test_share_check_needs_an_actual_app_refusal_and_resumed_downloads(self):
+        resumed = '    topResumedActivity=ActivityRecord{81b u0 com.browser/com.privacy.downloader.ui.DownloadsActivity t17}'
+        self.assertTrue(downloads_resumed(resumed))
+        self.assertFalse(downloads_resumed(resumed.replace('topResumedActivity=', 'mLastPausedActivity=')))
+        chooser = '    topResumedActivity=ActivityRecord{f0 u0 com.android.intentresolver/.ChooserActivity t17}'
+        self.assertFalse(downloads_resumed(resumed + '\n' + chooser))
+        self.assertFalse(downloads_resumed(chooser))
+        toast = ('    TextToastRecord{135 1729:com.browser/u0a205 isSystemToast=false token=android.os.BinderProxy@2 '
+                 'text=Cannot share files: Select at least one completed download to share. duration=0}')
+        self.assertTrue(share_refused(toast))
+        self.assertFalse(share_refused(toast.replace('com.browser', 'com.other')))
+        self.assertFalse(share_refused(toast.replace('Select at least one completed download to share.', 'Unknown app')))
 
     def test_reuse_of_profile_requires_empty_history_and_no_segments(self):
         with TemporaryDirectory() as tmp:

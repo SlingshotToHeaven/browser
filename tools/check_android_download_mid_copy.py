@@ -94,10 +94,24 @@ def require_no_file_actions(root):
     return select
 
 
-def check_not_offered(android):
+def downloads_resumed(activity_dump):
+    # Android flattens same-prefix components as e.g. com.browser/.SomeActivity.
+    current = re.findall(r"^\s*topResumedActivity=ActivityRecord\{[\da-f]+ u0 ([\w.]+/[\w.$]+) ",
+                         activity_dump, flags=re.MULTILINE)
+    return current == [f"{PACKAGE}/{DOWNLOADS}"]
+
+
+def share_refused(toasts):
+    return re.search(r"^\s*TextToastRecord\{[^\n]+ " + r"\d+:" + re.escape(PACKAGE) +
+                     r"/[^\n]+ text=Cannot share files: Select at least one completed download to share\. duration=",
+                     toasts, flags=re.MULTILINE) is not None
+
+
+def check_not_offered(android, relaunch):
     android.tap("card_text_filename", NAME)
     android.view("diag_text_file_name", NAME)
     android.view("diag_text_status_badge", "FAILED")
+    relaunch["open_diagnostics_only"] = True
     android.tap("diag_btn_close")
     android.tap_view(android.view("card_text_filename", NAME), long=True)
 
@@ -110,14 +124,26 @@ def check_not_offered(android):
     # Match the exact fixture menu and select it from the same UI snapshot.
     # The generic toolbar Share must not launch for this single failed item.
     android.tap_view(until(select_if_safe, "fixture Downloads context menu"))
+    relaunch["no_open_share_menu"] = True
     android.view("downloads_text_selected_count", "1 selected")
+
+    def foreground():
+        return downloads_resumed(android.text("dumpsys", "activity", "activities"))
+
+    def refused():
+        return share_refused(android.text("dumpsys", "notification"))
+
+    require(foreground(), "Activity check could not identify Downloads before tapping Share")
+    require(not refused(), "Unexpected stale Share refusal before tapping Share")
     android.tap("downloads_btn_share_selected")
-    deadline = time.monotonic() + 2.5
-    foreground = r"topResumedActivity=.*?\bu0 " + re.escape(f"{PACKAGE}/{DOWNLOADS}") + r"\s"
-    while time.monotonic() < deadline:
-        require(re.search(foreground, android.text("dumpsys", "activity", "activities")),
-                "Sharing just the failed item left Downloads")
-        time.sleep(0.2)
+
+    def still_here():
+        require(foreground(), "Sharing just the failed item did not remain in Downloads")
+        return refused()
+
+    until(still_here, "failed-only Share refusal toast", seconds=5)
+    android.view("downloads_text_selected_count", "1 selected")
+    relaunch["selection_share_refused"] = True
     android.tap("downloads_btn_close_selection")
 
 
@@ -205,8 +231,9 @@ def case(android, work, server, directory, report, cut):
     require(android.file(dest) == output and android.file(stage) == checkpoint and android.file(neighbor) == marker_file
             and server.requests == INITIAL_REQUESTS, "Relaunch modified a fixture file or re-fetched bytes")
     report["relaunch"] = {"ui_and_db": "FAILED", "reason": "occupied destination", "files_preserved": True}
-    check_not_offered(android)
-    report["relaunch"].update(open_diagnostics_only=True, no_open_share_menu=True, selection_share_no_dispatch=True)
+    check_not_offered(android, report["relaunch"])
+    require(android.file(dest) == output and android.file(stage) == checkpoint and android.file(neighbor) == marker_file
+            and server.requests == INITIAL_REQUESTS, "File actions changed the interrupted download")
 
     phase(report, "move the short output aside and use Retry, not Start over")
     parked = str(Path(dest).with_name(PARKED))
