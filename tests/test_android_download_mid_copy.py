@@ -12,7 +12,7 @@ from xml.etree import ElementTree as ET
 from test_download_queue_sql import create
 from tools.check_android_download_mid_copy import (
     BODY, DIGEST, LENGTH, MID_COPY, PUBLISHER, PRE_COMMIT, SHARED_DIR, SHARED_PATH, CheckFailed,
-    bound_destination, browser_events, copy_cut, downloads_resumed, require_no_file_actions, share_refused,
+    bound_destination, browser_events, copy_cut, downloads_resumed, exit_reasons, require_no_file_actions, share_refused,
     storage_blocked, verify_cut,
 )
 from tools.check_android_download_publication import read_state
@@ -104,6 +104,10 @@ class AndroidMidCopyEvidenceTest(unittest.TestCase):
         )
         self.assertEqual(browser_events(android), [['am_proc_start', 1551],
                          ['am_crash', 1551, 'java.lang.IllegalStateException'], ['am_proc_died', 1551]])
+        android.text.return_value = ('  timestamp=fixture pid=1551 realUid=10151 user=0\n'
+                                     '  process=com.browser reason=10 (USER REQUESTED) subreason=21 (FORCE STOP) status=0\n'
+                                     '  description=not for evidence')
+        self.assertEqual(exit_reasons(android), [(1551, 'USER REQUESTED', 'FORCE STOP')])
 
     def test_reuse_of_profile_requires_empty_history_and_no_segments(self):
         with TemporaryDirectory() as tmp:

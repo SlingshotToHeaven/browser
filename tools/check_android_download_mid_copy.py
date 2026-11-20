@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.check_android_download_publication import (
-    ACTIVITY, BODY, DIGEST, DOWNLOADS, ETAG, INITIAL_REQUESTS, LENGTH, NAME, PACKAGE, PRIVATE_DIR,
+    BODY, DIGEST, DOWNLOADS, ETAG, INITIAL_REQUESTS, LENGTH, NAME, PACKAGE, PRIVATE_DIR,
     CheckFailed, Emulator, bound_path, debugger, find_view, fixture, prepare, publication_kind, ready_to_enqueue,
     require, snapshot, status, until, verify_occupied, verify_unpublished, wait_marker,
 )
@@ -169,6 +169,13 @@ def browser_events(android):
     return result[-8:]
 
 
+def exit_reasons(android):
+    raw = android.text("dumpsys", "activity", "exit-info", PACKAGE)
+    pattern = (r" pid=(\d+) [^\n]+\n\s*process=" + re.escape(PACKAGE) +
+               r" reason=\d+ \(([A-Z _-]+)\) subreason=\d+ \(([A-Z _-]+)\)")
+    return [(int(pid), reason, subreason) for pid, reason, subreason in re.findall(pattern, raw)[:4]]
+
+
 def phase(report, step):
     report["phase"] = step
     print(f"Mid-copy check ({report['storage']}): {step}", flush=True)
@@ -238,11 +245,12 @@ def case(android, work, server, directory, report, cut):
             "Partial output, checkpoint, or unrelated file changed across force-stop")
     report["force_stop_held"] = True
 
-    phase(report, "relaunch; leave the partial destination alone and reject file actions")
-    android.start(ACTIVITY)
+    phase(report, "relaunch directly into Downloads; reject the partial destination and file actions")
+    # Open the real Downloads screen in a new app process. A browser tab and its
+    # WebView/renderer are unrelated to the download recovery being tested.
+    android.start(DOWNLOADS)
     pid = android.pid()
     require(pid and pid != old_pid, "The browser did not start in a new process")
-    android.start(DOWNLOADS)
     status(android, "FAILED")
     recovered, saved = snapshot(android, work)
     verify_occupied(recovered)
@@ -253,15 +261,11 @@ def case(android, work, server, directory, report, cut):
     require(android.file(dest) == output and android.file(stage) == checkpoint and android.file(neighbor) == marker_file
             and server.requests == INITIAL_REQUESTS, "Relaunch modified a fixture file or re-fetched bytes")
     report["relaunch"] = {"ui_and_db": "FAILED", "reason": "occupied destination", "files_preserved": True}
-    # Measure the process displaying the recovered card, rather than assuming
-    # it is the process originally started for the browser's launcher Activity.
-    viewing_pid = android.pid()
-    require(viewing_pid is not None, "Recovered Downloads was not running")
     check_not_offered(android, report["relaunch"])
     reopen_pid = android.pid()
-    if reopen_pid != viewing_pid:
-        report["relaunch"]["changed_pid"] = [pid, viewing_pid, reopen_pid]
-    require(reopen_pid == viewing_pid, "Browser process changed during file-action checks")
+    if reopen_pid != pid:
+        report["relaunch"]["changed_pid"] = [pid, reopen_pid]
+    require(reopen_pid == pid, "Browser process changed during recovery or file-action checks")
     after_actions, after_segments = snapshot(android, work)
     changed = [key for key in recovered if after_actions[key] != recovered[key]]
     require(not changed and after_segments == saved, f"File actions changed SQLite fields: {','.join(changed) or 'segments'}")
@@ -402,6 +406,8 @@ def main():
         if "android" in report:
             with suppress(Exception):
                 report["browser_lifecycle"] = browser_events(android)
+            with suppress(Exception):
+                report["browser_exit_reasons"] = exit_reasons(android)
         raise
     finally:
         data = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode()
