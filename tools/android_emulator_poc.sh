@@ -7,8 +7,8 @@ if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hoste
   exit 1
 fi
 mode=${1:-launch}
-if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade && "$mode" != download-mid-copy && "$mode" != download-batch && "$mode" != browser-recovery && "$mode" != functional-followup ]]; then
-  echo 'Expected launch, download-publication, download-upgrade, download-mid-copy, download-batch, browser-recovery, or functional-followup.' >&2
+if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade && "$mode" != download-mid-copy && "$mode" != download-batch && "$mode" != browser-recovery && "$mode" != functional-followup && "$mode" != public-copy ]]; then
+  echo 'Expected launch, download-publication, download-upgrade, download-mid-copy, download-batch, browser-recovery, functional-followup, or public-copy.' >&2
   exit 2
 fi
 : "${RUNNER_TEMP:?}" "${ANDROID_HOME:?}" "${GITHUB_SHA:?}"
@@ -95,7 +95,7 @@ fi
 
 [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
 git archive "$GITHUB_SHA" | tar -x -C "$root/source"
-if [[ "$mode" == download-publication || "$mode" == download-mid-copy ]]; then
+if [[ "$mode" == download-publication || "$mode" == download-mid-copy || "$mode" == public-copy ]]; then
   mkdir "$root/jdi"
   "${JAVA_HOME:?}/bin/javac" --add-modules jdk.jdi -d "$root/jdi" \
     "$root/source/tests/fixtures/download_publication/PublicationPause.java"
@@ -119,7 +119,7 @@ batch_ffmpeg() {
   printf '%s\n' "$dir/ffmpeg"
 }
 host_status=0
-if [[ "$mode" == download-batch || "$mode" == browser-recovery || "$mode" == functional-followup ]]; then
+if [[ "$mode" == download-batch || "$mode" == browser-recovery || "$mode" == functional-followup || "$mode" == public-copy ]]; then
   build_debug "$root/source" :app:assembleDebugAndroidTest
   test_apk="$root/source/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
   [[ -s "$test_apk" ]]
@@ -218,6 +218,12 @@ fi
 if [[ "$mode" == functional-followup ]]; then
   android install -t --user 0 "$test_apk"
   python3 -B "$root/source/tools/check_android_functional_followup.py" \
+    --adb "$adb" --work "$root" --apk "$apk" --test-apk "$test_apk"
+  exit 0
+fi
+if [[ "$mode" == public-copy ]]; then
+  android install -t --user 0 "$test_apk"
+  python3 -B "$root/source/tools/check_android_public_copy.py" \
     --adb "$adb" --work "$root" --apk "$apk" --test-apk "$test_apk"
   exit 0
 fi
