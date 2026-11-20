@@ -1,6 +1,6 @@
 # Android emulator: interrupted download publication
 
-This is one automated **DL-01 / Steps 03–04** case for app-private storage. It extends the earlier [emulator launch proof](https://github.com/SlingshotToHeaven/browser/actions/runs/44686756405) without repeating the physical transfer interruption or late collision cases. The branch-scoped [workflow](../.github/workflows/android-emulator-poc.yml) builds the normal, unmodified debug APK from the exact run SHA, boots one fresh Android 14 / API 34 emulator on a GitHub-hosted KVM runner, and keeps only a small JSON result for one day. It does not upload an APK, database, fixture file, or screenshot.
+This is one automated **DL-01 / Steps 03–04** case for app-private storage. It extends the earlier [emulator launch proof](https://github.com/SlingshotToHeaven/browser/actions/runs/44686756405) without repeating the physical transfer interruption or late collision cases. The [publication run's workflow](https://github.com/SlingshotToHeaven/browser/blob/ee3bb457445e2c1558871763824bde020d5c3157/.github/workflows/android-emulator-poc.yml) built the normal, unmodified debug APK from the exact run SHA, booted one fresh Android 14 / API 34 emulator on a GitHub-hosted KVM runner, and kept only a small JSON result for one day. It does not upload an APK, database, fixture file, or screenshot.
 
 ## What the check proves
 
@@ -27,4 +27,4 @@ The [one-day JSON artifact](https://github.com/SlingshotToHeaven/browser/actions
 
 ## Scope still open
 
-The run did not exercise hard-link publication, kill during an in-progress exclusive copy, cover shared/removable storage or power loss, exercise an installed database upgrade, or verify Android's Open/Share chooser. The next Android batch is a seeded in-place upgrade and completed-file grants. ARM64 playback, signed release qualification and hardware checks remain separate. PERF-07 is skipped; this test makes no timing claim.
+This run did not exercise hard-link publication, kill during an in-progress exclusive copy, shared/removable storage, or power loss. An installed database upgrade and actual Android Open/Share were checked in the [separate follow-up run](android-emulator-download-upgrade.md#verified-result). ARM64 playback, signed release qualification and hardware checks remain separate. PERF-07 is skipped; this test makes no timing claim.

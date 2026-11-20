@@ -561,7 +561,7 @@ This is read access to an already-published filesystem download, **not** support
   -Pandroid.testInstrumentationRunnerArguments.class=com.privacy.browser.downloads.CompletedDownloadGrantTest
 ```
 
-The instrumentation checks the real provider and intent metadata, including an explicit grant/revoke to a separate shell UID on an unrooted device. The [device checklist](REMEDIATION_PLAN.md#06-scope-download-credentials-file-access-and-throttling) also tests actual viewer/chooser delivery. The host suite cannot verify either Android flow.
+The instrumentation checks the real provider and intent metadata, including an explicit grant/revoke to a separate shell UID on an unrooted device. Separately, the [Android 14 emulator result](docs/android-emulator-download-upgrade.md#verified-result) covers both Downloads Open actions and single/multi sharesheet delivery to a separate app using app-private storage. Other device and storage configurations remain in the [device checklist](DEVICE_TEST_CHECKLIST.md#downloads-storage-and-media-steps-0306). Host tests cannot verify either Android flow.
 
 ## Limit queued HTTP downloads
 
