@@ -104,17 +104,17 @@ elif [[ "$mode" == download-upgrade ]]; then
 fi
 "$sdkmanager" --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0'
 build_debug() { (cd "$1" && shift && ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :app:assembleDebug "$@"); }
-# The hosted image need not have FFmpeg. Use a pinned, checksum-verified host
-# executable solely for generated test inputs and JVM playback, never in either APK.
+# Old host binaries lack -abort_on empty_output_stream or can crash on the tiny
+# AAC/TS remux. Pin the month-end build used for host playback (not in either APK).
 batch_ffmpeg() {
-  if command -v ffmpeg; then return; fi
-  local archive="$root/ffmpeg-host.tgz" dir="$root/ffmpeg-host"
+  local release='autobuild-2026-09-30-13-08' asset='ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0'
+  local archive="$root/ffmpeg-host.tar.xz" dir="$root/ffmpeg-host"
   mkdir "$dir" || return 1
-  curl -fLsS --max-time 30 --retry 1 \
-    'https://registry.npmjs.org/@ffmpeg-installer/linux-x64/-/linux-x64-4.1.0.tgz' -o "$archive" || return 1
-  printf '%s  %s\n' '6390568462d4fd6a508ce02b3488170f7cf99b1c5d57c738d42f94d799ec139c85f2d55c74219eb79ccfb39672dd36ba6d4ee1686a48cebcaeb6a086400fd6f0' "$archive" \
-    | sha512sum -c --status || return 1
-  tar -xzf "$archive" -C "$dir" --strip-components=1 package/ffmpeg || return 1
+  curl -fLsS --max-time 90 --retry 1 \
+    "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/$release/$asset.tar.xz" -o "$archive" || return 1
+  printf '%s  %s\n' '68ee646831adaae2495618346f3bba94ff207ff83bbd34d643e7004730d66269' "$archive" \
+    | sha256sum -c >&2 || return 1
+  tar -xJf "$archive" -C "$dir" --strip-components=2 "$asset/bin/ffmpeg" || return 1
   [[ -x "$dir/ffmpeg" ]] || return 1
   printf '%s\n' "$dir/ffmpeg"
 }
@@ -127,7 +127,7 @@ if [[ "$mode" == download-batch ]]; then
   export FFMPEG_TEST_BIN
   (
     cd "$root/source"
-    ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :downloader:testDebugUnitTest \
+    ./gradlew --no-daemon --continue --max-workers=2 "${build_args[@]}" :downloader:testDebugUnitTest \
       :app:testDebugUnitTest --tests 'com.privacy.browser.comic.*' --tests 'com.privacy.browser.media.*'
   ) || host_status=$?
   python3 -B "$root/source/tools/record_download_batch_host.py" "$root" "$host_status" || host_status=1

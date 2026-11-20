@@ -58,7 +58,12 @@ public class DownloadMediaBatchTest extends DownloadBatchSupport {
 
     @Test public void refusesMissingAudio() throws Exception { bad("/mux-missing-audio.m3u8", "missing-audio.mp4", "muxing failed", true); }
     @Test public void refusesNonMedia() throws Exception { bad("/invalid.m3u8", "invalid.mp4", "error page instead of media", false); }
-    @Test public void refusesShortMedia() throws Exception { bad("/short.m3u8", "short.mp4", "before all expected bytes", false); }
+    @Test public void refusesShortMedia() throws Exception {
+        // Android's fixed-length HTTP body may throw at EOF instead of returning
+        // -1 to the application's own length check. Both must reject publication.
+        bad("/short.m3u8", "short.mp4", "before all expected bytes|unexpected end of stream", false);
+        assertTrue(requests("/short.ts").length() > 0);
+    }
     @Test public void refusesMuxError() throws Exception { bad("/broken-mux.m3u8", "broken-mux.mp4", "muxing failed", true); }
 
     @Test public void refusesDashBeforeFetch() throws Exception {
@@ -72,7 +77,13 @@ public class DownloadMediaBatchTest extends DownloadBatchSupport {
         DownloadItem item = item(video, name);
         if (audio != null) item.setAudioUrl(BASE + audio);
         String id = enqueue(item);
-        DownloadItem row = state(id, DownloadStatus.COMPLETED);
+        DownloadItem row;
+        try {
+            row = state(id, DownloadStatus.COMPLETED);
+        } catch (AssertionError failure) {
+            recordMuxState(id);
+            throw failure;
+        }
         drain();
         DownloadDbHelper.PublishedDownload published = db.getPublishedDownload(id);
         assertNotNull(published);
@@ -86,6 +97,20 @@ public class DownloadMediaBatchTest extends DownloadBatchSupport {
         play(path);
         evidence("translated Android JNI MP4; decoded frame, AAC packets and MediaPlayer completion; bytes=" + bytes
                 + "; sha256=" + hex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path))));
+    }
+
+    private void recordMuxState(String id) {
+        DownloadItem row = db.getDownload(id);
+        boolean inNative = false;
+        for (StackTraceElement[] frames : Thread.getAllStackTraces().values()) {
+            for (StackTraceElement frame : frames) {
+                if (FFmpegKitConfig.class.getName().equals(frame.getClassName())
+                        && "nativeFFmpegExecute".equals(frame.getMethodName())) inNative = true;
+            }
+        }
+        evidence("last row=" + (row == null ? "missing" : row.getStatus())
+                + "; mux phase=" + (row != null && "Muxing stream to MP4…".equals(row.getErrorMessage()))
+                + "; worker in nativeFFmpegExecute=" + inNative);
     }
 
     private static void checkTracks(Path path) throws Exception {
@@ -141,7 +166,9 @@ public class DownloadMediaBatchTest extends DownloadBatchSupport {
         DownloadItem row = state(id, DownloadStatus.FAILED);
         drain();
         assertNotNull(row.getErrorMessage());
-        assertTrue(row.getErrorMessage(), row.getErrorMessage().toLowerCase(Locale.ROOT).contains(reason.toLowerCase(Locale.ROOT)));
+        String lower = row.getErrorMessage().toLowerCase(Locale.ROOT);
+        assertTrue(row.getErrorMessage(), java.util.Arrays.stream(reason.split("\\|"))
+                .anyMatch(expected -> lower.contains(expected.toLowerCase(Locale.ROOT))));
         notPublished(row);
         assertEquals(0, directory.toFile().list().length);
         evidence("refused; no published output or leftover stage");

@@ -31,6 +31,7 @@ STAGE = JAVA + "downloads.DownloadControlBatchTest#stageForHostForceStop"
 PAUSED, ACTIVE = "relaunch-paused.bin", "relaunch-active.bin"
 PRIVATE = r"/data/(?:user/0|data)/com\.browser/files/download-batch-[0-9]+"
 CASE_TIME = 73
+GENERATED_MEDIA_CASES = {"stream-separate", "stream-ts", "stream-fmp4", "stream-aes128", "stream-missing-audio", "stream-short"}
 
 # Each method starts in a cleared *disposable* target profile, even after a failed case.
 CASES = {
@@ -295,7 +296,7 @@ def device_matrix(android, work, state, report, media_error):
 
     for cls, methods in CASES.items():
         for name, method in methods.items():
-            if name.startswith("stream-") and name != "stream-dash" and media_error:
+            if name in GENERATED_MEDIA_CASES and media_error:
                 report["device"][name] = {"status": "blocked", "detail": media_error}
                 continue
             selector = JAVA + cls + "#" + method
@@ -364,7 +365,7 @@ def main():
         emit_proof(report, args.work)
     statuses = [r["status"] for r in report["device"].values()]
     print("Device totals: " + ", ".join(f"{state}={statuses.count(state)}" for state in ("passed", "failed", "blocked", "not-run")))
-    return int("failed" in statuses or "not-run" in statuses or "setup_or_cleanup_error" in report)
+    return int(bool(media_error) or "failed" in statuses or "not-run" in statuses or "setup_or_cleanup_error" in report)
 
 
 if __name__ == "__main__":

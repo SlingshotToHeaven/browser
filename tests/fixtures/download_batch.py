@@ -22,31 +22,37 @@ HLS = release_mux.HLS
 JOB = r"[a-z][a-z0-9-]{0,48}\.bin"
 
 
+def playlist(segment):
+    return f"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\n{segment}\n#EXT-X-ENDLIST\n".encode()
+
+
+STATIC_MEDIA = {
+    "/invalid.m3u8": (HLS, playlist("/invalid.ts")),
+    "/invalid.ts": ("video/mp2t", b"<!DOCTYPE html><html><body>Fixture error</body></html>"),
+    "/broken-mux.m3u8": (HLS, playlist("/broken-mux.ts")),
+    # Looks like TS at the sniff boundary but carries no elementary streams.
+    "/broken-mux.ts": ("video/mp2t", (b"\x47\x1f\xff\x10" + b"\xff" * 184) * 32),
+    "/unsupported.mpd": ("application/dash+xml", b"<MPD/>"),
+}
+
+
 def media_assets(ffmpeg):
     assets = release_mux.build_assets(ffmpeg)
     transport = assets["/av.ts"][1]
     key, iv = bytes(range(16)), bytes(range(16, 32))
     cipher = subprocess.run(["openssl", "enc", "-aes-128-cbc", "-K", key.hex(), "-iv", iv.hex()],
                             input=transport, check=True, capture_output=True, timeout=10).stdout
-    playlist = lambda segment: f"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\n{segment}\n#EXT-X-ENDLIST\n".encode()
     encrypted = playlist("/encrypted.ts").replace(b"#EXTINF", (f'#EXT-X-KEY:METHOD=AES-128,URI="/fixture.key",IV=0x{iv.hex()}\n#EXTINF').encode())
     assets.update({"/encrypted.m3u8": (HLS, encrypted), "/encrypted.ts": ("video/mp2t", cipher),
                    "/fixture.key": ("application/octet-stream", key),
-                   "/short.m3u8": (HLS, playlist("/short.ts")),
-                   "/invalid.m3u8": (HLS, playlist("/invalid.ts")),
-                   "/broken-mux.m3u8": (HLS, playlist("/broken-mux.ts")),
-                   "/short.ts": ("video/mp2t", transport),
-                   "/invalid.ts": ("video/mp2t", b"<!DOCTYPE html><html><body>Fixture error</body></html>"),
-                   # Looks like TS at the sniff boundary but carries no elementary streams.
-                   "/broken-mux.ts": ("video/mp2t", (b"\x47\x1f\xff\x10" + b"\xff" * 184) * 32),
-                   "/unsupported.mpd": ("application/dash+xml", b"<MPD/>")})
+                   "/short.m3u8": (HLS, playlist("/short.ts")), "/short.ts": ("video/mp2t", transport)})
     return assets
 
 
 class State:
     def __init__(self, assets=None):
         self.lock, self.events, self.gates = Lock(), [], {}
-        self.assets = {} if assets is None else assets
+        self.assets = STATIC_MEDIA | (assets or {})
 
     def gate(self, name, action):
         with self.lock:
@@ -105,15 +111,17 @@ class Fixture(scoped_downloads.Fixture):
                       <script>addEventListener('message', e => {{
                         if(e.origin !== '{origin}' || e.source !== document.querySelector('iframe').contentWindow) return;
                         if(e.data === 'ready') window.fixtureFrame = true;
+                        if(e.data === 'pointer') window.fixtureFramePointer = true;
                         if(e.data === 'real-click') window.fixtureFrameTapped = true;
                       }})</script>''')
         elif not primary and path == "/foreign-frame":
             owner = f"http://127.0.0.1:{self.server.primary_port}"
-            self.html(path, f'''<style>body{{margin:0}} a{{height:100vh;display:grid;place-items:center}}</style>
-                      <a id="blob" download="foreign.bin">Foreign fixture blob</a><script>
-                      const link = document.querySelector('#blob');
+            self.html(path, f'''<style>body{{margin:0}} button{{width:100vw;height:100vh;font-size:18px}}</style>
+                      <button id="offer">Request frame blob</button><a id="blob" hidden download="foreign.bin"></a><script>
+                      const link = document.querySelector('#blob'), button = document.querySelector('#offer');
                       link.href=URL.createObjectURL(new Blob(['foreign fixture'],{{type:'application/octet-stream'}}));
-                      link.addEventListener('click',e=>{{if(e.isTrusted) parent.postMessage('real-click','{owner}')}});
+                      button.addEventListener('pointerdown',e=>{{if(e.isTrusted) parent.postMessage('pointer','{owner}')}});
+                      button.addEventListener('click',e=>{{if(e.isTrusted){{ link.click(); parent.postMessage('real-click','{owner}'); }} }});
                       parent.postMessage('ready','{owner}');
                       </script>''')
         elif primary and path == "/session/external.bin":

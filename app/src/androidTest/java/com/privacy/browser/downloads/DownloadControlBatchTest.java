@@ -8,6 +8,7 @@ import android.net.NetworkCapabilities;
 import android.os.SystemClock;
 import android.service.notification.StatusBarNotification;
 
+import com.privacy.downloader.engine.DownloadEngine;
 import com.privacy.downloader.model.DownloadItem;
 import com.privacy.downloader.model.DownloadSegment;
 import com.privacy.downloader.service.DownloadService;
@@ -80,6 +81,11 @@ public class DownloadControlBatchTest extends DownloadBatchSupport {
             shell("dumpsys battery unplug");
             shell("dumpsys battery set status 3");
             shell("dumpsys battery set level 10");
+            // dumpsys updates BatteryService before the application's receiver sees
+            // the asynchronous broadcast. Keep the schedule closed until that event.
+            var observedBattery = DownloadEngine.class.getDeclaredField("lowBatteryUnplugged");
+            observedBattery.setAccessible(true);
+            waitFor("production receiver observed low unplugged battery", 8000, () -> observedBattery.getBoolean(engine));
             LocalTime now = LocalTime.now();
             int minute = now.getHour() * 60 + now.getMinute();
             constraints(false, true, 2, true, (minute + 1435) % 1440, (minute + 5) % 1440);

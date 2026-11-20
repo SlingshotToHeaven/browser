@@ -1,12 +1,11 @@
 """Host tests of the batch fixtures and evidence parser; no Android target is touched."""
 from contextlib import closing
 from hashlib import sha256
-from http.client import HTTPConnection
+from http.client import HTTPConnection, IncompleteRead
 import json
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
-from threading import Thread
 import unittest
 from unittest.mock import patch
 
@@ -65,6 +64,22 @@ class BatchEvidenceTest(unittest.TestCase):
             summary = host.summarize(root, 1)
             self.assertEqual({"passed": 3, "failed": 2, "skipped": 1}, summary["host_jvm_by_class"]["Fixture"])
             self.assertFalse(summary["ffmpeg_configured"])
+            self.assertIsNone(summary["ffmpeg_version"])
+
+    def test_jvm_playback_keeps_independent_method_outcomes(self):
+        with TemporaryDirectory() as tmp, patch.dict("os.environ", {"GITHUB_SHA": "0" * 40, "FFMPEG_TEST_BIN": "fixture"}):
+            root = Path(tmp)
+            folder = root / "source/downloader/build/test-results/testDebugUnitTest"
+            folder.mkdir(parents=True)
+            (folder / "TEST-playback.xml").write_text(
+                f'<testsuite name="{host.PLAYBACK_SUITE}" tests="3" failures="1" skipped="1">'
+                '<testcase name="decoded"/><testcase name="failed"><failure>omitted</failure></testcase>'
+                '<testcase name="blocked"><skipped/></testcase></testsuite>')
+            with patch.object(host, "ffmpeg_version", return_value="n9.0.2-17-g2a571b6068") as version:
+                summary = host.summarize(root, 1)
+            version.assert_called_once_with("fixture")
+            self.assertEqual("n9.0.2-17-g2a571b6068", summary["ffmpeg_version"])
+            self.assertEqual({"decoded": "passed", "failed": "failed", "blocked": "skipped"}, summary["playback_by_test"])
 
 
 class BatchFixtureTest(unittest.TestCase):
@@ -120,6 +135,20 @@ class BatchFixtureTest(unittest.TestCase):
         self.assertIn(b"URL.createObjectURL", frame)
         self.assertIn(b"if(e.isTrusted)", frame)
         self.assertIn(f"'http://127.0.0.1:{self.primary}'".encode(), frame)
+
+    def test_static_negative_media_available_without_host_ffmpeg(self):
+        for manifest, segment in (("/invalid.m3u8", "/invalid.ts"), ("/broken-mux.m3u8", "/broken-mux.ts")):
+            self.assertIn(segment.encode(), self.call(manifest)[2])
+            self.assertEqual(200, self.call(segment)[0])
+
+    def test_short_fixture_advertises_more_bytes_than_it_sends(self):
+        transport = b'\x47' * 188
+        self.state.assets["/short.ts"] = ("video/mp2t", transport)
+        with self.assertRaises(IncompleteRead) as truncated:
+            self.call("/short.ts")
+        self.assertEqual(transport[:63], truncated.exception.partial)
+        self.assertEqual(len(transport) - 63, truncated.exception.expected)
+        self.assertEqual(200, self.state.requests("/short.ts")[0]["code"])
 
     def test_fixture_archive_images_and_verification(self):
         self.assertIn(b'"/images/red.png", "/reader/green", "/images/red.png"', self.call("/comic/ok")[2])

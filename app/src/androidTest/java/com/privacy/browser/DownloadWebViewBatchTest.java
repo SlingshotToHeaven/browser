@@ -3,6 +3,7 @@ package com.privacy.browser;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.webkit.WebView;
 
 import androidx.webkit.WebViewFeature;
 
@@ -17,6 +18,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static com.privacy.downloader.model.DownloadStatus.*;
 import static org.junit.Assert.*;
@@ -128,7 +131,13 @@ public class DownloadWebViewBatchTest extends DownloadBrowserBatchSupport {
     @Test public void shortBlobRejectsAndCleansUp() throws Exception {
         blob("short");
         String id = acceptBlob("short-blob.bin");
-        blobRejected(id, FAILED, "before all expected bytes");
+        blobRejected(id, FAILED, null);
+        String reason = db.getDownload(id).getErrorMessage();
+        // The actual page script may reject a declared short body before the native
+        // reader could see an end frame. Either way no file may be published.
+        assertTrue(reason, reason != null && (reason.contains("before all expected bytes")
+                || reason.contains("The page could not read the blob")));
+        assertEquals(5, counter("chunks"));
         assertEquals(1, counter("status"));
     }
 
@@ -162,9 +171,21 @@ public class DownloadWebViewBatchTest extends DownloadBrowserBatchSupport {
         supportedBlob();
         open("/frames");
         long count = db.countDownloads();
-        waitFor("foreign frame link rendered", () -> Boolean.TRUE.equals(js("!!window.fixtureFrame")));
-        tapDom("document.querySelector('iframe')", false);
-        waitFor("trusted click reached the foreign fixture frame", 7000, () -> Boolean.TRUE.equals(js("!!window.fixtureFrameTapped")));
+        waitFor("foreign frame button loaded", () -> Boolean.TRUE.equals(js("!!window.fixtureFrame")));
+        var view = ui(() -> selected().getWebView());
+        CountDownLatch rendered = new CountDownLatch(1);
+        ui(() -> {
+            view.postVisualStateCallback(1, new WebView.VisualStateCallback() {
+                @Override public void onComplete(long id) { rendered.countDown(); }
+            });
+            return null;
+        });
+        assertTrue("Foreign frame not ready to draw", rendered.await(6, TimeUnit.SECONDS));
+        AccessibilityNodeInfo button = node(null, "Request frame blob");
+        if (button != null) tapBounds(button, false);
+        else tapDom("document.querySelector('iframe')", false);
+        waitFor("trusted pointer reached the foreign fixture frame", 4000, () -> Boolean.TRUE.equals(js("!!window.fixtureFramePointer")));
+        waitFor("trusted click attempted a foreign frame download", 5000, () -> Boolean.TRUE.equals(js("!!window.fixtureFrameTapped")));
         SystemClock.sleep(700);
         assertNull(node("prompt_btn_download", null));
         assertEquals(count, db.countDownloads());
