@@ -237,6 +237,11 @@ def status(android, label):
     android.view("card_text_status_badge", label)
 
 
+def publication_kind(final, staged):
+    require(final[1] == staged[1] == DIGEST, "Published and staged file bytes do not both match the fixture")
+    return "hard-link" if final[0].split(":")[:2] == staged[0].split(":")[:2] else "verified-copy"
+
+
 def verify_unpublished(row):
     require(row["published_identity"] is None and row["finished_time"] == 0,
             "The download already had committed completion metadata")
@@ -320,8 +325,6 @@ def run_case(android, work, server, report):
     port = server.server_port
     url = f"http://127.0.0.1:{port}/jobs/{NAME}"
     directory = prepare(android)
-    cut = f"{directory}/uncommitted.saved"
-    sentinel = f"{directory}/sentinel.saved"
     android.command("reverse", f"tcp:{port}", f"tcp:{port}")
     try:
         report["phase"] = "real download and exact pre-commit breakpoint"
@@ -345,10 +348,11 @@ def run_case(android, work, server, report):
             bound_path(android, directory, before["destination_key"], re.escape(NAME))
             stage = bound_path(android, directory, before["temp_path"], r"download-[0-9]+\.part")
             original = android.file(dest)
-            require(original[1] == DIGEST and original == android.file(stage),
-                    "Expected a verified hard link from the real staged file before SQLite completion")
+            checkpoint = android.file(stage)
+            report["at_cut"].update({"published_identity": None, "final_file_sha256": original[1],
+                                     "staged_file_sha256": checkpoint[1]})
+            report["at_cut"]["publication"] = publication_kind(original, checkpoint)
             require(server.requests == INITIAL_REQUESTS, "Unexpected requests before the cut")
-            report["at_cut"].update({"published_identity": None, "same_inode": True, "final_file_sha256": original[1]})
             report["phase"] = "force-stop and verify uncommitted state before relaunch"
             require(dbg.poll() is None and android.pid() == old_pid, "Held process disappeared before the cut")
             android.shell("am", "force-stop", PACKAGE)
@@ -368,13 +372,17 @@ def run_case(android, work, server, report):
         verify_occupied(recovered)
         require(recovered["id"] == before["id"] and recovered["dest_path"] == dest and recovered["temp_path"] == stage
                 and recovered["downloaded_bytes"] == LENGTH and saved_segments == segments
-                and android.file(dest) == original and android.file(stage) == original,
+                and android.file(dest) == original and android.file(stage) == checkpoint,
                 "Recovery changed the original reserved file or its checkpoint")
         require(server.requests == INITIAL_REQUESTS, "Occupied name issued requests on recovery")
         report["relaunch"] = {"new_process": True, "ui": "FAILED", "db": "FAILED", "reason": recovered["error_message"],
                               "preserved_final_and_checkpoint": True, "new_requests": 0}
 
         report["phase"] = "reject an unrelated file at the same reserved name"
+        # Use the very same mount path for rename, not a possibly separate alias.
+        parent = str(Path(dest).parent)
+        cut = f"{parent}/uncommitted.saved"
+        sentinel = f"{parent}/sentinel.saved"
         android.app("mv", "-n", dest, cut)
         android.write_new(dest, SENTINEL)
         occupied_file = android.file(dest)
@@ -390,7 +398,7 @@ def run_case(android, work, server, report):
         verify_occupied(blocked)
         require(blocked["id"] == before["id"] and blocked["dest_path"] == dest and blocked["temp_path"] is None
                 and blocked["downloaded_bytes"] == 0 and android.file(dest) == occupied_file
-                and android.file(stage) == original and android.file(cut) == original
+                and android.file(stage) == checkpoint and android.file(cut) == original
                 and set(android.app("ls", "-1", directory).decode().splitlines()) == {NAME, Path(stage).name, Path(cut).name}
                 and server.requests == INITIAL_REQUESTS, "An occupied retry changed files or touched the network")
         report["unrelated_destination"] = {"start_over_refused": True, "bytes_unchanged": len(SENTINEL),
@@ -409,7 +417,7 @@ def run_case(android, work, server, report):
                 and completed["finished_time"] > 0 and completed["temp_path"] is None and completed["error_message"] is None
                 and completed["total_bytes"] == completed["downloaded_bytes"] == LENGTH
                 and completed["published_identity"] == final[0] and final[1] == DIGEST and final[0] != original[0]
-                and android.file(sentinel) == occupied_file and android.file(stage) == original and android.file(cut) == original
+                and android.file(sentinel) == occupied_file and android.file(stage) == checkpoint and android.file(cut) == original
                 and set(android.app("ls", "-1", directory).decode().splitlines()) == {
                     NAME, Path(stage).name, Path(cut).name, Path(sentinel).name}
                 and server.requests == INITIAL_REQUESTS + ["fresh-200"], "Retry did not commit one new, byte-exact file")

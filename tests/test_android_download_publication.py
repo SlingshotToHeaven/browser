@@ -12,7 +12,8 @@ from xml.etree import ElementTree as ET
 
 from test_download_queue_sql import create
 from tools.check_android_download_publication import (
-    CheckFailed, DIGEST, ETAG, INITIAL_REQUESTS, LENGTH, NAME, bound_path, find_view, fixture, read_state, until,
+    CheckFailed, DIGEST, ETAG, INITIAL_REQUESTS, LENGTH, NAME, bound_path,
+    find_view, fixture, publication_kind, read_state, until,
 )
 
 
@@ -56,6 +57,15 @@ class AndroidDownloadPublicationEvidenceTest(unittest.TestCase):
                     writer.execute("INSERT INTO downloads (id,url,status) VALUES ('extra','local','COMPLETED')")
                 with self.assertRaises(CheckFailed):
                     read_state(main, wal.read_bytes(), work)
+
+    def test_final_file_must_match_the_fixture_on_both_publication_paths(self):
+        staged = ("12:7:123:4194304", DIGEST)
+        self.assertEqual("hard-link", publication_kind(staged, staged))
+        self.assertEqual("verified-copy", publication_kind(("12:8:124:4194304", DIGEST), staged))
+        with self.assertRaises(CheckFailed):
+            publication_kind(("12:8:124:4194304", "wrong"), staged)
+        with self.assertRaises(CheckFailed):
+            publication_kind(("12:8:124:4194304", "wrong"), ("12:7:123:4194304", "wrong"))
 
     def test_path_alias_requires_the_exact_created_directory(self):
         directory = "/data/data/com.browser/files/download-publication"
