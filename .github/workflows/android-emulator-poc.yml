@@ -1,0 +1,78 @@
+name: Android emulator browser PoC
+
+# A branch-scoped smoke run, not part of release verification or PERF-07.
+on:
+  push:
+    branches: [arena/bb0ffed3-browser]
+    paths:
+      - .github/workflows/android-emulator-poc.yml
+      - tools/android_emulator_poc.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-emulator-browser-poc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshot:
+    name: Boot one Android emulator and capture the browser
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify hardware acceleration and capture the installed debug browser
+        run: bash tools/android_emulator_poc.sh
+      - name: Upload only the screenshot and small proof record
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-browser-poc
+          path: ${{ runner.temp }}/browser-emulator-poc/proof/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      # The full PNG is the artifact. A bounded JPEG preview is also available
+      # via the check API for clients that cannot follow artifact-storage redirects.
+      - name: Export a small API-readable preview of the actual screenshot
+        continue-on-error: true
+        run: |
+          root="$RUNNER_TEMP/browser-emulator-poc"
+          if ! python3 -B -c 'import PIL' 2>/dev/null; then
+            python3 -m pip install --disable-pip-version-check --no-cache-dir --no-deps \
+              --target "$root/preview-tools" Pillow==12.2.0
+            export PYTHONPATH="$root/preview-tools"
+          fi
+          python3 -B - "$root/proof/browser.png" <<'PY'
+          import base64
+          import hashlib
+          import io
+          import sys
+          from PIL import Image
+
+          image = Image.open(sys.argv[1]).convert('RGB')
+          for size in ((540, 960), (450, 800), (360, 640)):
+              image.thumbnail(size, Image.Resampling.LANCZOS)
+              for quality in (84, 76, 68, 60, 52, 44):
+                  out = io.BytesIO()
+                  image.save(out, format='JPEG', quality=quality, optimize=True)
+                  data = out.getvalue()
+                  if len(data) <= 26 * 1024:
+                      break
+              else:
+                  continue
+              break
+          else:
+              raise SystemExit('Small preview exceeded its size budget; use the PNG artifact')
+          digest = hashlib.sha256(data).hexdigest()
+          code = base64.b64encode(data).decode('ascii')
+          parts = [code[i:i+3600] for i in range(0, len(code), 3600)]
+          for i, part in enumerate(parts, 1):
+              print(f'::notice title=Browser PoC preview {i}/{len(parts)}::BROWSER_POC_JPEG {i} {len(parts)} {digest} {part}')
+          PY
