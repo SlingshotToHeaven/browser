@@ -1,7 +1,7 @@
-name: Android emulator download upgrade and sharing
+name: Android emulator download mid-copy recovery
 
-# This branch-scoped runtime batch replaces the prior publication-only CI run.
-# The original download-publication and launch modes remain in the runner.
+# Run only the current branch-scoped mid-copy batch. Earlier launch,
+# publication and upgrade/share modes remain available in the runner.
 on:
   push:
     branches: [arena/bb0ffed3-browser]
@@ -9,10 +9,9 @@ on:
       - .github/workflows/android-emulator-poc.yml
       - tools/android_emulator_poc.sh
       - tools/check_android_download_publication.py
-      - tools/check_android_download_upgrade.py
-      - tools/prepare_perf_baselines.py
-      - tests/fixtures/download_upgrade/**
-      - tests/fixtures/perf_baselines/**
+      - tools/check_android_download_mid_copy.py
+      - tests/fixtures/download_publication/PublicationPause.java
+      - tests/fixtures/download_recovery.py
 
 permissions:
   contents: read
@@ -22,8 +21,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  download-upgrade:
-    name: Replace v7 in place and exercise Android Open and Share
+  download-mid-copy:
+    name: Force-stop an actual Android file copy and verify checkpoint retry
     runs-on: ubuntu-24.04
     timeout-minutes: 18
     steps:
@@ -34,11 +33,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Build, boot one AVD, and exercise the installed schema upgrade and URI delivery
+      - name: Build, boot one AVD, and interrupt the production copy loop
         shell: bash
         run: |
           log="$RUNNER_TEMP/browser-emulator-step.log"
-          if bash tools/android_emulator_poc.sh download-upgrade 2>&1 | tee "$log"; then
+          if bash tools/android_emulator_poc.sh download-mid-copy 2>&1 | tee "$log"; then
             exit 0
           else
             status=$?
@@ -52,14 +51,14 @@ jobs:
           tail = Path(sys.argv[1]).read_text(errors='replace')[-3000:]
           tail = re.sub(r'(https?://[^\s?]+)\?[^\s]+', r'\1', tail)
           tail = tail.strip().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')[:3600]
-          print(f'::error title=Android download upgrade and sharing check did not pass::{tail or "See the job result"}')
+          print(f'::error title=Android mid-copy recovery check did not pass::{tail or "See the job result"}')
           PY
           exit "$status"
-      - name: Retain only the small download result record
+      - name: Retain only the small mid-copy result record
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: android-download-upgrade
-          path: ${{ runner.temp }}/browser-emulator-poc/proof/download-upgrade.json
+          name: android-download-mid-copy
+          path: ${{ runner.temp }}/browser-emulator-poc/proof/download-mid-copy.json
           if-no-files-found: warn
           retention-days: 1

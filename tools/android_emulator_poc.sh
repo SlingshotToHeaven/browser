@@ -7,8 +7,8 @@ if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hoste
   exit 1
 fi
 mode=${1:-launch}
-if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade ]]; then
-  echo 'Expected launch, download-publication, or download-upgrade.' >&2
+if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade && "$mode" != download-mid-copy ]]; then
+  echo 'Expected launch, download-publication, download-upgrade, or download-mid-copy.' >&2
   exit 2
 fi
 : "${RUNNER_TEMP:?}" "${ANDROID_HOME:?}" "${GITHUB_SHA:?}"
@@ -95,7 +95,7 @@ fi
 
 [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
 git archive "$GITHUB_SHA" | tar -x -C "$root/source"
-if [[ "$mode" == download-publication ]]; then
+if [[ "$mode" == download-publication || "$mode" == download-mid-copy ]]; then
   mkdir "$root/jdi"
   "${JAVA_HOME:?}/bin/javac" --add-modules jdk.jdi -d "$root/jdi" \
     "$root/source/tests/fixtures/download_publication/PublicationPause.java"
@@ -170,9 +170,9 @@ fi
 android install --user 0 "$apk"  # the normal debug APK, not a mock/repacked build
 # Remove only the first-run notification prompt on the empty AVD.
 android shell pm grant --user 0 com.browser android.permission.POST_NOTIFICATIONS
-if [[ "$mode" == download-publication ]]; then
+if [[ "$mode" == download-publication || "$mode" == download-mid-copy ]]; then
   apk_sha=$(sha256sum "$apk" | cut -d ' ' -f1)
-  python3 -B "$root/source/tools/check_android_download_publication.py" \
+  python3 -B "$root/source/tools/check_android_${mode//-/_}.py" \
     --adb "$adb" --work "$root" --apk-sha256 "$apk_sha"
   exit 0
 fi

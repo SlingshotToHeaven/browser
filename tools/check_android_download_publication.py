@@ -210,7 +210,7 @@ def find_view(root, name, text=None):
     return choices[0] if choices else None
 
 
-def read_state(database, wal, work):
+def read_state(database, wal, work, allow_empty=False):
     with TemporaryDirectory(prefix="sqlite-", dir=work) as tmp:
         copy = Path(tmp) / "downloads.db"
         copy.write_bytes(database)
@@ -220,8 +220,12 @@ def read_state(database, wal, work):
             connection.row_factory = sqlite3.Row
             rows = connection.execute("SELECT id,file_name,url,status,attempt_token,dest_path,destination_key,"
                                       "temp_path,total_bytes,downloaded_bytes,finished_time,published_identity,"
-                                      "error_message,full_download_only FROM downloads").fetchall()
-            require(len(rows) == 1, "Expected exactly one download in the fresh app database")
+                                      "error_message,full_download_only,supports_range,verified_range_url,etag FROM downloads").fetchall()
+            if not rows and allow_empty:
+                require(connection.execute("SELECT 1 FROM download_segments LIMIT 1").fetchone() is None,
+                        "Expected no orphan checkpoint after clearing fixture history")
+                return None
+            require(len(rows) == 1, "Expected exactly one download in the fixture database")
             row = dict(rows[0])
             segments = connection.execute("SELECT start_byte,end_byte,current_byte,status FROM download_segments "
                                           "WHERE task_id=? ORDER BY segment_index", (row["id"],)).fetchall()
@@ -241,8 +245,8 @@ def snapshot_bytes(android):
     return until(stable, "stable Android SQLite snapshot", seconds=10)
 
 
-def snapshot(android, work):
-    return read_state(*snapshot_bytes(android), work)
+def snapshot(android, work, allow_empty=False):
+    return read_state(*snapshot_bytes(android), work, allow_empty=allow_empty)
 
 
 def status(android, label):
@@ -266,10 +270,10 @@ def verify_occupied(row):
             "The reserved destination did not cause a safe occupied-name refusal")
 
 
-def bound_path(android, configured_dir, path, file_pattern):
-    # The app and run-as can see different /data/data versus /data/user/0 aliases.
+def bound_path(android, configured_dir, path, file_pattern, directory_pattern=PRIVATE_DIR):
+    # The app and run-as may see different aliases for the same directory.
     # Accept only a known fixture basename in the exact directory that we created.
-    require(path and re.fullmatch(PRIVATE_DIR + "/" + file_pattern, path), "Unexpected file path in the fixture row")
+    require(path and re.fullmatch(directory_pattern + "/" + file_pattern, path), "Unexpected file path in the fixture row")
     expected_parent = android.app("stat", "-L", "-c", "%d:%i", configured_dir).strip()
     actual_parent = android.app("stat", "-L", "-c", "%d:%i", str(Path(path).parent)).strip()
     require(re.fullmatch(rb"\d+:\d+", expected_parent) and actual_parent == expected_parent,
@@ -301,20 +305,22 @@ def ready_to_enqueue(android, directory, url, name=NAME):
         android.shell("input", "keyevent", "KEYCODE_BACK")
     android.tap("add_url_btn_continue")
     android.view("prompt_edit_filename", name)
-    android.view("prompt_text_folder_path", directory)
+    if directory is not None:
+        android.view("prompt_text_folder_path", directory)
     android.tap("prompt_pill_thread_1")
     return android.view("prompt_btn_download", "Download")
 
 
 @contextmanager
-def debugger(android, work, pid):
+def debugger(android, work, pid, *cut_args):
     port = android.command("forward", "tcp:0", f"jdwp:{pid}").stdout.decode().strip()
     require(port.isdigit(), "Could not create local ADB debugger forward")
     transcript = work / "debugger.log"
     java = str(Path(os.environ["JAVA_HOME"]) / "bin" / "java")
     with transcript.open("wb") as log:
         dbg = subprocess.Popen([java, "--add-modules", "jdk.jdi", "-cp", str(work / "jdi"),
-                                "PublicationPause", port], stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+                                "PublicationPause", port, *map(str, cut_args)],
+                               stdin=subprocess.DEVNULL, stdout=log, stderr=log)
         try:
             yield dbg, transcript
         finally:
