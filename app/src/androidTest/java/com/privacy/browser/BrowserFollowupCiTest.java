@@ -126,6 +126,7 @@ public final class BrowserFollowupCiTest extends BrowserRecoveryCiSupport {
         launch(main());
         waitPage(STARTUP + "/tab/30");
         startupInventory(seeded, 29, 1);
+        observe("first committed selection and one live view verified before switching to row 7");
         ui(() -> { tabs().switchTab(6); return null; });
         waitPage(STARTUP + "/tab/7");
         startupInventory(seeded, 6, 2);
@@ -221,8 +222,10 @@ public final class BrowserFollowupCiTest extends BrowserRecoveryCiSupport {
         assertTrue("No WebView visual milestone", done.await(6, TimeUnit.SECONDS));
         JSONArray hit = (JSONArray) js(view, "(()=>{const e=" + match + ",r=e.getBoundingClientRect(),v=visualViewport;"
                 + "const x=r.left+r.width/2,y=r.top+r.height/2,s=devicePixelRatio*v.scale;"
-                + "const node=document.elementFromPoint(x,y); return [e===node||e.contains(node),(x-v.offsetLeft)*s,(y-v.offsetTop)*s]})()");
-        assertTrue("Tap point was covered or off-screen", hit.getBoolean(0));
+                + "const node=document.elementFromPoint(x,y),style=getComputedStyle(e);"
+                + "return [e===node||e.contains(node),(x-v.offsetLeft)*s,(y-v.offsetTop)*s,"
+                + "r.width,r.height,style.display,style.visibility,(node||{}).tagName||'none']})()");
+        assertTrue("Tap point was covered or off-screen: " + hit, hit.getBoolean(0));
         int[] screen = ui(() -> {
             int x = (int) Math.round(hit.getDouble(1)), y = (int) Math.round(hit.getDouble(2));
             Rect rect = new Rect();

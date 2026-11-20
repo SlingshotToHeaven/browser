@@ -1,4 +1,5 @@
 """Two loopback origins for one synthetic attachment and input delivery checks."""
+from base64 import b64decode
 from contextlib import ExitStack, contextmanager
 from http.server import ThreadingHTTPServer
 import json
@@ -9,7 +10,11 @@ from browser_recovery import Handler as Base, State
 
 PORTS = (8027, 8028)
 ACKS = frozenset(f"{phase}-{mode}" for phase in ("ready", "down", "tap") for mode in ("top", "frame"))
-HTML = '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">'
+# An implicit favicon 404 can invoke the app's failed-subresource handling and
+# collapse an already loaded frame on the same host. Keep this fixture complete.
+ICON_DATA = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+HTML = ('<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'<link rel="icon" href="data:image/gif;base64,{ICON_DATA}">')
 ATTACHMENT = HTML + """<title>Synthetic attachment</title><style>
 body{margin:0}#offer{display:grid;place-items:center;width:100%;height:180px;background:#fde047;color:black}
 </style><a id="offer" download="fixture.bin">Download synthetic attachment</a><script>
@@ -30,6 +35,9 @@ class Handler(Base):
             return
         path = urlsplit(self.path).path
         state = self.server.fixture
+        if path == "/favicon.ico":
+            self.reply(200, b64decode(ICON_DATA), "image/gif")
+            return
         if self.server.is_child:
             if path == "/offer":
                 state.record("child", "GET", path, False)

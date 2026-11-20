@@ -31,6 +31,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Build and exercise Android functional cases
+        # The optional commit marker runs only the two diagnostic follow-ups.
+        env:
+          ANDROID_FUNCTIONAL_SCOPE: ${{ contains(github.event.head_commit.message, '[functional-recheck]') && 'recheck' || 'all' }}
         shell: bash
         run: |
           log="$RUNNER_TEMP/functional-followup.log"

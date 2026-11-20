@@ -3,7 +3,7 @@
 import argparse
 import base64
 from collections import Counter
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, suppress
 import gzip
 from hashlib import sha256
 from http.server import ThreadingHTTPServer
@@ -17,9 +17,10 @@ import time
 from urllib.parse import urlsplit
 
 from check_android_browser_recovery import (
-    PACKAGE, PREFIX, CheckFailed, Emulator, args, clear_disposable_profile, compact,
+    EVIDENCE, PACKAGE, PREFIX, CheckFailed, Emulator, args, clear_disposable_profile, compact,
     fixtures as privacy, installed, provider, require, result_for,
 )
+from check_android_download_mid_copy import browser_events, exit_reasons
 import blob_frame_followup as frame
 import startup_restore as startup
 import tab_trust
@@ -48,6 +49,7 @@ NEW = {
     "startup-state-missing": "missingNativeStateFallsBackToSelectedUrlWithoutLoadingOthers",
     "startup-link": "incomingLinkWinsBeforeSavedTabCanNavigate",
 }
+RECHECK = frozenset({"foreign-frame", "startup-select"})
 STARTUP_FETCHES = {
     "startup-select": {"GET /tab/30": 1, "GET /tab/7": 1},
     "startup-state-missing": {"GET /tab/30": 1},
@@ -62,10 +64,14 @@ def methods(cls):
     return items
 
 
-def plan():
+def plan(scope="all"):
+    require(scope in {"all", "recheck"}, "Unknown Android functional scope")
     require(set(methods(FOLLOWUP)) == set(NEW.values()), "Follow-up's test and runner inventories differ")
     for group, method in NEW.items():
-        yield group, f"{FOLLOWUP}#{method}"
+        if scope == "all" or group in RECHECK:
+            yield group, f"{FOLLOWUP}#{method}"
+    if scope == "recheck":
+        return
     yield "tab-session", "TabSessionDeviceTest#platformBundleWithoutNativeHistoryIsNotARestoredPage"
     for group, cls in EXISTING.items():
         for method in methods(cls):
@@ -125,6 +131,9 @@ def test_result(output, selector, exit_code):
         end = [line for line in lines if line.startswith(("INSTRUMENTATION_RESULT: shortMsg=", "INSTRUMENTATION_FAILED:", "INSTRUMENTATION_CODE:"))]
         result = {"status": "failed", "kind": "runner", "detail": compact(exc),
                   "terminal_hint": compact("; ".join(end[-3:]) or "none"), "status_codes": statuses[-10:]}
+        milestones = [compact(line.removeprefix(EVIDENCE)) for line in lines if line.startswith(EVIDENCE)]
+        if milestones:
+            result["evidence"] = milestones[:4]
     if result["status"] == "passed" and exit_code != 0:
         result.update(status="failed", kind="runner", detail=f"ADB instrumentation exit was {exit_code}")
     return result
@@ -150,6 +159,37 @@ def observe_routes(group, result, privacy_state, frame_state, startup_state):
         result.update(status="failed", kind="fixture-observation", detail="Unexpected synthetic fetch or missing independent wire control")
 
 
+def crash_signature(raw, pids):
+    """Keep app-process exception classes, first-party Java frames or signal numbers, never messages."""
+    signatures = []
+    for line in raw.splitlines():
+        entry = re.fullmatch(r"[EF]/(?:AndroidRuntime|libc)\s*\(\s*(\d+)\): (.*)", line)
+        if not entry or int(entry[1]) not in pids:
+            continue
+        message = entry[2]
+        match = re.match(r"(?:Caused by: )?((?:[\w$]+[.])+[\w$]+)(?:[: ]|$)", message)
+        if not match:
+            match = re.match(r"\s+at (com[.]privacy[.][\w.$]+\([\w.$]+[.]java:\d+\))", message)
+        if not match:
+            match = re.match(r"(Fatal signal \d+)", message)
+        if match and match[1] not in signatures:
+            signatures.append(match[1])
+    return signatures[:12]
+
+
+def attach_process_evidence(android, previous, result):
+    if previous is None:
+        return
+    with suppress(CheckFailed, OSError, subprocess.SubprocessError):
+        recent = [item for item in browser_events(android) if item not in previous]
+        pids = {pid for tag, pid, *_ in recent if tag == "am_proc_start"}
+        if pids:
+            result["browser_events"] = [item for item in recent if item[1] in pids]
+            result["browser_exit_reasons"] = [item for item in exit_reasons(android) if item[0] in pids]
+            log = android.text("logcat", "-b", "crash", "-d", "-t", "240", "-v", "brief", "-s", "AndroidRuntime:E", "libc:F")
+            result["app_crash_signature"] = crash_signature(log, pids)
+
+
 def execute(android, states, results):
     privacy_state, frame_state, startup_state = states
     for test, result in results.items():
@@ -163,12 +203,18 @@ def execute(android, states, results):
             result.update(status="not-run", detail=compact(error))
         else:
             selector = PREFIX + test
+            previous = None
+            if group in RECHECK:
+                with suppress(CheckFailed, OSError, subprocess.SubprocessError):
+                    previous = browser_events(android)
             try:
                 invocation = android.shell(*args(selector), timeout=150 if group == "tab-residency" else 75, check=False)
                 result.update(test_result((invocation.stdout + invocation.stderr).decode(errors="replace"), selector, invocation.returncode))
             except (CheckFailed, OSError, subprocess.SubprocessError) as error:
                 result.update(status="failed", kind="runner", detail=compact(error))
             observe_routes(group, result, privacy_state, frame_state, startup_state)
+            if result.get("kind") == "runner" or result["status"] == "not-run":
+                attach_process_evidence(android, previous, result)
         result["seconds"] = round(time.monotonic() - start, 1)
         print(f"{group} {test.rsplit('#', 1)[-1]}: {result['status']} ({result['seconds']}s) {result.get('detail', '')}", flush=True)
 
@@ -196,8 +242,9 @@ def main():
     require(re.fullmatch(r"[a-f0-9]{40}", source), "Expected archive-sourced build SHA")
     android = Emulator(opt.adb)
     android.verify_target()
-    results = {selector: {"group": group, "status": "not-run"} for group, selector in plan()}
-    record = {"schema": 1, "source_commit": source, "api": 34, "abi": android.text("getprop", "ro.product.cpu.abi"),
+    scope = os.environ.get("ANDROID_FUNCTIONAL_SCOPE", "all")
+    results = {selector: {"group": group, "status": "not-run"} for group, selector in plan(scope)}
+    record = {"schema": 1, "scope": scope, "source_commit": source, "api": 34, "abi": android.text("getprop", "ro.product.cpu.abi"),
               "page_bytes": int(android.text("getconf", "PAGE_SIZE")), "webview": provider(android),
               "app_sha256": installed(android, opt.apk, PACKAGE), "test_sha256": installed(android, opt.test_apk, "com.browser.test"),
               "cases": results}

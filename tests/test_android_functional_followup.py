@@ -30,6 +30,10 @@ class FrameFixtureTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertIn(b'e.isTrusted', body)
         self.assertIn(b'download="fixture.bin"', body)
+        for port in (parent, child):
+            status, icon = self.request(port, "/favicon.ico")
+            self.assertEqual(200, status)
+            self.assertTrue(icon.startswith(b"GIF89a"))
         for endpoint, path in ((parent, "/ack/tap-frame"), (child, "/ack/unknown")):
             self.assertEqual(404, self.request(endpoint, path)[0])
         self.assertEqual(400, self.request(child, "/ack/tap-frame", {"Host": "unrelated.invalid"})[0])
@@ -46,14 +50,29 @@ class RunnerTest(unittest.TestCase):
         self.assertFalse(any("DownloadMediaBatchTest" in name or "#nativeSameAddress" in name for name in tests))
         self.assertEqual(len(followup.NEW), sum(group in followup.NEW for group, _ in selected))
 
+    def test_recheck_selects_only_the_two_unresolved_cases(self):
+        self.assertEqual({"startup-select", "foreign-frame"}, {group for group, _ in followup.plan("recheck")})
+        with self.assertRaises(followup.CheckFailed):
+            list(followup.plan("other"))
+
+    def test_crash_diagnostics_are_bounded_to_app_pid_and_signature(self):
+        sample = ("E/AndroidRuntime( 456): java.lang.RuntimeException: fixture text\n"
+                  "E/AndroidRuntime( 123): FATAL EXCEPTION: main\n"
+                  "E/AndroidRuntime( 123): java.lang.NullPointerException: http://example.invalid/token\n"
+                  "E/AndroidRuntime( 123):     at com.privacy.browser.Example.run(Example.java:123)\n"
+                  "F/libc    ( 123): Fatal signal 11 (SIGSEGV), code 1 in tid 123\n")
+        self.assertEqual(["java.lang.NullPointerException", "com.privacy.browser.Example.run(Example.java:123)",
+                          "Fatal signal 11"], followup.crash_signature(sample, {123}))
+
     def test_started_but_interrupted_is_not_a_pass(self):
         cls = "com.privacy.browser.BrowserFollowupCiTest"
         method = "coldPrivateIntentRefused"
         text = f"INSTRUMENTATION_STATUS: class={cls}\nINSTRUMENTATION_STATUS: test={method}\nINSTRUMENTATION_STATUS_CODE: 1\n"
-        result = followup.test_result(text + "INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_CODE: 0\n",
+        result = followup.test_result(text + followup.EVIDENCE + "First milestone\nINSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_CODE: 0\n",
                                       f"{cls}#{method}", 0)
         self.assertEqual("failed", result["status"])
         self.assertIn("Process crashed", result["terminal_hint"])
+        self.assertEqual(["First milestone"], result["evidence"])
 
     def test_a_test_pass_cannot_hide_a_missing_wire_control(self):
         privacy, frame, startup = (followup.privacy.State() for _ in range(3))
