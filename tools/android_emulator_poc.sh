@@ -60,17 +60,24 @@ central_available() {
   done
   return 0
 }
+default_central=https://repo.maven.apache.org/maven2
+central=''
+for endpoint in "$default_central" https://repo1.maven.org/maven2 https://maven-central.storage-download.googleapis.com/maven2; do
+  if central_available "$endpoint"; then central=$endpoint; break; fi
+done
 build_args=()
-if central_available https://repo.maven.apache.org/maven2; then
-  echo 'Maven Central default endpoint served the required probe POMs.'
-elif central_available https://repo1.maven.org/maven2; then
-  echo 'Using the official Maven Central alternate endpoint for this disposable build.'
+if [[ -z "$central" ]]; then
+  echo 'Maven Central endpoints unavailable; trying only the runner’s existing Gradle cache.'
+  build_args+=(--offline)
+elif [[ "$central" != "$default_central" ]]; then
+  printf 'Using Maven Central through %s for this disposable build.\n' "$central"
+  export POC_MAVEN_CENTRAL="$central"
   cat > "$root/central.init.gradle" <<'GRADLE'
 gradle.settingsEvaluated { settings ->
     [settings.pluginManagement.repositories, settings.dependencyResolutionManagement.repositories].each { repos ->
         repos.withType(org.gradle.api.artifacts.repositories.MavenArtifactRepository).configureEach { repo ->
-            if (repo.url?.host == 'repo.maven.apache.org' && repo.url.path in ['/maven2', '/maven2/']) {
-                repo.setUrl('https://repo1.maven.org/maven2')
+            if (repo.url?.host == 'repo.maven.apache.org' && (repo.url.path in ['/maven2', '/maven2/'])) {
+                repo.setUrl(System.getenv('POC_MAVEN_CENTRAL'))
             }
         }
     }
@@ -78,19 +85,20 @@ gradle.settingsEvaluated { settings ->
 GRADLE
   build_args+=(--init-script "$root/central.init.gradle")
 else
-  echo 'Neither official Maven Central endpoint served the required build dependencies.' >&2
-  exit 1
+  echo 'Maven Central default endpoint served the required probe POMs.'
 fi
 
 [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
 git archive "$GITHUB_SHA" | tar -x -C "$root/source"
-# Install exactly one system image, no APK/AVD or Gradle caches retained by the job.
-"$sdkmanager" --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0' platform-tools emulator "$image"
-"$emulator" -accel-check
-printf '::notice title=Emulator prerequisites checked::KVM and Android SDK tools are available; no AVD boot yet.\n'
+"$sdkmanager" --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0'
 (cd "$root/source" && ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :app:assembleDebug)
 apk="$root/source/app/build/outputs/apk/debug/app-debug.apk"
 [[ -s "$apk" ]]
+printf '::notice title=Browser debug build complete::Built the unchanged debug APK; no APK uploaded.\n'
+# Provision the single system image only after a real browser APK exists.
+"$sdkmanager" --sdk_root="$sdk" platform-tools emulator "$image"
+"$emulator" -accel-check
+printf '::notice title=Emulator prerequisites checked::KVM and Android SDK tools are available; no AVD boot yet.\n'
 
 "$adb" start-server
 if [[ -n "$("$adb" devices | awk 'NR > 1 && NF {print $1}')" ]]; then
