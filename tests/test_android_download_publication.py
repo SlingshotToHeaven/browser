@@ -61,11 +61,13 @@ class AndroidDownloadPublicationEvidenceTest(unittest.TestCase):
         directory = "/data/data/com.browser/files/download-publication"
         aliased = "/data/user/0/com.browser/files/download-publication/interrupted.bin"
         android = Mock()
-        android.app.return_value = directory.encode()
+        android.app.side_effect = [b"12:345\n", b"12:345\n"]
         self.assertEqual(aliased, bound_path(android, directory, aliased, r"interrupted\.bin"))
+        self.assertEqual(2, android.app.call_count)
         with self.assertRaises(CheckFailed):
             bound_path(android, directory, aliased.replace("/com.browser/", "/other.app/"), r"interrupted\.bin")
-        android.app.return_value = b"/unexpected-directory"
+        self.assertEqual(2, android.app.call_count)
+        android.app.side_effect = [b"12:345\n", b"12:678\n"]
         with self.assertRaises(CheckFailed):
             bound_path(android, directory, aliased, r"interrupted\.bin")
 

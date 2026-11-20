@@ -252,8 +252,10 @@ def bound_path(android, configured_dir, path, file_pattern):
     # The app and run-as can see different /data/data versus /data/user/0 aliases.
     # Accept only a known fixture basename in the exact directory that we created.
     require(path and re.fullmatch(PRIVATE_DIR + "/" + file_pattern, path), "Unexpected file path in the fixture row")
-    real_parent = android.app("realpath", str(Path(path).parent)).decode().strip()
-    require(real_parent == configured_dir, "Fixture row points to a different directory")
+    expected_parent = android.app("stat", "-L", "-c", "%d:%i", configured_dir).strip()
+    actual_parent = android.app("stat", "-L", "-c", "%d:%i", str(Path(path).parent)).strip()
+    require(re.fullmatch(rb"\d+:\d+", expected_parent) and actual_parent == expected_parent,
+            "Fixture row does not name the created directory inode")
     return path
 
 
