@@ -7,8 +7,8 @@ if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hoste
   exit 1
 fi
 mode=${1:-launch}
-if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication ]]; then
-  echo 'Expected launch or download-publication.' >&2
+if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade ]]; then
+  echo 'Expected launch, download-publication, or download-upgrade.' >&2
   exit 2
 fi
 : "${RUNNER_TEMP:?}" "${ANDROID_HOME:?}" "${GITHUB_SHA:?}"
@@ -99,11 +99,21 @@ if [[ "$mode" == download-publication ]]; then
   mkdir "$root/jdi"
   "${JAVA_HOME:?}/bin/javac" --add-modules jdk.jdi -d "$root/jdi" \
     "$root/source/tests/fixtures/download_publication/PublicationPause.java"
+elif [[ "$mode" == download-upgrade ]]; then
+  python3 -B "$root/source/tools/prepare_perf_baselines.py" "$root/baselines"
 fi
 "$sdkmanager" --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0'
-(cd "$root/source" && ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :app:assembleDebug)
+build_debug() { (cd "$1" && ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :app:assembleDebug); }
+build_debug "$root/source"
 apk="$root/source/app/build/outputs/apk/debug/app-debug.apk"
 [[ -s "$apk" ]]
+if [[ "$mode" == download-upgrade ]]; then
+  build_debug "$root/baselines/step19"
+  baseline="$root/baselines/step19/app/build/outputs/apk/debug/app-debug.apk"
+  bash "$root/source/tests/fixtures/download_upgrade/build_receiver.sh" "$sdk" "$root/recipient"
+  receiver="$root/recipient/receiver.apk"
+  [[ -s "$baseline" && -s "$receiver" ]]
+fi
 printf '::notice title=Browser debug build complete::Built the unchanged debug APK; no APK uploaded.\n'
 # Provision the single system image only after a real browser APK exists.
 "$sdkmanager" --sdk_root="$sdk" platform-tools emulator "$image"
@@ -150,11 +160,16 @@ if [[ ",$abis," != *,arm64-v8a,* ]]; then
   echo 'This image does not advertise ARM64 translation for the unmodified debug APK.' >&2
   exit 1
 fi
+android shell input keyevent KEYCODE_WAKEUP
+android shell wm dismiss-keyguard
+if [[ "$mode" == download-upgrade ]]; then
+  python3 -B "$root/source/tools/check_android_download_upgrade.py" \
+    --adb "$adb" --work "$root" --sdk "$sdk" --baseline "$baseline" --candidate "$apk" --recipient "$receiver"
+  exit 0
+fi
 android install --user 0 "$apk"  # the normal debug APK, not a mock/repacked build
 # Remove only the first-run notification prompt on the empty AVD.
 android shell pm grant --user 0 com.browser android.permission.POST_NOTIFICATIONS
-android shell input keyevent KEYCODE_WAKEUP
-android shell wm dismiss-keyguard
 if [[ "$mode" == download-publication ]]; then
   apk_sha=$(sha256sum "$apk" | cut -d ' ' -f1)
   python3 -B "$root/source/tools/check_android_download_publication.py" \

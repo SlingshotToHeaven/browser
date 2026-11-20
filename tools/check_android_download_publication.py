@@ -149,17 +149,22 @@ class Emulator:
         result = self.shell("am", "start", "-W", "-n", f"{PACKAGE}/{activity}", timeout=35).stdout.decode()
         require("Status: ok" in result.splitlines(), f"Could not open {activity}")
 
+    def hierarchy(self):
+        dump = self.shell("uiautomator", "dump", "--compressed", UI_DUMP, check=False)
+        if dump.returncode or b"dumped to:" not in dump.stdout:
+            return None
+        try:
+            return ET.fromstring(self.shell("cat", UI_DUMP).stdout)
+        except ET.ParseError:
+            return None
+
     def view(self, name, text=None):
         seen = "no valid window hierarchy"
 
         def find():
             nonlocal seen
-            dump = self.shell("uiautomator", "dump", "--compressed", UI_DUMP, check=False)
-            if dump.returncode or b"dumped to:" not in dump.stdout:
-                return None
-            try:
-                root = ET.fromstring(self.shell("cat", UI_DUMP).stdout)
-            except ET.ParseError:
+            root = self.hierarchy()
+            if root is None:
                 return None
             nodes = list(root.iter("node"))
             app_nodes = [node for node in nodes if node.get("package") == PACKAGE]
@@ -175,12 +180,16 @@ class Emulator:
     def tap(self, name, text=None):
         return self.tap_view(self.view(name, text))
 
-    def tap_view(self, node):
+    def tap_view(self, node, long=False):
         match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
-        require(match is not None, "Browser control did not have tappable bounds")
+        require(match is not None, "Control did not have tappable bounds")
         x1, y1, x2, y2 = map(int, match.groups())
-        require(x1 < x2 and y1 < y2, "Browser control is not on the screen")
-        self.shell("input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
+        require(x1 < x2 and y1 < y2, "Control is not on the screen")
+        x, y = str((x1 + x2) // 2), str((y1 + y2) // 2)
+        if long:
+            self.shell("input", "swipe", x, y, x, y, "900")
+        else:
+            self.shell("input", "tap", x, y)
 
     def file(self, path):
         identity = self.app("stat", "-c", "%d:%i:%Y:%s", path).decode().strip()
@@ -219,7 +228,7 @@ def read_state(database, wal, work):
             return row, [tuple(segment) for segment in segments]
 
 
-def snapshot(android, work):
+def snapshot_bytes(android):
     def files():
         return tuple(android.app("sh", "-c", f"if [ -e {DB}{suffix} ]; then cat {DB}{suffix}; fi")
                      for suffix in ("", "-wal", "-journal"))
@@ -229,7 +238,11 @@ def snapshot(android, work):
         return sample[:2] if sample[0] and not sample[2] and sample == files() else None
 
     # No live DB writes: double-read main/WAL around a quiescent point, never ignore a hot journal.
-    return read_state(*until(stable, "stable Android SQLite snapshot", seconds=10), work)
+    return until(stable, "stable Android SQLite snapshot", seconds=10)
+
+
+def snapshot(android, work):
+    return read_state(*snapshot_bytes(android), work)
 
 
 def status(android, label):
@@ -278,7 +291,7 @@ def prepare(android):
     return directory
 
 
-def ready_to_enqueue(android, directory, url):
+def ready_to_enqueue(android, directory, url, name=NAME):
     android.start(DOWNLOADS)
     android.tap("btn_add_download")
     android.tap("add_url_edit_text")
@@ -287,7 +300,7 @@ def ready_to_enqueue(android, directory, url):
     if "mInputShown=true" in android.text("dumpsys", "input_method"):
         android.shell("input", "keyevent", "KEYCODE_BACK")
     android.tap("add_url_btn_continue")
-    android.view("prompt_edit_filename", NAME)
+    android.view("prompt_edit_filename", name)
     android.view("prompt_text_folder_path", directory)
     android.tap("prompt_pill_thread_1")
     return android.view("prompt_btn_download", "Download")

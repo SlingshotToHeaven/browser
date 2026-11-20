@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.browser.fixture.receiver" android:versionCode="1" android:versionName="1">
+    <uses-sdk android:minSdkVersion="34" android:targetSdkVersion="34" />
+    <!-- Offline test recipient, separate signing key and UID. No requested permissions. -->
+    <application android:label="Fixture Receiver" android:allowBackup="false" android:debuggable="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name=".FixtureReceiver$Receive" android:exported="true" android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:host="com.browser.completed-downloads" android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+        <receiver android:name=".FixtureReceiver$Probe" android:exported="true" android:permission="android.permission.DUMP" />
+    </application>
+</manifest>
