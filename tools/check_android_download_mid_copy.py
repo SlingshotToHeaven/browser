@@ -142,12 +142,31 @@ def check_not_offered(android, relaunch):
 
     until(still_here, "failed-only Share refusal toast", seconds=5)
     relaunch["selection_share_refused"] = True
-    # Leave selection via the system Back event, then open Downloads explicitly
-    # for the next step; the text-toast window can interfere with UI snapshots.
-    android.shell("input", "keyevent", "KEYCODE_BACK")
-    android.start(DOWNLOADS)
+    # Recreate just the Downloads activity for Retry, without a Back gesture
+    # or waiting for controls underneath the transient system toast window.
+    android.start(DOWNLOADS, reset_activity=True)
     android.view("btn_overflow_menu")
     status(android, "FAILED")
+
+
+def browser_events(android):
+    # Keep only narrow lifecycle markers on a failure, not logcat or error messages.
+    tags = ("am_proc_start", "am_proc_died", "am_kill", "am_crash", "am_anr")
+    events = android.text("logcat", "-b", "events", "-d", "-v", "brief", "-s", *tags)
+    result = []
+    for line in events.splitlines():
+        match = re.match(r"\w/(am_\w+)\s*\([^)]*\): \[(.*)\]$", line)
+        if not match:
+            continue
+        tag, data = match.groups()
+        fields = data.split(",", 6)
+        index = 3 if tag == "am_proc_start" else 2
+        if len(fields) > index and fields[index] == PACKAGE and fields[1].isdigit():
+            event = [tag, int(fields[1])]
+            if tag == "am_crash" and len(fields) > 4 and re.fullmatch(r"[\w.$ ]{1,80}", fields[4]):
+                event.append(fields[4])
+            result.append(event)
+    return result[-8:]
 
 
 def phase(report, step):
@@ -234,9 +253,18 @@ def case(android, work, server, directory, report, cut):
     require(android.file(dest) == output and android.file(stage) == checkpoint and android.file(neighbor) == marker_file
             and server.requests == INITIAL_REQUESTS, "Relaunch modified a fixture file or re-fetched bytes")
     report["relaunch"] = {"ui_and_db": "FAILED", "reason": "occupied destination", "files_preserved": True}
+    # Measure the process displaying the recovered card, rather than assuming
+    # it is the process originally started for the browser's launcher Activity.
+    viewing_pid = android.pid()
+    require(viewing_pid is not None, "Recovered Downloads was not running")
     check_not_offered(android, report["relaunch"])
-    require(android.pid() == pid and snapshot(android, work) == (recovered, saved),
-            "File actions changed the recovery process or SQLite state")
+    reopen_pid = android.pid()
+    if reopen_pid != viewing_pid:
+        report["relaunch"]["changed_pid"] = [pid, viewing_pid, reopen_pid]
+    require(reopen_pid == viewing_pid, "Browser process changed during file-action checks")
+    after_actions, after_segments = snapshot(android, work)
+    changed = [key for key in recovered if after_actions[key] != recovered[key]]
+    require(not changed and after_segments == saved, f"File actions changed SQLite fields: {','.join(changed) or 'segments'}")
     require(android.file(dest) == output and android.file(stage) == checkpoint and android.file(neighbor) == marker_file
             and server.requests == INITIAL_REQUESTS, "File actions changed the interrupted download")
 
@@ -371,6 +399,9 @@ def main():
         report["result"] = "pass-with-shared-blocked" if shared["result"] == "blocked" else "pass"
     except Exception as failure:
         report["error"] = str(failure).strip()[-360:]
+        if "android" in report:
+            with suppress(Exception):
+                report["browser_lifecycle"] = browser_events(android)
         raise
     finally:
         data = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode()

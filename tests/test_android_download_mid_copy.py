@@ -12,7 +12,8 @@ from xml.etree import ElementTree as ET
 from test_download_queue_sql import create
 from tools.check_android_download_mid_copy import (
     BODY, DIGEST, LENGTH, MID_COPY, PUBLISHER, PRE_COMMIT, SHARED_DIR, SHARED_PATH, CheckFailed,
-    bound_destination, copy_cut, downloads_resumed, require_no_file_actions, share_refused, storage_blocked, verify_cut,
+    bound_destination, browser_events, copy_cut, downloads_resumed, require_no_file_actions, share_refused,
+    storage_blocked, verify_cut,
 )
 from tools.check_android_download_publication import read_state
 
@@ -92,6 +93,17 @@ class AndroidMidCopyEvidenceTest(unittest.TestCase):
         self.assertTrue(share_refused(toast))
         self.assertFalse(share_refused(toast.replace('com.browser', 'com.other')))
         self.assertFalse(share_refused(toast.replace('Select at least one completed download to share.', 'Unknown app')))
+
+    def test_lifecycle_diagnostic_does_not_emit_log_messages(self):
+        android = Mock()
+        android.text.return_value = (
+            'I/am_proc_start( 250): [0,1551,10151,com.browser,activity,{com.browser/.Launch}]\n'
+            'I/am_crash( 250): [0,1551,com.browser,32,java.lang.IllegalStateException,not for evidence,Main.java,12,0]\n'
+            'I/am_proc_died( 250): [0,1551,com.browser,1,4]\n'
+            'I/am_kill( 250): [0,1552,com.other,1,other package reason]\n'
+        )
+        self.assertEqual(browser_events(android), [['am_proc_start', 1551],
+                         ['am_crash', 1551, 'java.lang.IllegalStateException'], ['am_proc_died', 1551]])
 
     def test_reuse_of_profile_requires_empty_history_and_no_segments(self):
         with TemporaryDirectory() as tmp:

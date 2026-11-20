@@ -145,8 +145,10 @@ class Emulator:
         require(result.returncode == 0 and pid.isdigit(), "Expected at most one browser process on the emulator")
         return pid
 
-    def start(self, activity):
-        result = self.shell("am", "start", "-W", "-n", f"{PACKAGE}/{activity}", timeout=35).stdout.decode()
+    def start(self, activity, *, reset_activity=False):
+        # CLEAR_TOP with a standard Activity recreates its UI, not the app profile.
+        flags = ("--activity-clear-top",) if reset_activity else ()
+        result = self.shell("am", "start", "-W", *flags, "-n", f"{PACKAGE}/{activity}", timeout=35).stdout.decode()
         require("Status: ok" in result.splitlines(), f"Could not open {activity}")
 
     def hierarchy(self):
