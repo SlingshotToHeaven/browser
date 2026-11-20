@@ -33,10 +33,23 @@ mkdir -p "$root/source" "$root/proof" "$root/avd" "$root/android"
 export ANDROID_AVD_HOME="$root/avd" ANDROID_USER_HOME="$root/android" GRADLE_USER_HOME="$root/gradle"
 unset ADB_SERVER_SOCKET ANDROID_ADB_SERVER_ADDRESS ANDROID_ADB_SERVER_PORT ADB_SERVER_PORT ANDROID_SERIAL
 
+sdk_tool() {
+  local tool=$1 path
+  # Hosted images do not always put the versioned command-line tools on PATH.
+  for path in "$sdk/cmdline-tools/latest/bin/$tool" "$sdk"/cmdline-tools/*/bin/"$tool" "$sdk/tools/bin/$tool"; do
+    if [[ -x "$path" ]]; then printf '%s\n' "$path"; return; fi
+  done
+  if command -v "$tool"; then return; fi
+  printf 'Missing Android command-line tool: %s\n' "$tool" >&2
+  return 127
+}
+sdkmanager=$(sdk_tool sdkmanager)
+avdmanager=$(sdk_tool avdmanager)
+
 [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
 git archive "$GITHUB_SHA" | tar -x -C "$root/source"
 # Install exactly one system image, no APK/AVD or Gradle caches retained by the job.
-sdkmanager --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0' platform-tools emulator "$image"
+"$sdkmanager" --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0' platform-tools emulator "$image"
 "$emulator" -accel-check
 (cd "$root/source" && ./gradlew --no-daemon --max-workers=2 :app:assembleDebug)
 apk="$root/source/app/build/outputs/apk/debug/app-debug.apk"

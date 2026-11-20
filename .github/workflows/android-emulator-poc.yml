@@ -29,7 +29,27 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Verify hardware acceleration and capture the installed debug browser
-        run: bash tools/android_emulator_poc.sh
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/browser-poc-step.log"
+          if bash tools/android_emulator_poc.sh 2>&1 | tee "$log"; then
+            exit 0
+          else
+            status=$?
+          fi
+          # Keep a short error readable through the Checks API even if log ZIPs
+          # cannot be downloaded. Do not include signed URL query parameters.
+          python3 -B - "$log" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          tail = Path(sys.argv[1]).read_text(errors='replace')[-3000:]
+          tail = re.sub(r'(https?://[^\s?]+)\?[^\s]+', r'\1', tail)
+          tail = tail.strip().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')[:3600]
+          print(f'::error title=Android emulator PoC failed::{tail or "See the job result"}')
+          PY
+          exit "$status"
       - name: Upload only the screenshot and small proof record
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
