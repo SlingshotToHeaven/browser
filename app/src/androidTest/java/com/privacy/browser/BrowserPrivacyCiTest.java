@@ -1,5 +1,6 @@
 package com.privacy.browser;
 
+import android.os.Process;
 import android.webkit.CookieManager;
 import android.webkit.WebView;
 
@@ -12,6 +13,7 @@ import com.privacy.downloader.engine.DownloadTask;
 import com.privacy.downloader.model.DownloadItem;
 import com.privacy.downloader.model.DownloadStatus;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
 
@@ -21,6 +23,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static org.junit.Assert.*;
@@ -28,17 +31,25 @@ import static org.junit.Assert.*;
 /** Use the actual all-sites choices, explicit second confirmation, and visible result. */
 public final class BrowserPrivacyCiTest extends BrowserRecoveryCiSupport {
     private static final String MARKERS = "/privacy/markers", LOGIN = "/privacy/login";
-    private static final String DOWNLOAD_ID = "privacy-preserve-download";
     private static final String BOOKMARK = A + "/privacy/bookmark-sentinel";
     private static final String PAYLOAD = "synthetic-privacy-download";
     private static final String[] CHOICES = {"WebView cookies", "WebView URL cache", "Legacy Web Storage request",
             "History and saved tabs (closes tabs)"};
     private static final String[] PLAN = {"WebView cookies for all sites (signs you out)", "WebView URL cache for all sites",
             "Request legacy Web Storage deletion for all sites", "Browser history and saved tabs (closes all tabs)"};
-    private static final String[] STORAGE_KEYS = {"local", "indexedDB", "cacheStorage", "worker"};
-    private TabModel first, second;
-    private Set<Long> visits;
-    private TabSession.Index saved;
+    private static final String[] STORAGE_KEYS = {"localStorage", "indexedDB", "cacheStorage", "worker"};
+
+    private enum Choice {
+        CANCEL(-1, null),
+        COOKIES(0, "WebView cookies: removed"),
+        HTTP_CACHE(1, "WebView URL cache: clear requested"),
+        LEGACY_STORAGE(2, "Legacy Web Storage: deletion requested; no completion callback"),
+        HISTORY_TABS(3, "History and saved tabs: removed");
+
+        final int category;
+        final String result;
+        Choice(int category, String result) { this.category = category; this.result = result; }
+    }
 
     @Test public void nativePrivateEntriesDoNotOpenRegularTabs() throws Exception {
         launch(main().putExtra(MainActivity.EXTRA_OPEN_IN_INCOGNITO, true)
@@ -65,122 +76,127 @@ public final class BrowserPrivacyCiTest extends BrowserRecoveryCiSupport {
         observe("cold and warm private intents and tab-picker private entry refused; only the intended home tab; target not fetched");
     }
 
-    @Test public void cancelConfirmationKeepsAllSeededData() throws Exception {
-        seed(false);
-        warmCache();
-        review(0, 1, 2, 3);
-        tap("android:id/button2", "Cancel");
-        waitFor("cancelled review closed without a cleanup result", 4000, () ->
-                node(null, "Confirm all-sites cleanup") == null && node(null, "Cleanup result") == null);
+    @Test public void choosePrivacyClearInNativeUi() throws Exception {
+        Choice choice = selectedChoice();
+        String downloadId = seedUnrelated();
+        open(A + LOGIN, A + MARKERS);
+        TabModel first = ui(this::selected);
+        JSONObject a = plantAndWarm(A);
+        TabModel second = newTab(B + LOGIN);
         waitPage(B + MARKERS);
+        JSONObject b = plantAndWarm(B);
         assertCookies(true);
-        assertLocalMarkers();
-        assertOriginalHistoryAndTabs();
-        checkUnrelated();
-        fetchCache();
-        assertEquals(1, cacheRequests());
-        observe("Site Info only offered all-sites review; cancelling all four selections preserved both cookies, local markers, cached response, history, tabs and app sentinels");
-    }
-
-    @Test public void clearOnlyCookiesOnBothOrigins() throws Exception {
-        seed(false);
-        review(0);
-        clearAndExpect("WebView cookies: removed");
-        assertCookies(false);
-        assertLocalMarkers();
-        assertOriginalHistoryAndTabs();
-        checkUnrelated();
-        observe("provider-confirmed cookie-only removal on both origins; localStorage, history and tabs preserved");
-    }
-
-    @Test public void cookieRemovalPersistsAcrossRestart() throws Exception {
-        assertCookies(false);
-        TabSession.Index beforeLaunch = index();
-        assertEquals(2, beforeLaunch.tabs.size());
-        launch(main());
-        waitPage(B + MARKERS);
-        assertEquals("no", js("document.body.dataset.signed"));
-        assertEquals(beforeLaunch.selected, ui(() -> selected().getId()));
-        assertEquals("present", storage(ui(() -> selected().getWebView()), false, false).getString("local"));
-        waitFor("fresh unsigned HTTP response from restored second origin", 9000,
-                () -> count("b GET /privacy/markers") > 0 && count("b GET /privacy/markers signed") == 0);
-        TabModel other = ui(() -> {
-            TabModel tab = tabs().getTabs().stream().filter(candidate -> (A + MARKERS).equals(candidate.getUrl())).findFirst().orElseThrow();
-            tabs().switchTab(tabs().getTabs().indexOf(tab));
-            return tab;
+        ui(() -> { CookieManager.getInstance().flush(); return null; }); // establish durable seed, not a second clear
+        Set<Long> visits = historyIds();
+        assertTrue("Positive app history control missing", visits.size() >= 2);
+        waitFor("both fixture tab states persisted", 8000, () -> {
+            TabSession.Index candidate = index();
+            return candidate.tabs.size() == 2 && second.getId().equals(candidate.selected)
+                    && candidate.tabs.stream().allMatch(row -> row.state != null && Files.isRegularFile(sessionDir().resolve(row.filename())));
         });
-        waitPage(A + MARKERS);
-        assertEquals("no", js("document.body.dataset.signed"));
-        assertEquals("present", storage(ui(other::getWebView), false, false).getString("local"));
-        assertTrue(count("a GET /privacy/markers") > 0);
-        assertEquals(0, count("a GET /privacy/markers signed"));
-        assertEquals(0, count("a GET /privacy/login") + count("b GET /privacy/login"));
-        assertFalse(historyIds().isEmpty());
-        checkUnrelated();
-        observe("new process visited both restored origins without the cookie on the wire; both localStorage markers and app sentinels survived");
-    }
-
-    @Test public void clearOnlyUrlCacheAndObserveRealRefetch() throws Exception {
-        seed(false);
-        warmCache();
-        review(1);
-        clearAndExpect("WebView URL cache: clear requested");
-        click(R.id.btn_reload);
-        waitPage(B + MARKERS);
-        fetchCache();
-        assertEquals("A previously cached response did not refetch", 2, cacheRequests());
-        assertCookies(true);
-        assertLocalMarkers();
-        assertOriginalHistoryAndTabs();
-        checkUnrelated();
-        observe("cacheable resource fetched once, reused without HTTP, then fetched once more after URL-cache-only request; not a full cache-clear claim");
-    }
-
-    @Test public void legacyStorageReportsRequestAndObservesProviderOutcome() throws Exception {
-        seed(true);
-        var beforeA = storage(ui(first::getWebView), false, false);
-        var beforeB = storage(ui(second::getWebView), false, false);
-        assertEquals("present", beforeA.getString("local"));
-        assertEquals("present", beforeB.getString("local"));
-        review(2);
-        clearAndExpect("Legacy Web Storage: deletion requested; no completion callback");
-        JSONObject afterB = reloadAndInspect(second, B);
-        JSONObject afterA = reloadAndInspect(first, A);
-        assertCookies(true);
-        assertOriginalHistoryAndTabs();
-        checkUnrelated();
-        observe("storage A: " + changes(beforeA, afterA));
-        observe("storage B: " + changes(beforeB, afterB));
-        observe("legacy request disclosed no completion callback; observed markers only, not secure erasure or profile deletion");
-    }
-
-    @Test public void clearOnlyHistoryAndTabs() throws Exception {
-        seed(false);
-        review(3);
-        clearAndExpect("History and saved tabs: removed");
-        waitPage(InternalHome.URL);
-        assertTrue(historyIds().isEmpty());
-        assertCookies(true);
-        checkUnrelated();
-        waitFor("only a new Home in the on-disk session", 8000, () -> homeOnly(index()));
-        for (TabSession.Row old : saved.tabs) {
-            assertTrue(index().tabs.stream().noneMatch(row -> old.id.equals(row.id)));
-            assertFalse("Cleared tab still has its old state blob", Files.exists(sessionDir().resolve(old.filename())));
+        TabSession.Index saved = index();
+        JSONObject seed = new JSONObject().put("choice", choice.name()).put("pid", Process.myPid())
+                .put("visits", new JSONArray(visits)).put("session", TabSession.encode(saved))
+                .put("a", a).put("b", b).put("download", downloadId);
+        checkUnrelated(downloadId);
+        review(choice == Choice.CANCEL ? new int[]{0, 1, 2, 3} : new int[]{choice.category});
+        if (choice == Choice.CANCEL) {
+            tap("android:id/button2", "Cancel");
+            waitPage(B + MARKERS);
+            assertNull("Cancelled review unexpectedly produced a cleanup result", node(null, "Cleanup result"));
+        } else {
+            clearAndExpect(choice.result);
         }
-        observe("history actually removed, both previous tabs and their saved states retired; cookies and app sentinels kept");
+        observe(choice == Choice.CANCEL ? "cancelled the second confirmation with all categories selected" : "UI result: " + choice.result);
+        assertCookies(choice != Choice.COOKIES);
+        checkUnrelated(downloadId);
+        if (choice == Choice.HISTORY_TABS) {
+            waitPage(InternalHome.URL);
+            waitFor("only a new Home in the on-disk session", 8000, () -> homeOnly(index()));
+            assertClearedSession(saved);
+        } else {
+            assertSavedSession(seed, saved);
+            // Inspect the two live documents for observations; cold probes below use fresh documents.
+            checkStorage(choice, "live A", a, storage(ui(first::getWebView), false));
+            checkStorage(choice, "live B", b, storage(ui(second::getWebView), false));
+        }
+        assertEquals("Seed A was not requested exactly once", 1, cacheRequests(A));
+        assertEquals("Seed B was not requested exactly once", 1, cacheRequests(B));
+        Files.write(baseline(), seed.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    @Test public void historyAndTabRemovalPersistsAcrossRestart() throws Exception {
-        assertTrue(homeOnly(index()));
+    @Test public void verifyPrivacyChoiceInNewProcess() throws Exception {
+        Choice choice = selectedChoice();
+        JSONObject seed = new JSONObject(new String(Files.readAllBytes(baseline()), StandardCharsets.UTF_8));
+        assertEquals(choice.name(), seed.getString("choice"));
+        assertNotEquals("Expected a new browser process", seed.getInt("pid"), Process.myPid());
+        TabSession.Index saved = TabSession.decode(seed.getString("session"));
+        boolean cookiePresent = choice != Choice.COOKIES;
+        assertCookies(cookiePresent);
+        if (choice == Choice.HISTORY_TABS) assertClearedSession(saved);
+        else assertSavedSession(seed, saved);
         launch(main());
-        waitPage(InternalHome.URL);
-        assertEquals(1, (int) ui(() -> tabs().getTabCount()));
-        assertTrue(historyIds().isEmpty());
-        assertCookies(true);
-        assertEquals(0, count("a GET /privacy/markers") + count("b GET /privacy/markers"));
-        checkUnrelated();
-        observe("new process restored only Home, no history or old site fetch; both unselected cookies and app sentinels persisted");
+        if (choice == Choice.HISTORY_TABS) {
+            waitPage(InternalHome.URL);
+            assertEquals(1, (int) ui(() -> tabs().getTabCount()));
+            assertClearedSession(saved);
+            assertEquals(0, count("a GET /privacy/markers") + count("b GET /privacy/markers"));
+            observe("new process restored only Home; original history, tab IDs and state files gone before deliberate site probes");
+            // Deliberate new visits, which cannot replant the login or any storage marker.
+            ui(() -> { load(selected(), B + MARKERS); return null; });
+        }
+        waitPage(B + MARKERS);
+        if (choice != Choice.HISTORY_TABS) assertEquals("Restored original selection", saved.selected, ui(() -> selected().getId()));
+        checkColdOrigin(choice, seed, B, "b", cookiePresent);
+        if (choice == Choice.HISTORY_TABS) {
+            newTab(A + MARKERS);
+        } else {
+            ui(() -> {
+                TabModel original = tabs().getTabs().stream().filter(tab -> (A + MARKERS).equals(tab.getUrl())).findFirst().orElseThrow();
+                tabs().switchTab(tabs().getTabs().indexOf(original));
+                return null;
+            });
+        }
+        waitPage(A + MARKERS);
+        checkColdOrigin(choice, seed, A, "a", cookiePresent);
+        assertEquals("Probes must not seed new cookies", 0, count("a GET /privacy/login") + count("b GET /privacy/login"));
+        assertCookies(cookiePresent);
+        if (choice != Choice.HISTORY_TABS) assertSavedSession(seed, saved);
+        checkUnrelated(seed.getString("download"));
+        observe("after restart: both HTTP logins " + (cookiePresent ? "preserved" : "absent")
+                + "; HTTP-cache probes " + (choice == Choice.HTTP_CACHE ? "both missed, then hit" : "both hit")
+                + "; completed file and row, bookmark and zoom setting preserved");
     }
+
+    private void checkColdOrigin(Choice choice, JSONObject seed, String origin, String label, boolean signed) throws Exception {
+        assertEquals("HTTP document cookie marker from " + label, signed ? "yes" : "no", js("document.body.dataset.signed"));
+        int total = count(label + " GET /privacy/markers");
+        assertTrue("No fresh marker HTTP response at " + label, total > 0);
+        assertEquals("Observed wire cookie at " + label, signed ? total : 0, count(label + " GET /privacy/markers signed"));
+        assertEquals(0, cacheRequests(origin));
+        fetchCache();
+        int requests = cacheRequests(origin);
+        JSONObject after = storage(ui(() -> selected().getWebView()), false);
+        checkStorage(choice, "cold " + label.toUpperCase(java.util.Locale.ROOT), seed.getJSONObject(label), after);
+        assertEquals("Unexpected cache request count after restart for " + label, choice == Choice.HTTP_CACHE ? 1 : 0, requests);
+        fetchCache();
+        assertEquals("Second cold fetch did not use the cached response for " + label, requests, cacheRequests(origin));
+    }
+
+    private JSONObject plantAndWarm(String origin) throws Exception {
+        assertEquals("yes", js("document.body.dataset.signed"));
+        JSONObject initial = storage(ui(() -> selected().getWebView()), true);
+        assertEquals("present", initial.getString("localStorage"));
+        assertEquals(0, cacheRequests(origin));
+        fetchCache();
+        assertEquals(1, cacheRequests(origin));
+        fetchCache();
+        assertEquals("No network-free positive cache control", 1, cacheRequests(origin));
+        return initial;
+    }
+
+    private Choice selectedChoice() { return Choice.valueOf(arg("privacy_choice")); }
+    private Path baseline() { return app.getFilesDir().toPath().resolve("privacy-fixture-baseline.json"); }
 
     private void privateExplanation() throws Exception {
         waitNode(null, "Private tabs unavailable");
@@ -221,53 +237,31 @@ public final class BrowserPrivacyCiTest extends BrowserRecoveryCiSupport {
         waitFor("cleanup result closed", 4000, () -> ui(() -> !BrowserDataCleaner.inProgress() && activity.hasWindowFocus()));
     }
 
-    private void seed(boolean advancedStorage) throws Exception {
-        seedUnrelated();
-        open(A + LOGIN, A + MARKERS);
-        assertEquals("yes", js("document.body.dataset.signed"));
-        first = ui(this::selected);
-        assertEquals("present", storage(ui(first::getWebView), true, advancedStorage).getString("local"));
-        second = newTab(B + LOGIN);
-        waitPage(B + MARKERS);
-        assertEquals("yes", js("document.body.dataset.signed"));
-        assertEquals("present", storage(ui(second::getWebView), true, advancedStorage).getString("local"));
-        assertCookies(true);
-        visits = historyIds();
-        assertTrue("Positive app history control missing", visits.size() >= 2);
-        waitFor("both fixture tab states persisted", 8000, () -> {
-            TabSession.Index candidate = index();
-            if (candidate.tabs.size() != 2 || !second.getId().equals(candidate.selected)
-                    || candidate.tabs.stream().anyMatch(row -> row.state == null || !Files.isRegularFile(sessionDir().resolve(row.filename())))) return false;
-            saved = candidate;
-            return true;
-        });
-        checkUnrelated();
-    }
-
-    private void seedUnrelated() throws Exception {
+    private String seedUnrelated() throws Exception {
         assertTrue(BookmarkDbHelper.getInstance(app).addBookmarkAndGetId("Privacy test bookmark", BOOKMARK, 0) > 0);
         assertTrue(app.getSharedPreferences(SettingsActivity.PREFS_BROWSER, 0).edit().putInt(SettingsActivity.KEY_PAGE_ZOOM, 115).commit());
         Path path = app.getFilesDir().toPath().resolve("privacy-test-download.txt");
         DownloadItem item = new DownloadItem();
-        item.setId(DOWNLOAD_ID);
+        item.setId(UUID.randomUUID().toString());
         item.setUrl("data:text/plain," + PAYLOAD);
         item.setMimeType("text/plain");
         item.setFileName(path.getFileName().toString());
         item.setDestinationPath(path.toString());
         DownloadDbHelper db = DownloadDbHelper.getInstance(app);
         db.enqueueDownload(item, path.toFile());
-        assertTrue(db.claim(item, path.toFile(), "privacy-fixture-attempt"));
+        assertTrue(db.claim(item, path.toFile(), UUID.randomUUID().toString()));
         new DownloadTask(item, db, null, null).run(); // local synthetic bytes; no download transport retest
         assertEquals(item.getErrorMessage(), DownloadStatus.COMPLETED, item.getStatus());
+        return item.getId();
     }
 
-    private void checkUnrelated() throws Exception {
-        assertTrue(BookmarkDbHelper.getInstance(app).isBookmarked(BOOKMARK));
-        assertEquals(115, SettingsActivity.getPageZoom(app));
+    private void checkUnrelated(String id) throws Exception {
+        assertTrue("Bookmark sentinel disappeared", BookmarkDbHelper.getInstance(app).isBookmarked(BOOKMARK));
+        assertEquals("Zoom sentinel changed", 115, SettingsActivity.getPageZoom(app));
         DownloadDbHelper db = DownloadDbHelper.getInstance(app);
-        var file = db.getPublishedDownload(DOWNLOAD_ID);
+        var file = db.getPublishedDownload(id);
         assertNotNull("Completed-download sentinel disappeared", file);
-        assertEquals(DownloadStatus.COMPLETED, db.getDownload(DOWNLOAD_ID).getStatus());
+        assertEquals(DownloadStatus.COMPLETED, db.getDownload(id).getStatus());
         assertEquals(PAYLOAD, new String(Files.readAllBytes(Path.of(file.path)), StandardCharsets.UTF_8));
     }
 
@@ -278,16 +272,22 @@ public final class BrowserPrivacyCiTest extends BrowserRecoveryCiSupport {
         }
     }
 
-    private void assertLocalMarkers() throws Exception {
-        assertEquals("present", storage(ui(first::getWebView), false, false).getString("local"));
-        assertEquals("present", storage(ui(second::getWebView), false, false).getString("local"));
+    private void assertSavedSession(JSONObject seed, TabSession.Index saved) throws Exception {
+        JSONArray previous = seed.getJSONArray("visits");
+        Set<Long> now = historyIds();
+        for (int i = 0; i < previous.length(); i++) assertTrue("Unselected history changed", now.contains(previous.getLong(i)));
+        assertEquals(saved.tabs.stream().map(row -> row.id).collect(Collectors.toSet()),
+                index().tabs.stream().map(row -> row.id).collect(Collectors.toSet()));
     }
 
-    private void assertOriginalHistoryAndTabs() throws Exception {
-        assertTrue("Unselected history changed", historyIds().containsAll(visits));
-        Set<String> ids = saved.tabs.stream().map(row -> row.id).collect(Collectors.toSet());
-        assertEquals(ids, ui(() -> tabs().getTabs().stream().map(TabModel::getId).collect(Collectors.toSet())));
-        assertEquals(ids, index().tabs.stream().map(row -> row.id).collect(Collectors.toSet()));
+    private void assertClearedSession(TabSession.Index old) throws Exception {
+        assertTrue("History not empty", historyIds().isEmpty());
+        TabSession.Index current = index();
+        assertTrue("Expected only Home in the saved session", homeOnly(current));
+        for (TabSession.Row row : old.tabs) {
+            assertNotEquals("Old tab identity kept", row.id, current.selected);
+            assertFalse("Cleared tab still has its old state blob", Files.exists(sessionDir().resolve(row.filename())));
+        }
     }
 
     private Set<Long> historyIds() {
@@ -299,16 +299,9 @@ public final class BrowserPrivacyCiTest extends BrowserRecoveryCiSupport {
                 && index.tabs.get(0).id.equals(index.selected);
     }
 
-    private JSONObject reloadAndInspect(TabModel tab, String origin) throws Exception {
-        ui(() -> { tabs().switchTab(tabs().getTabs().indexOf(tab)); return null; });
-        waitPage(origin + MARKERS);
-        click(R.id.btn_reload);
-        waitPage(origin + MARKERS);
-        return storage(ui(tab::getWebView), false, false);
-    }
-
-    private JSONObject storage(WebView view, boolean plant, boolean advanced) throws Exception {
-        js(view, plant ? "window.plantFixture(" + advanced + "); null" : "window.inspectFixture(); null");
+    private JSONObject storage(WebView view, boolean plant) throws Exception {
+        assertEquals("Storage fixture script not available", "function", js(view, "typeof window.inspectFixture"));
+        js(view, plant ? "window.plantFixture(); null" : "window.inspectFixture(); null");
         JSONObject[] found = {null};
         waitFor("synthetic storage observations", 6500, () -> {
             Object response = js(view, "JSON.stringify(window.fixtureStorage || null)");
@@ -320,24 +313,19 @@ public final class BrowserPrivacyCiTest extends BrowserRecoveryCiSupport {
         return found[0];
     }
 
-    private static String changes(JSONObject before, JSONObject after) throws Exception {
+    private void checkStorage(Choice choice, String phase, JSONObject before, JSONObject after) throws Exception {
         List<String> markers = new ArrayList<>();
         for (String key : STORAGE_KEYS) markers.add(key + "=" + before.getString(key) + "->" + after.getString(key));
-        return String.join(", ", markers);
+        observe(phase + ": " + String.join(", ", markers));
+        if (choice != Choice.LEGACY_STORAGE) for (String key : STORAGE_KEYS) {
+            assertEquals(phase + " unselected " + key + " changed", before.getString(key), after.getString(key));
+        }
     }
 
-    private int cacheRequests() throws Exception { return count("b GET /privacy/cacheable"); }
+    private int cacheRequests(String origin) throws Exception { return count((A.equals(origin) ? "a" : "b") + " GET /privacy/cacheable"); }
 
     private void fetchCache() throws Exception {
         js("window.fetchFixture(); null");
         waitFor("cacheable fixture body", 6000, () -> "cache-fixture".equals(js("window.fixtureCache")));
-    }
-
-    private void warmCache() throws Exception {
-        assertEquals(0, cacheRequests());
-        fetchCache();
-        assertEquals(1, cacheRequests());
-        fetchCache();
-        assertEquals("No network-free positive cache control", 1, cacheRequests());
     }
 }

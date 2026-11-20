@@ -30,16 +30,14 @@ public final class BrowserRecoveryCiTest extends BrowserRecoveryCiSupport {
         TabModel original = ui(this::selected);
         ui(() -> { load(original, TWO); return null; });
         waitPage(TWO);
+        assertEquals("Committed page two", js("document.querySelector('h1').textContent"));
+        String id = original.getId();
+        waitCheckpoint(id, TWO);
         assertTrue(ui(() -> original.getWebView().canGoBack()));
         ins.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
         waitPage(ONE);
         checkHistoryAtOne();
-        String id = original.getId();
-        waitFor("native state for the selected Back entry published on disk", 8000, () -> {
-            TabSession.Index saved = index();
-            return id.equals(saved.selected) && saved.tabs.stream().anyMatch(row -> id.equals(row.id) && ONE.equals(row.url)
-                    && row.state != null && Files.isRegularFile(sessionDir().resolve(row.filename())));
-        });
+        waitCheckpoint(id, ONE);
         ui(() -> {
             CookieManager.getInstance().flush();
             load(original, HELD);
@@ -73,6 +71,14 @@ public final class BrowserRecoveryCiTest extends BrowserRecoveryCiSupport {
         assertEquals("yes", js("document.body.dataset.signed"));
         assertEquals(1, count("a GET /session/held"));
         observe("same saved tab; restored Back index and Forward entry; traversed both; fresh HTTP login survived; no replay of pending URL");
+    }
+
+    private void waitCheckpoint(String id, String url) throws Exception {
+        waitFor("native state for the committed URL published on disk: " + url, 8000, () -> {
+            TabSession.Index saved = index();
+            return id.equals(saved.selected) && saved.tabs.stream().anyMatch(row -> id.equals(row.id) && url.equals(row.url)
+                    && row.state != null && Files.isRegularFile(sessionDir().resolve(row.filename())));
+        });
     }
 
     private void checkHistoryAtOne() throws Exception {
@@ -124,30 +130,33 @@ public final class BrowserRecoveryCiTest extends BrowserRecoveryCiSupport {
         TabNavigation.Page retired = ui(() -> owner.navigation.page());
         WebViewRenderProcess process = ui(dead::getWebViewRenderProcess);
         assumeTrue("Separate WebView renderer not available", process != null);
-        waitFor("media options available on the original WebView", 7000, () -> ui(retired.media::isObserving));
         long rows = DownloadDbHelper.getInstance(app).countDownloads();
-        click(R.id.fab_video_download);
-        waitFor("real options dialog", 11_000, () -> ui(() -> showing("videoQualityDialog")));
-        assertEquals(1, count("a HEAD /renderer/clip.mp4"));
-        assertTrue(ui(() -> field("videoQualityDialog", AlertDialog.class).findViewById(R.id.dialog_btn_download).performClick()));
-        waitFor("real pre-kill download confirmation", 7000, () -> ui(() -> showing("mediaDownloadPrompt")));
-        View oldConfirm = ui(() -> field("mediaDownloadPrompt", AlertDialog.class)
-                .findViewById(com.privacy.downloader.R.id.prompt_btn_download));
+        AlertDialog old = offerMedia(retired, 1);
+        View oldConfirm = ui(() -> old.findViewById(com.privacy.downloader.R.id.prompt_btn_download));
         assertNotNull(oldConfirm);
         assertTrue(ui(oldConfirm::isEnabled));
         assumeTrue("WebView renderer could not be terminated", ui(process::terminate));
-        waitFor("native renderer loss detached the original view", 12_000, () -> ui(() -> owner.getWebView() == null
-                && owner.navigation.rendererLost() && !showing("mediaDownloadPrompt")));
-        tap(null, "Restore tab");
+        waitFor("native renderer loss detached the original view and its confirmation", 12_000, () -> ui(() -> owner.getWebView() == null
+                && owner.navigation.rendererLost() && !showing("mediaDownloadPrompt") && !oldConfirm.isAttachedToWindow()));
+        observe("actual WebView renderer terminated and original page/view detached");
+        click(R.id.btn_reload);
         waitPage(RENDERER);
+        assertEquals("Renderer active fixture", js("document.querySelector('h1').textContent"));
+        assertEquals(2, count("a GET /renderer/active"));
+        TabNavigation.Page replacement = ui(() -> owner.navigation.page());
+        AlertDialog fresh = offerMedia(replacement, 2); // positive control; leave the new prompt unconfirmed
         ui(() -> {
             assertSame(owner, selected());
             assertFalse(activity.isFinishing());
+            assertFalse(activity.isDestroyed());
             assertNotSame(dead, owner.getWebView());
-            assertNotSame(retired, owner.navigation.page());
+            assertNotSame(retired, replacement);
             assertFalse(owner.navigation.owns(dead));
             assertFalse(retired.media.isObserving());
             assertTrue("Old native click listener not exercised", oldConfirm.performClick());
+            assertSame("Old action affected the new prompt", fresh, field("mediaDownloadPrompt", AlertDialog.class));
+            assertTrue(fresh.isShowing());
+            fresh.findViewById(com.privacy.downloader.R.id.prompt_btn_cancel).performClick();
             return null;
         });
         ins.waitForIdleSync();
@@ -160,8 +169,18 @@ public final class BrowserRecoveryCiTest extends BrowserRecoveryCiSupport {
         if (siblingLost) tap(null, "Restore tab");
         waitPage(SIBLING);
         assertSame(sibling, ui(this::selected));
-        observe("real renderer termination and in-place restoration; pre-kill confirmation replay rejected; sibling "
+        observe("same activity and tab restored; fresh prompt worked; detached confirmation could not change it or queue; sibling "
                 + (siblingLost ? "also required restoration" : "remained usable"));
+    }
+
+    private AlertDialog offerMedia(TabNavigation.Page page, int expectedProbes) throws Exception {
+        waitFor("media discovery available on the selected view", 7000, () -> ui(page.media::isObserving));
+        click(R.id.fab_video_download);
+        waitFor("real options dialog", 11_000, () -> ui(() -> showing("videoQualityDialog")));
+        assertEquals("Fresh metadata probe for this page", expectedProbes, count("a HEAD /renderer/clip.mp4"));
+        assertTrue(ui(() -> field("videoQualityDialog", AlertDialog.class).findViewById(R.id.dialog_btn_download).performClick()));
+        waitFor("real page-owned download confirmation", 7000, () -> ui(() -> showing("mediaDownloadPrompt")));
+        return ui(() -> field("mediaDownloadPrompt", AlertDialog.class));
     }
 
     private boolean showing(String name) throws Exception {

@@ -22,7 +22,6 @@ import browser_recovery as fixtures
 PREFIX = "com.privacy.browser."
 RECOVERY = PREFIX + "BrowserRecoveryCiTest#"
 PRIVACY = PREFIX + "BrowserPrivacyCiTest#"
-ACTIVITY = "com.privacy.browser.MainActivity"
 STATE = "files/saved_tabs/"
 ONE = f"http://127.0.0.1:{fixtures.PORT}/session/one"
 PENDING = "a GET /session/held"
@@ -36,14 +35,16 @@ METHODS = {
     "renderer-restore": RECOVERY + "restoreRendererAndRejectOldNativeConfirmation",
     "home-bookmarks": PREFIX + "BrowserViewLifecycleTest#bundledHomeCanReadRecentBookmarksThroughOnlyTheNewEndpoint",
     "private-entry": PRIVACY + "nativePrivateEntriesDoNotOpenRegularTabs",
-    "clear-cancel": PRIVACY + "cancelConfirmationKeepsAllSeededData",
-    "clear-http-cache": PRIVACY + "clearOnlyUrlCacheAndObserveRealRefetch",
-    "clear-legacy-storage": PRIVACY + "legacyStorageReportsRequestAndObservesProviderOutcome",
 }
 RESTARTS = {
-    "clear-cookies": ("clearOnlyCookiesOnBothOrigins", "cookieRemovalPersistsAcrossRestart"),
-    "clear-history-tabs": ("clearOnlyHistoryAndTabs", "historyAndTabRemovalPersistsAcrossRestart"),
+    "clear-cancel": "CANCEL",
+    "clear-cookies": "COOKIES",
+    "clear-http-cache": "HTTP_CACHE",
+    "clear-legacy-storage": "LEGACY_STORAGE",
+    "clear-history-tabs": "HISTORY_TABS",
 }
+PRIVACY_APPLY = PRIVACY + "choosePrivacyClearInNativeUi"
+PRIVACY_COLD = PRIVACY + "verifyPrivacyChoiceInNewProcess"
 
 
 def args(selector, **extras):
@@ -132,18 +133,19 @@ def stage_and_cut(android, fixture, work):
     return result
 
 
-def privacy_restart(android, fixture, check, verify):
-    first = run(android, PRIVACY + check)
+def privacy_restart(android, fixture, choice):
+    first = run(android, PRIVACY_APPLY, privacy_choice=choice)
     if first["status"] != "passed":
+        first["phase"] = "native-confirmation"
         return first
     before = fixture.snapshot()
     stop(android)
     fixture.reset()  # wire counts only; browser data is deliberately untouched here
-    later = run(android, PRIVACY + verify)
+    later = run(android, PRIVACY_COLD, privacy_choice=choice)
     later["before_restart_requests"] = before
     later["evidence"] = first.get("evidence", []) + later.get("evidence", [])
     if later["status"] != "passed":
-        later["detail"] = "After restart: " + later.get("detail", later["status"])
+        later["phase"] = "after-restart"
     return later
 
 
@@ -185,8 +187,8 @@ def execute(android, work, fixture, record):
     case("session-pending-force-stop", lambda: stage_and_cut(android, fixture, work))
     for name, test in METHODS.items():
         case(name, lambda: run(android, test))
-    for name, (check, verify) in RESTARTS.items():
-        case(name, lambda: privacy_restart(android, fixture, check, verify))
+    for name, choice in RESTARTS.items():
+        case(name, lambda: privacy_restart(android, fixture, choice))
 
 
 def main():
@@ -203,7 +205,8 @@ def main():
     android = Emulator(options.adb)
     android.verify_target()
     record = {"schema": 1, "source_commit": source, "api": 34, "abi": android.text("getprop", "ro.product.cpu.abi"),
-              "webview": provider(android), "app_sha256": installed(android, options.apk, PACKAGE),
+              "page_bytes": int(android.text("getconf", "PAGE_SIZE")), "webview": provider(android),
+              "app_sha256": installed(android, options.apk, PACKAGE),
               "test_sha256": installed(android, options.test_apk, "com.browser.test"),
               "cases": {name: {"status": "not-run"} for name in ("session-pending-force-stop", *METHODS, *RESTARTS)}}
     try:

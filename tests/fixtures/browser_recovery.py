@@ -40,20 +40,24 @@ async function observed(fn) {
 }
 window.inspectFixture = async () => {
   window.fixtureStorage = null;
-  const [local, indexedDB, cacheStorage, worker] = await Promise.all([
-    observed(() => localStorage.getItem(key) === key),
+  const [localStorage, indexedDB, cacheStorage, worker] = await Promise.all([
+    observed(() => window.localStorage.getItem(key) === key),
     observed(async () => (await indexed(false)) === key),
     observed(async () => (await (await caches.match('/privacy/cache-marker'))?.text()) === key),
     observed(() => navigator.serviceWorker.getRegistration('/privacy/')),
   ]);
-  window.fixtureStorage = {local, indexedDB, cacheStorage, worker};
+  window.fixtureStorage = {localStorage, indexedDB, cacheStorage, worker};
 };
-window.plantFixture = async (advanced) => {
+window.plantFixture = async () => {
+  window.fixtureStorage = null;
   localStorage.setItem(key, key);
-  if (advanced) await Promise.allSettled([
+  await Promise.allSettled([
     indexed(true),
     (async () => (await caches.open('recovery-fixture-cache')).put('/privacy/cache-marker', new Response(key)))(),
-    (async () => navigator.serviceWorker.register('/privacy/sw.js'))(),
+    (async () => {
+      await navigator.serviceWorker.register('/privacy/sw.js');
+      // Registration is the sentinel, not successful interception of a request.
+    })(),
   ]);
   await window.inspectFixture();
 };

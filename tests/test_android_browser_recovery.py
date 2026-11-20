@@ -86,9 +86,8 @@ class RunnerTest(unittest.TestCase):
             batch.result_for(output.replace(method, "wrongMethod"), selector)
 
     def test_matrix_covers_every_new_device_test_method(self):
-        all_methods = {*batch.METHODS.values(), batch.RECOVERY + "stagePendingNavigation", batch.RECOVERY + "verifyPendingNavigationRecovery"}
-        for pair in batch.RESTARTS.values():
-            all_methods.update(batch.PRIVACY + name for name in pair)
+        all_methods = {*batch.METHODS.values(), batch.RECOVERY + "stagePendingNavigation",
+                       batch.RECOVERY + "verifyPendingNavigationRecovery", batch.PRIVACY_APPLY, batch.PRIVACY_COLD}
         for cls in (batch.RECOVERY, batch.PRIVACY):
             path = ROOT / "app/src/androidTest/java/com/privacy/browser" / (cls.removeprefix(batch.PREFIX).rstrip("#") + ".java")
             expected = {cls + name for name in re.findall(r"@Test public void (\w+)\(", path.read_text())}
@@ -99,11 +98,25 @@ class RunnerTest(unittest.TestCase):
         state = batch.fixtures.State()
         with patch.object(batch, "run", side_effect=[{"status": "passed", "evidence": ["first complete"]}, {"status": "failed"}]) as run, \
                 patch.object(batch, "stop") as stop:
-            outcome = batch.privacy_restart(android, state, "prepare", "verify")
+            outcome = batch.privacy_restart(android, state, "LEGACY_STORAGE")
         stop.assert_called_once_with(android)
-        self.assertEqual([batch.PRIVACY + "prepare", batch.PRIVACY + "verify"], [call.args[1] for call in run.call_args_list])
-        self.assertEqual({"status": "failed", "detail": "After restart: failed", "before_restart_requests": {}, "evidence": ["first complete"]}, outcome)
+        self.assertEqual([batch.PRIVACY_APPLY, batch.PRIVACY_COLD], [call.args[1] for call in run.call_args_list])
+        self.assertEqual([{"privacy_choice": "LEGACY_STORAGE"}] * 2, [call.kwargs for call in run.call_args_list])
+        self.assertEqual({"status": "failed", "phase": "after-restart", "before_restart_requests": {}, "evidence": ["first complete"]}, outcome)
         android.shell.assert_not_called()
+
+    def test_privacy_matrix_restarts_each_distinct_choice(self):
+        android = Mock()
+        state = batch.fixtures.State()
+        with patch.object(batch, "clear_disposable_profile") as reset, patch.object(batch, "run", return_value={"status": "passed"}), \
+                patch.object(batch, "stage_and_cut", return_value={"status": "passed"}), \
+                patch.object(batch, "privacy_restart", side_effect=lambda *args: {"status": "passed"}) as restart:
+            record = {"cases": {}}
+            with redirect_stdout(io.StringIO()):
+                batch.execute(android, Path("unused"), state, record)
+        self.assertEqual(["CANCEL", "COOKIES", "HTTP_CACHE", "LEGACY_STORAGE", "HISTORY_TABS"],
+                         [call.args[2] for call in restart.call_args_list])
+        self.assertEqual(len(record["cases"]), reset.call_count)
 
     def test_report_checksums_match_the_file(self):
         with TemporaryDirectory() as tmp:
