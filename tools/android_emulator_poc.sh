@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# One disposable Android launch proof. Not for a handset, local profiles, or release artifacts.
+# One disposable Android emulator. Not for a handset, local profiles, or release artifacts.
 set -euo pipefail
 
 if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hosted ]]; then
-  echo 'This PoC runs only on a disposable GitHub-hosted runner.' >&2
+  echo 'This check runs only on a disposable GitHub-hosted runner.' >&2
   exit 1
+fi
+mode=${1:-launch}
+if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication ]]; then
+  echo 'Expected launch or download-publication.' >&2
+  exit 2
 fi
 : "${RUNNER_TEMP:?}" "${ANDROID_HOME:?}" "${GITHUB_SHA:?}"
 root="$RUNNER_TEMP/browser-emulator-poc"
@@ -90,6 +95,11 @@ fi
 
 [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
 git archive "$GITHUB_SHA" | tar -x -C "$root/source"
+if [[ "$mode" == download-publication ]]; then
+  mkdir "$root/jdi"
+  "${JAVA_HOME:?}/bin/javac" --add-modules jdk.jdi -d "$root/jdi" \
+    "$root/source/tests/fixtures/download_publication/PublicationPause.java"
+fi
 "$sdkmanager" --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0'
 (cd "$root/source" && ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :app:assembleDebug)
 apk="$root/source/app/build/outputs/apk/debug/app-debug.apk"
@@ -143,6 +153,12 @@ android install --user 0 "$apk"  # the normal debug APK, not a mock/repacked bui
 android shell pm grant --user 0 com.browser android.permission.POST_NOTIFICATIONS
 android shell input keyevent KEYCODE_WAKEUP
 android shell wm dismiss-keyguard
+if [[ "$mode" == download-publication ]]; then
+  apk_sha=$(sha256sum "$apk" | cut -d ' ' -f1)
+  python3 -B "$root/source/tools/check_android_download_publication.py" \
+    --adb "$adb" --work "$root" --apk-sha256 "$apk_sha"
+  exit 0
+fi
 android shell am start -W -n "$component" | tr -d '\r' | tee "$root/launch.txt"
 grep -Fxq 'Status: ok' "$root/launch.txt"
 

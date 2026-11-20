@@ -1,12 +1,15 @@
-name: Android emulator browser PoC
+name: Android emulator download recovery
 
-# A branch-scoped smoke run, not part of release verification or PERF-07.
+# One branch-scoped runtime check. No phone, release, or performance work.
 on:
   push:
     branches: [arena/bb0ffed3-browser]
     paths:
       - .github/workflows/android-emulator-poc.yml
       - tools/android_emulator_poc.sh
+      - tools/check_android_download_publication.py
+      - tests/fixtures/download_publication/PublicationPause.java
+      - tests/fixtures/download_recovery.py
 
 permissions:
   contents: read
@@ -16,8 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  screenshot:
-    name: Boot one Android emulator and capture the browser
+  download-publication:
+    name: Recover one download interrupted before its SQLite commit
     runs-on: ubuntu-24.04
     timeout-minutes: 18
     steps:
@@ -28,17 +31,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Verify hardware acceleration and capture the installed debug browser
+      - name: Build, boot one AVD, and exercise the exact pre-commit interruption
         shell: bash
         run: |
-          log="$RUNNER_TEMP/browser-poc-step.log"
-          if bash tools/android_emulator_poc.sh 2>&1 | tee "$log"; then
+          log="$RUNNER_TEMP/browser-emulator-step.log"
+          if bash tools/android_emulator_poc.sh download-publication 2>&1 | tee "$log"; then
             exit 0
           else
             status=$?
           fi
-          # Keep a short error readable through the Checks API even if log ZIPs
-          # cannot be downloaded. Do not include signed URL query parameters.
+          # Keep bounded diagnostics available when the CI log archive is not downloadable.
           python3 -B - "$log" <<'PY'
           import re
           import sys
@@ -47,52 +49,14 @@ jobs:
           tail = Path(sys.argv[1]).read_text(errors='replace')[-3000:]
           tail = re.sub(r'(https?://[^\s?]+)\?[^\s]+', r'\1', tail)
           tail = tail.strip().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')[:3600]
-          print(f'::error title=Android emulator PoC failed::{tail or "See the job result"}')
+          print(f'::error title=Android download publication check did not pass::{tail or "See the job result"}')
           PY
           exit "$status"
-      - name: Upload only the screenshot and small proof record
+      - name: Retain only the small download result record
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: android-browser-poc
-          path: ${{ runner.temp }}/browser-emulator-poc/proof/
-          if-no-files-found: error
+          name: android-download-publication
+          path: ${{ runner.temp }}/browser-emulator-poc/proof/download-publication.json
+          if-no-files-found: warn
           retention-days: 1
-          compression-level: 0
-      # The full PNG is the artifact. A bounded JPEG preview is also available
-      # via the check API for clients that cannot follow artifact-storage redirects.
-      - name: Export a small API-readable preview of the actual screenshot
-        continue-on-error: true
-        run: |
-          root="$RUNNER_TEMP/browser-emulator-poc"
-          if ! python3 -B -c 'import PIL' 2>/dev/null; then
-            python3 -m pip install --disable-pip-version-check --no-cache-dir --no-deps \
-              --target "$root/preview-tools" Pillow==12.2.0
-            export PYTHONPATH="$root/preview-tools"
-          fi
-          python3 -B - "$root/proof/browser.png" <<'PY'
-          import base64
-          import hashlib
-          import io
-          import sys
-          from PIL import Image
-
-          image = Image.open(sys.argv[1]).convert('RGB')
-          for size in ((540, 960), (450, 800), (360, 640)):
-              image.thumbnail(size, Image.Resampling.LANCZOS)
-              for quality in (84, 76, 68, 60, 52, 44):
-                  out = io.BytesIO()
-                  image.save(out, format='JPEG', quality=quality, optimize=True)
-                  data = out.getvalue()
-                  if len(data) <= 26 * 1024:
-                      break
-              else:
-                  continue
-              break
-          else:
-              raise SystemExit('Small preview exceeded its size budget; use the PNG artifact')
-          digest = hashlib.sha256(data).hexdigest()
-          code = base64.b64encode(data).decode('ascii')
-          parts = [code[i:i+3600] for i in range(0, len(code), 3600)]
-          for i, part in enumerate(parts, 1):
-              print(f'::notice title=Browser PoC preview {i}/{len(parts)}::BROWSER_POC_JPEG {i} {len(parts)} {digest} {part}')
-          PY
