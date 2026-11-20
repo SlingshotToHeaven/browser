@@ -1,6 +1,6 @@
 # Android emulator: installed download upgrade and Open/Share
 
-This branch-scoped [workflow](../.github/workflows/android-emulator-poc.yml) checks the installed SQLite upgrade portion of **DL-01** and actual Android delivery and grant confinement in **DL-04**. It does not repeat the earlier [pre-commit publication interruption](android-emulator-download-recovery.md#verified-result).
+This branch-scoped [upgrade workflow](https://github.com/SlingshotToHeaven/browser/blob/9fab8e4f980a44b6fc9dc9fba4b874b7eaa95bbc/.github/workflows/android-emulator-poc.yml) checked the installed SQLite upgrade portion of **DL-01** and actual Android delivery and grant confinement in **DL-04**. It did not repeat the earlier [pre-commit publication interruption](android-emulator-download-recovery.md#verified-result).
 
 ## What the run checks
 

@@ -81,7 +81,7 @@ Schedule checks are best effort while the process is alive and on reopening the 
 
 Paste a trusted 64-character SHA-256 hash into **Expected file SHA-256 (optional)** in the new download dialog. A mismatch fails the download without publishing it. For a muxed stream, the hash must be for the final MP4, not one of its inputs.
 
-Downloads are prepared in staging files. When a filesystem cannot link the verified file into place, the downloader exclusively creates and verifies a copy instead. During that copy, a file manager may see the destination name before the app reports completion. This path writes to filesystem folders, not SAF/content-provider destinations. The interrupted-publication policy has host coverage; Android filesystem behavior and process-kill recovery still need device verification.
+Downloads are prepared in staging files. When a filesystem cannot link the verified file into place, the downloader exclusively creates and verifies a copy instead. During that copy, a file manager may see the destination name before the app reports completion. This path writes to filesystem folders, not SAF/content-provider destinations. An [Android 14 emulator test](docs/android-emulator-download-mid-copy.md#verified-result) force-stopped the app halfway through an app-private copy. On relaunch, the app did not offer the partial file for Open or Share. Retry published the exact file from the saved checkpoint after the occupied name was cleared. Shared Downloads was blocked at preflight; hard links and other device/storage combinations remain unverified.
 
 ## Verify browser chrome and renderer recovery
 

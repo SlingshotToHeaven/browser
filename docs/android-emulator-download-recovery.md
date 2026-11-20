@@ -27,4 +27,4 @@ The [one-day JSON artifact](https://github.com/SlingshotToHeaven/browser/actions
 
 ## Scope still open
 
-This run did not exercise hard-link publication, kill during an in-progress exclusive copy, shared/removable storage, or power loss. An installed database upgrade and actual Android Open/Share were checked in the [separate follow-up run](android-emulator-download-upgrade.md#verified-result). ARM64 playback, signed release qualification and hardware checks remain separate. PERF-07 is skipped; this test makes no timing claim.
+This run did not exercise hard-link publication, kill during an in-progress exclusive copy, shared/removable storage, or power loss. The [mid-copy follow-up](android-emulator-download-mid-copy.md#verified-result) separately passed a short app-private copy cut and Retry from the preserved checkpoint. An installed database upgrade and actual Android Open/Share were checked in [another run](android-emulator-download-upgrade.md#verified-result). ARM64 playback, signed release qualification and hardware checks remain separate. PERF-07 is skipped; this test makes no timing claim.

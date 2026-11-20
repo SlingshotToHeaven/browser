@@ -1,0 +1,37 @@
+# Android emulator: recovery from a copy interrupted halfway through
+
+This is a targeted **DL-01 / Steps 03–04** check using one disposable Android 14 / API 34 x86_64 emulator. It differs from the [earlier pre-commit test](android-emulator-download-recovery.md#verified-result): the final-name entry must still be **short** when the process is killed. The app build is unmodified and the file bytes and HTTP requests are from a loopback-only synthetic fixture. The [tested branch workflow](https://github.com/SlingshotToHeaven/browser/blob/ab67e2aeb2300879290943099a4de36c4089fa2c/.github/workflows/android-emulator-poc.yml) keeps only a small JSON result; no APK, database, log dump, screenshot, or payload is uploaded.
+
+## What the check does
+
+1. Queue a 4 MiB file through **Downloads → Add download** with one connection. The real app downloads and checkpoints a verified representation. Hold all app threads using host-only JDI at the production `FilePublication.copyAndVerify` loop, after a bounded number of completed chunk writes and before verification or SQLite publication. Require independent evidence of the exact fixture prefix at the final name, a separate full staging inode, and a `RUNNING` SQLite row with no publication identity. If the real app instead takes the atomic hard-link path, the pre-commit breakpoint can record it separately only with same-inode evidence; it does not count as a copy cut.
+2. Force-stop the browser while JDI still holds it. Do not resume it or inject a Java exception. Check that the row, short output, full stage and unrelated neighboring file are unchanged before relaunch. Relaunch directly into the real Downloads activity in a new app process. The occupied name must yield **FAILED**, not completion, with no new network request or modified files. Tapping the card must show diagnostics, the context menu must omit **Open File** and **Share File**, and selecting only that card and tapping the generic Share button must show the app's refusal without leaving Downloads.
+3. Move the short output aside without replacing anything, then use **Retry**, not **Start over**. Require a new attempt on the same job, successful SQLite publication and a **COMPLETED** badge, exact final length and SHA-256, intact parked output and neighbor, and no new HTTP traffic. This distinguishes retrying a verified **complete staging checkpoint** from downloading again.
+4. After app-private recovery passes, try a fresh fixture subdirectory under the emulator's public `Download` directory. Only continue if ordinary app-UID write/read/rename works and the app's download prompt uses that directory rather than a fallback. No root, broad storage grants or storage policy changes. Only the completed synthetic history row is cleared through the UI before the second fixture, with the original files kept. There is no package data reset. A storage preflight refusal is recorded as **blocked**, not shared-storage recovery evidence.
+
+The [`BROWSER_MID_COPY_RESULT` annotation](../tools/check_android_download_mid_copy.py) and artifact contain just the file hashes, byte counts, SQLite/UI outcomes, request types and case status. The host checks in [`test_android_download_mid_copy.py`](../tests/test_android_download_mid_copy.py) do not substitute for the process-death observation.
+
+## Verified result
+
+**App-private pass; shared Downloads blocked at preflight.** [Run 44703149268](https://github.com/SlingshotToHeaven/browser/actions/runs/44703149268), [job 136176134630](https://github.com/SlingshotToHeaven/browser/actions/runs/44703149268/job/136176134630), built and installed the normal debug APK from `ab67e2aeb2300879290943099a4de36c4089fa2c`. The job took 3m 56s including the build and boot. APK SHA-256: `666c31c10616212e19e717c1371171a70fe01e61233a77990df10dbce6c8f728`.
+
+| Observation | Bytes | SHA-256 |
+| --- | ---: | --- |
+| Final-name copy at force-stop, after 32 completed 64 KiB writes | 2,097,152 | `e24ca701a17a18181e54bfa06cd442f49a53f8176aefc08b84b8b172164ac036` |
+| Full staging checkpoint at force-stop, on a separate inode | 4,194,304 | `3f594a89bfe61cdd0fdeb4592211e70737211891cfdcde17d52464d9648f66b2` |
+| Final file after explicit **Retry** | 4,194,304 | `3f594a89bfe61cdd0fdeb4592211e70737211891cfdcde17d52464d9648f66b2` |
+
+- **At the cut:** SQLite still showed `RUNNING` with one complete saved segment, no finish time, and no publication identity. The debugger disconnected while the copy was still held. The row and files were intact before relaunch.
+- **After relaunch:** The row and card showed `FAILED` because the name was occupied. The partial output, full checkpoint and unrelated file were unchanged. The card opened diagnostics, the context menu lacked Open File and Share File, and failed-only selection Share showed “Select at least one completed download to share,” without leaving Downloads.
+- **After Retry:** The harness moved the partial copy aside without replacing anything. Retry (not Start over) committed the exact fixture on a new attempt for the same job and reserved path, preserved the parked copy and unrelated file, and cleaned up the staging file. The only HTTP requests were the original probe and conditional transfer; relaunch and Retry added **zero** requests.
+- **Shared storage:** The ordinary app-UID preflight could not create the fixture directory under public `Download`. No additional storage access was granted, and no fallback directory was counted as shared storage. **No hard link was observed.**
+
+The 1,381-byte JSON result was verified against the `BROWSER_MID_COPY_RESULT` job annotation; SHA-256 `639d2c1162f120282d9f0954675cd7d8fdee2ad829505aaf1f7021e0f8d195f5`. Artifact `14613183623` was retained for one day.
+
+## Earlier partial runs
+
+[44698655854](https://github.com/SlingshotToHeaven/browser/actions/runs/44698655854), [44699318056](https://github.com/SlingshotToHeaven/browser/actions/runs/44699318056), [44700086337](https://github.com/SlingshotToHeaven/browser/actions/runs/44700086337), [44701609539](https://github.com/SlingshotToHeaven/browser/actions/runs/44701609539) and [44702440617](https://github.com/SlingshotToHeaven/browser/actions/runs/44702440617) cut the copy at 2 MiB, but ended before Retry. Two recorded the failed-only Share refusal. Run `44702440617` recorded a second Android process kill after the driver launched the browser's main screen; the cause was not established. The passing run relaunches directly into Downloads instead. [44700918326](https://github.com/SlingshotToHeaven/browser/actions/runs/44700918326) stopped at URL entry before any HTTP request. These partial runs did not reach the shared-storage probe.
+
+## Scope limits
+
+This is force-stop of an app process, not power loss. It does not cut the original HTTP transfer, cover physical/removable media, or qualify Android versions other than this emulator. Open/Share assertions only concern what this browser will offer or dispatch; a partially written file at a public path can still be visible to tools with storage access. The installed v7 → v8 upgrade and successful chooser delivery were covered in a [separate run](android-emulator-download-upgrade.md#verified-result). No SAF publication, performance measurement, device-lab work, or signed-release qualification.
