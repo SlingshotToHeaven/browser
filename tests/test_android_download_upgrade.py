@@ -10,12 +10,20 @@ from xml.etree import ElementTree as ET
 
 from test_download_queue_sql import create
 from tools.check_android_download_upgrade import (
-    CheckFailed, JOBS, LEGACY, db_copy, find_card, fixture, fixture_id, read_profile, seed_rows,
-    validate_receipt, wire_reply,
+    CheckFailed, JOBS, LEGACY, db_copy, find_card, fixture, fixture_id, installed_apk_path,
+    read_profile, seed_rows, validate_receipt, wire_reply,
 )
 
 
 class AndroidDownloadUpgradeHarnessTest(unittest.TestCase):
+    def test_api_34_base_apk_path_is_randomized_and_bound_to_package(self):
+        path = "/data/app/~~A_ran-domDirNonceValue==/com.browser-anotherNonce_value==/base.apk"
+        self.assertEqual(installed_apk_path("package:" + path, "com.browser"), path)
+        for wrong in (path.replace("com.browser-", "com.other-"), path.replace("~~", "../"),
+                      path + "\npackage:/data/app/other/split.apk"):
+            with self.assertRaises(CheckFailed):
+                installed_apk_path("package:" + wrong, "com.browser")
+
     def test_http_fixture_only_serves_the_exact_checkpoint_suffix(self):
         active = JOBS["active"]
         with fixture() as server:

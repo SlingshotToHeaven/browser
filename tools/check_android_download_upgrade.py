@@ -363,15 +363,22 @@ def apk_info(sdk, apk, expected):
         return {"version_code": int(match[2]), "apk_sha256": file_digest(stream, "sha256").hexdigest(), "signer": digests[0]}
 
 
+def installed_apk_path(response, package):
+    # Android 14 uses /data/app/~~<nonce>/<package>-<nonce>/base.apk.
+    nonce = r"[A-Za-z0-9_-]+={0,2}"
+    match = re.fullmatch(rf"package:(/data/app/~~{nonce}/{re.escape(package)}-{nonce}/base\.apk)", response)
+    require(match, f"Unrecognized PackageManager base APK path for {package} ({len(response.splitlines())} lines)")
+    return match[1]
+
+
 def install(android, package, apk, info, replace=False):
     android.verify_target()
     flags = ("-r",) if replace else ()
     result = android.command("install", *flags, "--user", "0", str(apk), timeout=90).stdout.decode()
     require("Success" in result.splitlines(), f"PackageManager did not install {package}")
-    path = re.fullmatch(r"package:(/data/app/[\w=/+.\-]+/base\.apk)", android.text("pm", "path", "--user", "0", package))
-    require(path, f"No single base APK installed for {package}")
+    path = installed_apk_path(android.text("pm", "path", "--user", "0", package), package)
     uid = android.text("run-as", package, "id", "-u")
-    installed_hash = android.text("run-as", package, "sha256sum", path[1]).split()
+    installed_hash = android.text("run-as", package, "sha256sum", path).split()
     require(installed_hash and installed_hash[0] == info["apk_sha256"] and uid.isdecimal() and int(uid) >= 10000,
             f"Wrong installed APK bytes or UID for {package}")
     return int(uid)
