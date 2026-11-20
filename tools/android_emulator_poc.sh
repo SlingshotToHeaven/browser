@@ -7,8 +7,8 @@ if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hoste
   exit 1
 fi
 mode=${1:-launch}
-if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade && "$mode" != download-mid-copy && "$mode" != download-batch ]]; then
-  echo 'Expected launch, download-publication, download-upgrade, download-mid-copy, or download-batch.' >&2
+if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade && "$mode" != download-mid-copy && "$mode" != download-batch && "$mode" != browser-recovery ]]; then
+  echo 'Expected launch, download-publication, download-upgrade, download-mid-copy, download-batch, or browser-recovery.' >&2
   exit 2
 fi
 : "${RUNNER_TEMP:?}" "${ANDROID_HOME:?}" "${GITHUB_SHA:?}"
@@ -119,10 +119,14 @@ batch_ffmpeg() {
   printf '%s\n' "$dir/ffmpeg"
 }
 host_status=0
-if [[ "$mode" == download-batch ]]; then
+if [[ "$mode" == download-batch || "$mode" == browser-recovery ]]; then
   build_debug "$root/source" :app:assembleDebugAndroidTest
   test_apk="$root/source/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
   [[ -s "$test_apk" ]]
+else
+  build_debug "$root/source"
+fi
+if [[ "$mode" == download-batch ]]; then
   FFMPEG_TEST_BIN=$(batch_ffmpeg) || { FFMPEG_TEST_BIN=''; echo 'Host FFmpeg unavailable; record affected cases as blocked.'; }
   export FFMPEG_TEST_BIN
   (
@@ -131,8 +135,6 @@ if [[ "$mode" == download-batch ]]; then
       :app:testDebugUnitTest --tests 'com.privacy.browser.comic.*' --tests 'com.privacy.browser.media.*'
   ) || host_status=$?
   python3 -B "$root/source/tools/record_download_batch_host.py" "$root" "$host_status" || host_status=1
-else
-  build_debug "$root/source"
 fi
 apk="$root/source/app/build/outputs/apk/debug/app-debug.apk"
 [[ -s "$apk" ]]
@@ -205,6 +207,12 @@ if [[ "$mode" == download-batch ]]; then
   python3 -B "$root/source/tools/check_android_download_batch.py" \
     --adb "$adb" --work "$root" --apk "$apk" --test-apk "$test_apk" || device_status=$?
   (( device_status == 0 && host_status == 0 ))
+  exit 0
+fi
+if [[ "$mode" == browser-recovery ]]; then
+  android install -t --user 0 "$test_apk"
+  python3 -B "$root/source/tools/check_android_browser_recovery.py" \
+    --adb "$adb" --work "$root" --apk "$apk" --test-apk "$test_apk"
   exit 0
 fi
 if [[ "$mode" == download-publication || "$mode" == download-mid-copy ]]; then

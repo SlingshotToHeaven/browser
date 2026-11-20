@@ -4,13 +4,17 @@ name: Android download test batch
 on:
   push:
     branches: [arena/bb0ffed3-browser]
+    # Shared emulator setup is also used for browser recovery. Only download
+    # inputs should trigger this download-specific batch.
     paths:
-      - .github/workflows/android-emulator-poc.yml
-      - tools/android_emulator_poc.sh
       - tools/check_android_download_batch.py
       - tools/record_download_batch_host.py
       - tests/fixtures/download_batch.py
-      - 'app/src/androidTest/java/com/privacy/browser/**/*Batch*.java'
+      - tests/test_android_download_batch.py
+      - 'app/src/androidTest/java/com/privacy/browser/**/*Download*Batch*.java'
+      - app/src/androidTest/java/com/privacy/browser/downloads/DownloadHistoryDeviceTest.java
+      - app/src/androidTest/java/com/privacy/browser/downloads/CompletedDownloadGrantTest.java
+      - app/src/androidTest/java/com/privacy/browser/MediaDiscoveryDeviceTest.java
 
 permissions:
   contents: read
