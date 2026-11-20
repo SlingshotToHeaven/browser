@@ -7,8 +7,8 @@ if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hoste
   exit 1
 fi
 mode=${1:-launch}
-if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade && "$mode" != download-mid-copy ]]; then
-  echo 'Expected launch, download-publication, download-upgrade, or download-mid-copy.' >&2
+if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade && "$mode" != download-mid-copy && "$mode" != download-batch ]]; then
+  echo 'Expected launch, download-publication, download-upgrade, download-mid-copy, or download-batch.' >&2
   exit 2
 fi
 : "${RUNNER_TEMP:?}" "${ANDROID_HOME:?}" "${GITHUB_SHA:?}"
@@ -103,8 +103,22 @@ elif [[ "$mode" == download-upgrade ]]; then
   python3 -B "$root/source/tools/prepare_perf_baselines.py" "$root/baselines"
 fi
 "$sdkmanager" --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0'
-build_debug() { (cd "$1" && ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :app:assembleDebug); }
-build_debug "$root/source"
+build_debug() { (cd "$1" && shift && ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :app:assembleDebug "$@"); }
+host_status=0
+if [[ "$mode" == download-batch ]]; then
+  build_debug "$root/source" :app:assembleDebugAndroidTest
+  test_apk="$root/source/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+  [[ -s "$test_apk" ]]
+  export FFMPEG_TEST_BIN="$(command -v ffmpeg || true)"
+  (
+    cd "$root/source"
+    ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :downloader:testDebugUnitTest \
+      :app:testDebugUnitTest --tests 'com.privacy.browser.comic.*' --tests 'com.privacy.browser.media.*'
+  ) || host_status=$?
+  python3 -B "$root/source/tools/record_download_batch_host.py" "$root" "$host_status" || host_status=1
+else
+  build_debug "$root/source"
+fi
 apk="$root/source/app/build/outputs/apk/debug/app-debug.apk"
 [[ -s "$apk" ]]
 if [[ "$mode" == download-upgrade ]]; then
@@ -170,6 +184,14 @@ fi
 android install --user 0 "$apk"  # the normal debug APK, not a mock/repacked build
 # Remove only the first-run notification prompt on the empty AVD.
 android shell pm grant --user 0 com.browser android.permission.POST_NOTIFICATIONS
+if [[ "$mode" == download-batch ]]; then
+  android install -t --user 0 "$test_apk"
+  device_status=0
+  python3 -B "$root/source/tools/check_android_download_batch.py" \
+    --adb "$adb" --work "$root" --apk "$apk" --test-apk "$test_apk" || device_status=$?
+  (( device_status == 0 && host_status == 0 ))
+  exit 0
+fi
 if [[ "$mode" == download-publication || "$mode" == download-mid-copy ]]; then
   apk_sha=$(sha256sum "$apk" | cut -d ' ' -f1)
   python3 -B "$root/source/tools/check_android_${mode//-/_}.py" \

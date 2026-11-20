@@ -1,17 +1,16 @@
-name: Android emulator download mid-copy recovery
+name: Android download test batch
 
-# Run only the current branch-scoped mid-copy batch. Earlier launch,
-# publication and upgrade/share modes remain available in the runner.
+# One hosted emulator for the batch; no dispatch on main or on a handset.
 on:
   push:
     branches: [arena/bb0ffed3-browser]
     paths:
       - .github/workflows/android-emulator-poc.yml
       - tools/android_emulator_poc.sh
-      - tools/check_android_download_publication.py
-      - tools/check_android_download_mid_copy.py
-      - tests/fixtures/download_publication/PublicationPause.java
-      - tests/fixtures/download_recovery.py
+      - tools/check_android_download_batch.py
+      - tools/record_download_batch_host.py
+      - tests/fixtures/download_batch.py
+      - 'app/src/androidTest/java/com/privacy/browser/**/*Batch*.java'
 
 permissions:
   contents: read
@@ -21,10 +20,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  download-mid-copy:
-    name: Force-stop an actual Android file copy and verify checkpoint retry
+  download-batch:
+    name: Run download checks on one API 34 emulator
     runs-on: ubuntu-24.04
-    timeout-minutes: 18
+    timeout-minutes: 28
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -33,32 +32,33 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Build, boot one AVD, and interrupt the production copy loop
+      - name: Build once, run host download tests, and exercise the Android batch
         shell: bash
         run: |
           log="$RUNNER_TEMP/browser-emulator-step.log"
-          if bash tools/android_emulator_poc.sh download-mid-copy 2>&1 | tee "$log"; then
+          if bash tools/android_emulator_poc.sh download-batch 2>&1 | tee "$log"; then
             exit 0
           else
             status=$?
           fi
-          # Keep bounded diagnostics available when the CI log archive is not downloadable.
+          # Preserve a short build/setup diagnostic if the log archive is unavailable.
           python3 -B - "$log" <<'PY'
           import re
           import sys
           from pathlib import Path
 
-          tail = Path(sys.argv[1]).read_text(errors='replace')[-3000:]
+          lines = Path(sys.argv[1]).read_text(errors='replace').splitlines()
+          tail = '\n'.join(line for line in lines if not line.startswith('::notice'))[-3200:]
           tail = re.sub(r'(https?://[^\s?]+)\?[^\s]+', r'\1', tail)
           tail = tail.strip().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')[:3600]
-          print(f'::error title=Android mid-copy recovery check did not pass::{tail or "See the job result"}')
+          print(f'::error title=Download batch encountered a failure::{tail or "See the job result"}')
           PY
           exit "$status"
-      - name: Retain only the small mid-copy result record
+      - name: Retain compact host and device result records
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: android-download-mid-copy
-          path: ${{ runner.temp }}/browser-emulator-poc/proof/download-mid-copy.json
+          name: android-download-batch
+          path: ${{ runner.temp }}/browser-emulator-poc/proof/download-*.json
           if-no-files-found: warn
           retention-days: 1
