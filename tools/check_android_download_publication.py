@@ -295,12 +295,31 @@ def prepare(android):
     return directory
 
 
+def type_fixture_url(android, url):
+    field_id = "add_url_edit_text"
+
+    def focused():
+        root = android.hierarchy()
+        field = find_view(root, field_id) if root is not None else None
+        return field is not None and field.get("focused") == "true"
+
+    # Input can be dropped as the Android IME takes focus. Verify the exact
+    # text before pressing Continue; retry only typing, never a submission.
+    for attempt in range(3):
+        android.tap(field_id)
+        until(focused, "focused fixture URL field", seconds=10)
+        if attempt:
+            android.shell("input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A")
+        android.shell("input", "text", url)
+        if android.view(field_id).get("text") == url:
+            return
+    raise CheckFailed("Could not enter the exact fixture URL in the focused dialog")
+
+
 def ready_to_enqueue(android, directory, url, name=NAME):
     android.start(DOWNLOADS)
     android.tap("btn_add_download")
-    android.tap("add_url_edit_text")
-    android.shell("input", "text", url)
-    android.view("add_url_edit_text", url)
+    type_fixture_url(android, url)
     if "mInputShown=true" in android.text("dumpsys", "input_method"):
         android.shell("input", "keyevent", "KEYCODE_BACK")
     android.tap("add_url_btn_continue")

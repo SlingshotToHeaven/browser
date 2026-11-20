@@ -5,7 +5,7 @@ from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
@@ -13,7 +13,7 @@ from xml.etree import ElementTree as ET
 from test_download_queue_sql import create
 from tools.check_android_download_publication import (
     CheckFailed, DIGEST, ETAG, INITIAL_REQUESTS, LENGTH, NAME, bound_path,
-    find_view, fixture, publication_kind, read_state, until,
+    find_view, fixture, publication_kind, read_state, type_fixture_url, until,
 )
 
 
@@ -80,6 +80,18 @@ class AndroidDownloadPublicationEvidenceTest(unittest.TestCase):
         android.app.side_effect = [b"12:345\n", b"12:678\n"]
         with self.assertRaises(CheckFailed):
             bound_path(android, directory, aliased, r"interrupted\.bin")
+
+    def test_fixture_input_replaces_dropped_keypresses_without_submitting(self):
+        android = Mock()
+        android.hierarchy.return_value = ET.fromstring('''<hierarchy><node package="com.browser"
+            resource-id="com.browser:id/add_url_edit_text" enabled="true" focused="true" /></hierarchy>''')
+        url = "http://127.0.0.1:1234/jobs/interrupted.bin"
+        android.view.side_effect = [ET.Element("node", text=url[1:]), ET.Element("node", text=url)]
+        type_fixture_url(android, url)
+        self.assertEqual(android.tap.call_args_list, [call("add_url_edit_text")] * 2)
+        self.assertEqual(android.shell.call_args_list, [call("input", "text", url),
+                         call("input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"),
+                         call("input", "text", url)])
 
     def test_ui_probe_ignores_other_apps_and_disabled_controls(self):
         root = ET.fromstring('''<hierarchy>
