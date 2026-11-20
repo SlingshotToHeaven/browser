@@ -83,11 +83,11 @@ Paste a trusted 64-character SHA-256 hash into **Expected file SHA-256 (optional
 
 Downloads are prepared in staging files. When a filesystem cannot link the verified file into place, the downloader exclusively creates and verifies a copy instead. During that copy, a file manager may see the destination name before the app reports completion. This path writes to filesystem folders, not SAF/content-provider destinations. An [Android 14 emulator test](docs/android-emulator-download-mid-copy.md#verified-result) force-stopped the app halfway through an app-private copy. On relaunch, the app did not offer the partial file for Open or Share. Retry published the exact file from the saved checkpoint after the occupied name was cleared.
 
-The [download test batch](docs/android-emulator-download-batch.md) uses one disposable API 34 emulator and reports host and Android results separately. The ordinary app process wrote and verified a file under public Downloads in that batch and preserved an occupied neighbor. That was normal publication, not a public-storage force-stop: the earlier mid-copy harness could not create its public fixture directory. Hard-link interruption, other device/storage combinations and signed-release checks remain unverified.
+The [download test batch](docs/android-emulator-download-batch.md) verified normal publication under public Downloads. A [separate interruption test](docs/android-emulator-functional-followup.md#public-downloads-interruption) then force-stopped the ordinary app partway through a copy to public Downloads: it refused Open/Share on relaunch and Retry recovered the exact file without another HTTP request. Hard-link interruption, other device/storage combinations and signed-release checks remain unverified.
 
 ## Verify browser chrome and renderer recovery
 
-The [API 34 browser batch](docs/android-emulator-browser-recovery.md#verified-result) verified background navigation while editing the foreground address, restart during a pending load, and restoration after real shared renderer loss. A pre-kill media confirmation could not affect a fresh one or queue a download. Fallback providers, other stale callbacks, and specialized WebViews still need separate checks.
+The [API 34 browser batch](docs/android-emulator-browser-recovery.md#verified-result) verified background navigation while editing the foreground address, restart during a pending load, and restoration after real shared renderer loss. A pre-kill media confirmation could not affect a fresh one or queue a download. Fallback providers, other stale callbacks, and specialized WebViews still need separate checks. The [functional follow-up](docs/android-emulator-functional-followup.md#browser-checks) separately covers private-entry refusal, selected-tab startup, and existing Android browser, Assistant and local-data fixtures.
 
 On a disposable debug install, run the two real-WebView checks and record `adb shell dumpsys webviewupdate` with the result:
 
@@ -112,7 +112,7 @@ These checks are not run by host JVM tests or by assembling the APK.
 
 ## Tab session checks on Android
 
-The [emulator batch](docs/android-emulator-browser-recovery.md#verified-result) passed the native same-address history control and a separate force-stop during pending navigation after a durable checkpoint and fixture-cookie flush. Upgrade, missing/corrupt state and paired performance checks remain separate.
+The [emulator batch](docs/android-emulator-browser-recovery.md#verified-result) passed the native same-address history control and a separate force-stop during pending navigation after a durable checkpoint and fixture-cookie flush. Missing-state fallback passed in the [separate startup cases](docs/android-emulator-functional-followup.md#browser-checks). Upgrade, corrupt-state and paired performance checks remain separate.
 
 Selection changes only the selected regular tab ID; it doesn't trigger a WebView history probe or capture. Native history events have their own 350 ms quiet window and 1.5 s maximum debounce. The history probe compares the provider's ordered URLs and current index, including repeated URLs. Android doesn't expose an entry ID or changes to opaque page state when the list, position and addresses are all unchanged. Captures up to 4 MiB per tab pass to one background writer, with a 16 MiB budget per pending batch. Oversize or missing state falls back to the matching tab's URL; disk publication failures leave the previous committed index in place. See [selected-tab startup](#selected-tab-startup-on-android-not-yet-run) for the lazy restore and first-request checks.
 
@@ -133,7 +133,11 @@ adb reverse tcp:8012 tcp:8012
 
 The JVM fixtures exercise scheduling, generation-file publication and failure ordering, not OS process death, the Android parcel implementation, cookie durability or device performance.
 
-## Selected-tab startup on Android (not yet run)
+<a id="selected-tab-startup-on-android-not-yet-run"></a>
+
+## Selected-tab startup on Android
+
+See the [API 34 functional outcomes](docs/android-emulator-functional-followup.md#browser-checks). These are not startup timing measurements or a complete first-request protection matrix.
 
 The browser reads the session index and prepares current protection on workers. It creates a WebView only for the selected saved tab or the tab needed by a valid launch link. The other saved rows retain their titles, URLs, settings, and history references without live views. The browser reads a saved blob only when its row is selected, and discards stale results after a switch, close, wipe, or Activity replacement. Renderer-lost rows still require explicit recovery. AI transcripts stay lazy; resume checks the active view's appearance and defers session housekeeping, reminder reconciliation, and download recovery.
 
@@ -167,7 +171,11 @@ Pair each run with a matching APK from before Step 15 (same WebView, Android bui
 
 Time from the same launch or resume stimulus to the **first presented frame that shows the expected fixture heading**. A recording that includes the stimulus and screen, or timestamped display capture aligned to Perfetto's frame timeline, can identify the frame. `am start -W`, Activity first draw, `Browser.tabs.commitVisible` (a provider milestone), and `onPageFinished` alone are not that endpoint. Collect median/p95 from repeated samples, and count filter prep, blob reads, view creations and main-frame navigations using `Browser.startup.filters`, `Browser.session.readIndex`, `Browser.session.readBlob`, `Browser.tabs.createView`, `Browser.tabs.nativeRestore`, `Browser.tabs.navigate`, and the fixture log. Unchanged warm resume should not recreate views, navigate, or reapply settings to inactive tabs; changing appearance should update the active view and then other views when selected. Unfiltered startup requests or extra hidden views fail the behavior gate regardless of timing. No paired Android measurements have been collected here.
 
-## Tab residency and previews on Android (not yet run)
+<a id="tab-residency-and-previews-on-android-not-yet-run"></a>
+
+## Tab residency and previews on Android
+
+Three [API 34 residency and preview checks](docs/android-emulator-functional-followup.md#browser-checks) passed. Paired frame costs and broader lifecycle coverage remain separate.
 
 | Resource (per main browser Activity) | Policy |
 | --- | --- |
@@ -451,7 +459,11 @@ python3 -B -m unittest discover -s tests -p test_assistant_legacy_sql.py -v
 
 The [fixture](app/src/test/java/com/privacy/browser/ai/AgentSessionManagerTest.java) runs the production session manager with a fake provider, review UI, transcript store and main queue. It needs no API key or provider connection. It checks that Stop, a session switch, pause or a settings change blocks late work, and that a completed two-call turn sends one outcome per original call ID in one follow-up. A result queued before a same-address reload cannot send text from the retired document. Duplicate replies and errors from a previous provider request do not restart or interrupt the current turn. Separate file and host SQLite tests cover safe legacy cleanup, rollback, and preserved references. These are host checks, not tests of Android's native dialog, WebView callbacks, SQLiteOpenHelper, or HTTPS cancellation.
 
-### Assistant checks on Android (not yet run)
+<a id="assistant-checks-on-android-not-yet-run"></a>
+
+### Assistant checks on Android
+
+The [API 34 Assistant cases](docs/android-emulator-functional-followup.md#browser-checks) passed 18/18. This does not verify HTTPS transport cancellation, an installed upgrade, or the manual reboot/clock cases below.
 
 Use a disposable debug install with scripts allowed for `http://127.0.0.1:8011/assistant-turn`. Start `python3 -B tests/fixtures/tab_trust.py` on your host and run `adb reverse tcp:8011 tcp:8011` on the test device. The tests use synthetic data only; leave cloud chat unconfigured. Run each class separately:
 

@@ -48,4 +48,4 @@ The app accurately said **clear requested** for URL cache and **deletion request
 
 ## Scope and remaining gaps
 
-Use these results alongside [WV-01, WV-02 and PR-01](../DEVICE_TEST_CHECKLIST.md#webview-privacy-and-filters-steps-0710), not as full sign-off. The suite did not test Home's private-entry action, other WebView versions, fallback providers, every retired callback, or provider profile isolation/deletion. No secure-erasure claim is made. No download batch, physical device, performance trace or signed-release check was run.
+Use these results alongside [WV-01, WV-02 and PR-01](../DEVICE_TEST_CHECKLIST.md#webview-privacy-and-filters-steps-0710), not as full sign-off. This suite did not test Home's private-entry action; that passed in the [separate API 34 functional follow-up](android-emulator-functional-followup.md#browser-checks). Other WebView versions, fallback providers, every retired callback, and provider profile isolation/deletion were not covered. No secure-erasure claim is made. No download batch, physical device, performance trace or signed-release check was run.

@@ -49,6 +49,10 @@ The second run's pinned FFmpeg 4.1 binary generated the device media successfull
 - [Installed v7 → v8 upgrade and actual chooser delivery](android-emulator-download-upgrade.md#verified-result): real same-ID upgrade, resumed ranges were anonymous, and both Open surfaces and single/multiple Share reached a separate app with only the selected bytes readable.
 - [Report 4 on an earlier ARM64 debug APK](android-test-followup.md#latest-manual-report-settled-restart-and-debug-playback) reported MPEG-TS and ranged fMP4 playback on a 4 KiB phone. That does not reproduce the final batch's four cases on its exact APK, or establish that translation caused the timeouts.
 
+## Later follow-up
+
+A [two-case recheck](android-emulator-functional-followup.md#targeted-recheck) separately verified the foreign-frame attachment refusal after a trusted touch and actual child click, with a working top-level prompt control. Another [API 34 run](android-emulator-functional-followup.md#public-downloads-interruption) verified interruption and exact checkpoint Retry in public Downloads. Neither run exercised hard links or native mux.
+
 ## Scope limits
 
 The batch does not qualify minimum-API devices, interrupted copies in public Downloads, removable storage, a hard-link process-death cut, a separate CBZ viewer on a supported destination, the complete native ARM64 playback matrix, 16 KiB runtime, the signed release, or paired performance traces. No phone or lab test ran in this batch. Download limiter checks describe app body reads and behavior, not socket bytes, radio traffic or battery impact. No background wakeup timing promise was tested. See the [device checklist](../DEVICE_TEST_CHECKLIST.md#downloads-storage-and-media-steps-0306) for the broader gates.
