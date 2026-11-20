@@ -11,7 +11,7 @@ from xml.etree import ElementTree as ET
 from test_download_queue_sql import create
 from tools.check_android_download_upgrade import (
     CheckFailed, JOBS, LEGACY, db_copy, find_card, fixture, fixture_id, installed_apk_path,
-    read_profile, seed_rows, validate_receipt, wire_reply,
+    picker_nodes, picker_option, read_profile, seed_rows, validate_receipt, wire_reply,
 )
 
 
@@ -103,6 +103,22 @@ class AndroidDownloadUpgradeHarnessTest(unittest.TestCase):
         self.assertIsNone(find_card(root, "history", "card_btn_pause_resume"))
         self.assertIsNone(find_card(root, "paused", badge="COMPLETED"))
         self.assertIsNotNone(find_card(root, "paused", "card_btn_pause_resume", "PAUSED"))
+
+    def test_picker_requires_the_fixture_label_even_with_a_default(self):
+        root = ET.fromstring('''<hierarchy>
+          <node package="android" enabled="true" text="Open with Fixture Receiver" />
+          <node package="android" enabled="true" text="JUST ONCE" resource-id="android:id/button_once" />
+          <node package="android" enabled="true" text="Always" resource-id="android:id/button_always" />
+          <node package="other.app" enabled="true" text="Fixture Receiver" />
+        </hierarchy>''')
+        selected, already_once = picker_option(picker_nodes(root), view=True)
+        self.assertTrue(already_once)
+        self.assertEqual(selected.get("resource-id"), "android:id/button_once")
+        self.assertIsNone(picker_option(picker_nodes(root), view=False))
+        root[0].set("text", "Open with Other App")
+        self.assertIsNone(picker_option(picker_nodes(root), view=True))
+        root[3].set("package", "com.android.intentresolver")
+        self.assertEqual(picker_option(picker_nodes(root), view=False), (root[3], False))
 
     def test_recipient_requires_exact_bytes_and_no_unselected_or_write_grants(self):
         denied = {"read": "denied", "write": "denied", "readGrant": False, "writeGrant": False}

@@ -458,37 +458,79 @@ def foreground(android):
     return resumed[1] if resumed else None
 
 
-def resolver_control(android, package, text):
-    root = android.hierarchy()
+def picker_nodes(root):
     if root is None:
-        return None
-    matches = [n for n in root.iter("node") if n.get("package") == package and n.get("enabled") == "true"
-               and text in (n.get("text"), n.get("content-desc"))]
-    return matches[0] if matches else None
+        return []
+    return [n for n in root.iter("node") if n.get("package") in SYSTEM_RESOLVERS and n.get("enabled") == "true"]
+
+
+def once_button(nodes):
+    return next((n for n in nodes if n.get("resource-id", "").endswith(":id/button_once")
+                 and n.get("text", "").casefold() == "just once"), None)
+
+
+def picker_option(nodes, view):
+    # Android's resolver may represent the last-used activity in its title
+    # instead of listing it as a row. Never confirm an unlabeled default.
+    if view and any(n.get("text") == "Open with " + RECIPIENT_LABEL for n in nodes):
+        once = once_button(nodes)
+        if once is not None:
+            return once, True
+    for node in nodes:
+        if RECIPIENT_LABEL in (node.get("text"), node.get("content-desc")):
+            return node, False
+    return None
+
+
+def select_picker(android, showing, view):
+    seen = []
+    expansions = 0
+
+    def choose():
+        nonlocal seen, expansions
+        require(foreground(android) == showing, "Android picker was dismissed before selection")
+        nodes = picker_nodes(android.hierarchy())
+        seen = [n.get("text") or n.get("content-desc") for n in nodes if n.get("text") or n.get("content-desc")]
+        option = picker_option(nodes, view)
+        if option is None and nodes and not view and expansions < 2:
+            # Sharesheet can start collapsed. Scroll only in the confirmed
+            # system chooser, and never select an app by coordinate alone.
+            sizes = re.findall(r"(?:Physical|Override) size: (\d+)x(\d+)", android.text("wm", "size"))
+            require(sizes, "Unknown emulator screen size")
+            width, height = map(int, sizes[-1])
+            x = str(width // 2)
+            android.shell("input", "swipe", x, str(height * 85 // 100), x, str(height * 30 // 100), "450")
+            expansions += 1
+        return option
+
+    try:
+        option, already_once = until(choose, "fixture app in Android picker")
+    except CheckFailed as failure:
+        raise CheckFailed(f"{failure}; {showing}; system labels: {', '.join(seen)[:160]}") from failure
+    android.tap_view(option)
+    if view and not already_once:
+        def once_or_arrived():
+            if (foreground(android) or "").startswith(RECIPIENT + "/"):
+                return True
+            return once_button(picker_nodes(android.hierarchy()))
+        once = until(once_or_arrived, "Open resolver selection")
+        if once is not True:
+            android.tap_view(once)
 
 
 def deliver(android, recipient, intent_action, selected):
-    showing = until(lambda: foreground(android), "Android foreground activity")
-    # The triggering browser action posts from a DB reader. Wait for the real
-    # resolver/recipient window instead of assuming that a tap equals delivery.
-    if showing == f"{PACKAGE}/{DOWNLOADS}":
-        showing = until(lambda: (value if (value := foreground(android)) != f"{PACKAGE}/{DOWNLOADS}" else None),
-                        "Android resolver or recipient after Downloads action")
+    # The browser action posts from a DB reader. A tap isn't proof of delivery.
+    def dispatched():
+        shown = foreground(android)
+        return shown if shown != f"{PACKAGE}/{DOWNLOADS}" else None
+
+    showing = until(dispatched, "Android resolver or recipient after Downloads action")
     package, activity = showing.split("/", 1)
     if intent_action != "VIEW":
         require(package in SYSTEM_RESOLVERS and activity.endswith("ChooserActivity"), f"No Android sharesheet: {showing}")
     if package in SYSTEM_RESOLVERS:
         require(activity.endswith(("ResolverActivity", "ChooserActivity")), f"Unexpected resolver activity: {showing}")
-        option = until(lambda: resolver_control(android, package, RECIPIENT_LABEL), "fixture app in Android picker")
-        android.tap_view(option)
-        if intent_action == "VIEW":
-            def once_or_arrived():
-                if (foreground(android) or "").startswith(RECIPIENT + "/"):
-                    return True
-                return resolver_control(android, package, "Just once")
-            once = until(once_or_arrived, "Open resolver selection")
-            if once is not True:
-                android.tap_view(once)
+        select_picker(android, showing, view=intent_action == "VIEW")
     else:
         require(package == RECIPIENT, f"Open reached an unexpected app: {showing}")
     until(lambda: (foreground(android) or "").startswith(RECIPIENT + "/"), "fixture receiver in Android foreground")
