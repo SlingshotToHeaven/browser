@@ -7,6 +7,7 @@ import android.os.Process;
 import androidx.test.platform.app.InstrumentationRegistry;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -35,7 +36,7 @@ public final class DownloadDeviceLab {
                         && Build.SUPPORTED_ABIS.length > 0 && "arm64-v8a".equals(Build.SUPPORTED_ABIS[0])
                         && physical(kernelQemu) && physical(bootQemu)
                         && Files.isRegularFile(marker) && Files.size(marker) == token.length()
-                        && token.equals(Files.readString(marker)));
+                        && token.equals(new String(Files.readAllBytes(marker), StandardCharsets.US_ASCII)));
     }
 
     private static boolean physical(String qemu) {

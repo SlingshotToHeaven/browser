@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/android-arm64-mux-preflight.yml
       - app/src/androidTest/java/com/privacy/browser/downloads/Arm64MuxRetest.java
+      - app/src/androidTest/java/com/privacy/browser/downloads/DownloadDeviceLab.java
       - tools/run_arm64_mux_retest.py
       - tests/test_arm64_mux_retest.py
 
