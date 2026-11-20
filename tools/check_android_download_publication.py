@@ -32,6 +32,7 @@ DIGEST = sha256(BODY).hexdigest()
 SENTINEL = b"Preexisting file, not the download.\n"
 OCCUPIED = "The reserved destination is occupied. The file was left untouched."
 DB = "databases/downloads.db"
+PRIVATE_DIR = r"/data/(?:user/0|data)/com\.browser/files/download-publication"
 UI_DUMP = "/data/local/tmp/browser-publication.xml"
 INITIAL_REQUESTS = ["probe-206", "conditional-206"]
 
@@ -247,14 +248,22 @@ def verify_occupied(row):
             "The reserved destination did not cause a safe occupied-name refusal")
 
 
+def bound_path(android, configured_dir, path, file_pattern):
+    # The app and run-as can see different /data/data versus /data/user/0 aliases.
+    # Accept only a known fixture basename in the exact directory that we created.
+    require(path and re.fullmatch(PRIVATE_DIR + "/" + file_pattern, path), "Unexpected file path in the fixture row")
+    real_parent = android.app("realpath", str(Path(path).parent)).decode().strip()
+    require(real_parent == configured_dir, "Fixture row points to a different directory")
+    return path
+
+
 def prepare(android):
     require(android.pid() is None, "Clean app has already been launched")
     android.app("test", "!", "-e", DB)
     android.app("mkdir", "-p", "files", "shared_prefs")
     android.app("mkdir", "files/download-publication")
     directory = android.app("realpath", "files/download-publication").decode().strip()
-    require(re.fullmatch(r"/data/(?:user/0|data)/com\.browser/files/download-publication", directory),
-            "Refusing to use anything outside the confirmed app-private fixture folder")
+    require(re.fullmatch(PRIVATE_DIR, directory), "Refusing to use anything outside the confirmed app-private fixture folder")
     # Set only the destination in this newly installed disposable profile. No downloads are seeded.
     android.write_new("shared_prefs/downloader_settings.xml", (
         f'<?xml version="1.0" encoding="utf-8"?><map><string name="default_download_dir">{directory}</string>'
@@ -309,7 +318,6 @@ def run_case(android, work, server, report):
     port = server.server_port
     url = f"http://127.0.0.1:{port}/jobs/{NAME}"
     directory = prepare(android)
-    dest = f"{directory}/{NAME}"
     cut = f"{directory}/uncommitted.saved"
     sentinel = f"{directory}/sentinel.saved"
     android.command("reverse", f"tcp:{port}", f"tcp:{port}")
@@ -323,21 +331,22 @@ def run_case(android, work, server, report):
             android.tap_view(confirm)
             wait_marker(dbg, transcript, "HELD_BEFORE_DB_WRITE", seconds=45)
             before, segments = snapshot(android, work)
+            report["at_cut"] = {"status": before["status"], "downloaded_bytes": before["downloaded_bytes"],
+                                "total_bytes": before["total_bytes"], "segments": segments[:4],
+                                "http_requests": server.requests[:6]}
             verify_unpublished(before)
-            require(before["status"] == "RUNNING" and before["attempt_token"] and before["destination_key"] == dest
-                    and before["file_name"] == NAME and before["url"] == url and before["dest_path"] == dest
-                    and before["total_bytes"] == before["downloaded_bytes"] == LENGTH
-                    and segments == [(0, LENGTH - 1, LENGTH, "COMPLETED")],
-                    "The real downloading row and its full checkpoint were not at the cut")
-            stage = before["temp_path"]
-            require(stage and re.fullmatch(re.escape(directory) + r"/download-[0-9]+\.part", stage),
-                    "Unexpected staged file in the download row")
+            require(before["status"] == "RUNNING" and before["attempt_token"], "No live attempt in the pre-commit row")
+            require(before["file_name"] == NAME and before["url"] == url, "The held attempt is not the synthetic job")
+            require(before["total_bytes"] == before["downloaded_bytes"] == LENGTH
+                    and segments == [(0, LENGTH - 1, LENGTH, "COMPLETED")], "Unexpected pre-commit byte coverage")
+            dest = bound_path(android, directory, before["dest_path"], re.escape(NAME))
+            bound_path(android, directory, before["destination_key"], re.escape(NAME))
+            stage = bound_path(android, directory, before["temp_path"], r"download-[0-9]+\.part")
             original = android.file(dest)
             require(original[1] == DIGEST and original == android.file(stage),
                     "Expected a verified hard link from the real staged file before SQLite completion")
             require(server.requests == INITIAL_REQUESTS, "Unexpected requests before the cut")
-            report["at_cut"] = {"status": "RUNNING", "published_identity": None, "same_inode": True,
-                                "checkpoint_bytes": LENGTH, "final_file_sha256": original[1]}
+            report["at_cut"].update({"published_identity": None, "same_inode": True, "final_file_sha256": original[1]})
             report["phase"] = "force-stop and verify uncommitted state before relaunch"
             require(dbg.poll() is None and android.pid() == old_pid, "Held process disappeared before the cut")
             android.shell("am", "force-stop", PACKAGE)

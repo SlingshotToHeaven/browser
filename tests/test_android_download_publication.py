@@ -5,13 +5,14 @@ from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import Mock
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
 
 from test_download_queue_sql import create
 from tools.check_android_download_publication import (
-    CheckFailed, DIGEST, ETAG, INITIAL_REQUESTS, LENGTH, NAME, find_view, fixture, read_state, until,
+    CheckFailed, DIGEST, ETAG, INITIAL_REQUESTS, LENGTH, NAME, bound_path, find_view, fixture, read_state, until,
 )
 
 
@@ -55,6 +56,18 @@ class AndroidDownloadPublicationEvidenceTest(unittest.TestCase):
                     writer.execute("INSERT INTO downloads (id,url,status) VALUES ('extra','local','COMPLETED')")
                 with self.assertRaises(CheckFailed):
                     read_state(main, wal.read_bytes(), work)
+
+    def test_path_alias_requires_the_exact_created_directory(self):
+        directory = "/data/data/com.browser/files/download-publication"
+        aliased = "/data/user/0/com.browser/files/download-publication/interrupted.bin"
+        android = Mock()
+        android.app.return_value = directory.encode()
+        self.assertEqual(aliased, bound_path(android, directory, aliased, r"interrupted\.bin"))
+        with self.assertRaises(CheckFailed):
+            bound_path(android, directory, aliased.replace("/com.browser/", "/other.app/"), r"interrupted\.bin")
+        android.app.return_value = b"/unexpected-directory"
+        with self.assertRaises(CheckFailed):
+            bound_path(android, directory, aliased, r"interrupted\.bin")
 
     def test_ui_probe_ignores_other_apps_and_disabled_controls(self):
         root = ET.fromstring('''<hierarchy>
