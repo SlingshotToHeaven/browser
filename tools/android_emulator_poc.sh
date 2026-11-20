@@ -7,8 +7,8 @@ if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hoste
   exit 1
 fi
 mode=${1:-launch}
-if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade && "$mode" != download-mid-copy && "$mode" != download-batch && "$mode" != browser-recovery ]]; then
-  echo 'Expected launch, download-publication, download-upgrade, download-mid-copy, download-batch, or browser-recovery.' >&2
+if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade && "$mode" != download-mid-copy && "$mode" != download-batch && "$mode" != browser-recovery && "$mode" != functional-followup ]]; then
+  echo 'Expected launch, download-publication, download-upgrade, download-mid-copy, download-batch, browser-recovery, or functional-followup.' >&2
   exit 2
 fi
 : "${RUNNER_TEMP:?}" "${ANDROID_HOME:?}" "${GITHUB_SHA:?}"
@@ -119,7 +119,7 @@ batch_ffmpeg() {
   printf '%s\n' "$dir/ffmpeg"
 }
 host_status=0
-if [[ "$mode" == download-batch || "$mode" == browser-recovery ]]; then
+if [[ "$mode" == download-batch || "$mode" == browser-recovery || "$mode" == functional-followup ]]; then
   build_debug "$root/source" :app:assembleDebugAndroidTest
   test_apk="$root/source/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
   [[ -s "$test_apk" ]]
@@ -212,6 +212,12 @@ fi
 if [[ "$mode" == browser-recovery ]]; then
   android install -t --user 0 "$test_apk"
   python3 -B "$root/source/tools/check_android_browser_recovery.py" \
+    --adb "$adb" --work "$root" --apk "$apk" --test-apk "$test_apk"
+  exit 0
+fi
+if [[ "$mode" == functional-followup ]]; then
+  android install -t --user 0 "$test_apk"
+  python3 -B "$root/source/tools/check_android_functional_followup.py" \
     --adb "$adb" --work "$root" --apk "$apk" --test-apk "$test_apk"
   exit 0
 fi
