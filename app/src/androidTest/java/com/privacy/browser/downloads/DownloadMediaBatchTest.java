@@ -56,6 +56,16 @@ public class DownloadMediaBatchTest extends DownloadBatchSupport {
         assertEquals(1, requests("/encrypted.ts").length());
     }
 
+    @Test public void queryOnlyHlsKeepsTheEncodedReferencesOnTheSamePath() throws Exception {
+        String path = "/query-only/clip.m3u8";
+        good(path + "?part=master", null, "query-only.mp4");
+        for (String query : new String[]{"master", "media%2Flist", "media%2Fsegment"}) {
+            var calls = requests(path + "?part=" + query);
+            assertEquals(1, calls.length());
+            assertEquals(200, calls.getJSONObject(0).getInt("code"));
+        }
+    }
+
     @Test public void refusesMissingAudio() throws Exception { bad("/mux-missing-audio.m3u8", "missing-audio.mp4", "muxing failed", true); }
     @Test public void refusesNonMedia() throws Exception { bad("/invalid.m3u8", "invalid.mp4", "error page instead of media", false); }
     @Test public void refusesShortMedia() throws Exception {
@@ -72,7 +82,7 @@ public class DownloadMediaBatchTest extends DownloadBatchSupport {
     }
 
     private void good(String video, String audio, String name) throws Exception {
-        assumeTrue("Bundled ARM64 JNI unavailable in this emulator", FFmpegKitConfig.isLoaded());
+        assumeTrue("Bundled ARM64 JNI unavailable on this device", FFmpegKitConfig.isLoaded());
         downloads();
         DownloadItem item = item(video, name);
         if (audio != null) item.setAudioUrl(BASE + audio);
@@ -95,7 +105,8 @@ public class DownloadMediaBatchTest extends DownloadBatchSupport {
         assertEquals(1, directory.toFile().list().length);
         checkTracks(path);
         play(path);
-        evidence("translated Android JNI MP4; decoded frame, AAC packets and MediaPlayer completion; bytes=" + bytes
+        String target = DownloadDeviceLab.requested() ? "ARM64 Android JNI" : "translated Android JNI";
+        evidence(target + " MP4; decoded frame, AAC packets and MediaPlayer completion; bytes=" + bytes
                 + "; sha256=" + hex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path))));
     }
 
@@ -160,7 +171,7 @@ public class DownloadMediaBatchTest extends DownloadBatchSupport {
     }
 
     private void bad(String route, String name, String reason, boolean requiresNative) throws Exception {
-        if (requiresNative) assumeTrue("Bundled ARM64 JNI unavailable in this emulator", FFmpegKitConfig.isLoaded());
+        if (requiresNative) assumeTrue("Bundled ARM64 JNI unavailable on this device", FFmpegKitConfig.isLoaded());
         downloads();
         String id = enqueue(item(route, name));
         DownloadItem row = state(id, DownloadStatus.FAILED);

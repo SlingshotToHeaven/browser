@@ -608,8 +608,16 @@ public class StreamDownloadTask extends DownloadTask {
         }
         try {
             URL base = new URL(baseUrl);
-            URL resolved = new URL(base, trimmed);
-            return resolved.toString();
+            if (trimmed.startsWith("?")) {
+                // A query-only HLS reference replaces the query, not the playlist path.
+                // URL's relative resolver can drop the last path component in this case.
+                String target = base.toExternalForm();
+                int fragment = target.indexOf('#');
+                if (fragment >= 0) target = target.substring(0, fragment);
+                int query = target.indexOf('?');
+                return (query < 0 ? target : target.substring(0, query)) + trimmed;
+            }
+            return new URL(base, trimmed).toExternalForm();
         } catch (Exception e) {
             return trimmed;
         }

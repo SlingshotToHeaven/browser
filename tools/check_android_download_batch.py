@@ -31,7 +31,7 @@ STAGE = JAVA + "downloads.DownloadControlBatchTest#stageForHostForceStop"
 PAUSED, ACTIVE = "relaunch-paused.bin", "relaunch-active.bin"
 PRIVATE = r"/data/(?:user/0|data)/com\.browser/files/download-batch-[0-9]+"
 CASE_TIME = 73
-GENERATED_MEDIA_CASES = {"stream-separate", "stream-ts", "stream-fmp4", "stream-aes128", "stream-missing-audio", "stream-short"}
+GENERATED_MEDIA_CASES = {"stream-separate", "stream-ts", "stream-fmp4", "stream-aes128", "stream-query-only", "stream-missing-audio", "stream-short"}
 
 # Each method starts in a cleared *disposable* target profile, even after a failed case.
 CASES = {
@@ -65,6 +65,7 @@ CASES = {
         "stream-ts": "mpegTs",
         "stream-fmp4": "hlsByteRanges",
         "stream-aes128": "encryptedHls",
+        "stream-query-only": "queryOnlyHlsKeepsTheEncodedReferencesOnTheSamePath",
         "stream-missing-audio": "refusesMissingAudio",
         "stream-invalid": "refusesNonMedia",
         "stream-short": "refusesShortMedia",
@@ -196,11 +197,11 @@ def request_intervals(state, name):
             for c in state.requests("/range/" + name)]
 
 
-def force_stop(android, state, work):
+def force_stop(android, state, work, *, serial=SERIAL, instrument=instrumentation_args):
     # Deliberately ending the instrumentation process is part of this host-driven case.
     initial = [(0, 0, False, 206, False), (0, fixture.LENGTH - 1, True, 206, False)]
     suffix = (fixture.PREFIX, fixture.LENGTH - 1, True, 206, False)
-    args = [android.adb, "-s", SERIAL, "shell", "-T", shlex.join(instrumentation_args(STAGE))]
+    args = [android.adb, "-s", serial, "shell", "-T", shlex.join(instrument(STAGE))]
     with TemporaryDirectory(prefix="batch-cut-", dir=work) as tmp:
         spool = Path(tmp) / "raw"
         with spool.open("wb") as out, subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT) as process:

@@ -213,6 +213,26 @@ public class StreamDownloadContainmentTest {
     }
 
     @Test(timeout = 10000)
+    public void queryOnlyHlsReferencesKeepThePlaylistPath() throws Exception {
+        String path = "/streams/asset.m3u8";
+        String rendition = AUDIO_RENDITION.replace("audio.m3u8", "?part=audio%2Flist");
+        String master = master(rendition).replace("video.m3u8", "?part=video%2Flist");
+        try (LoopbackHttpFixture server = new LoopbackHttpFixture(playlist(master),
+                request -> request.target.equals(path + "?part=video%2Flist")
+                        ? playlist(media("?part=video%2Fsegment")) : fixed(404, new byte[0]),
+                fixed(200, VIDEO), playlist(media("?part=audio%2Fsegment")), fixed(200, AUDIO))) {
+            TestTask task = run(job(server.url(path + "?part=master"), HLS), (args, target, attempt) -> {
+                verifySeparateInputs(args, attempt);
+                Files.write(target, MUX_OUTPUT);
+                return 0;
+            });
+            verifyCompletion(task);
+            assertEquals(List.of(path + "?part=master", path + "?part=video%2Flist", path + "?part=video%2Fsegment",
+                    path + "?part=audio%2Flist", path + "?part=audio%2Fsegment"), requestTargets(server));
+        }
+    }
+
+    @Test(timeout = 10000)
     public void hlsInitializationAndEncryptedMediaAreStagedInOrder() throws Exception {
         byte[] key = new byte[16];
         byte[] iv = new byte[16];

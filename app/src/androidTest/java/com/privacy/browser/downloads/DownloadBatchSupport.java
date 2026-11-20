@@ -20,6 +20,8 @@ import com.privacy.downloader.util.PublishedFileIdentity;
 import org.json.JSONArray;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
+import org.junit.rules.TestName;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -52,15 +54,23 @@ public abstract class DownloadBatchSupport {
     protected DownloadEngine engine;
     protected Activity activity;
     protected Path directory;
+    @Rule public final TestName labTest = new TestName();
 
     @Before public void setupBatch() throws Exception {
-        assumeTrue("The batch must use a disposable CI emulator", "ci-avd".equals(
-                InstrumentationRegistry.getArguments().getString("download_batch")));
-        assumeTrue("Not an emulator", "1".equals(shell("getprop ro.kernel.qemu").trim())
-                || "1".equals(shell("getprop ro.boot.qemu").trim()));
+        boolean lab = DownloadDeviceLab.requested();
+        if (lab) {
+            DownloadDeviceLab.requireProfile(ins, getClass(), labTest.getMethodName(),
+                    shell("getprop ro.kernel.qemu"), shell("getprop ro.boot.qemu"));
+        } else {
+            assumeTrue("The batch must use a disposable CI emulator", "ci-avd".equals(
+                    InstrumentationRegistry.getArguments().getString("download_batch")));
+            assumeTrue("Not an emulator", "1".equals(shell("getprop ro.kernel.qemu").trim())
+                    || "1".equals(shell("getprop ro.boot.qemu").trim()));
+        }
         assertEquals("com.browser", app.getPackageName());
-        directory = Files.createTempDirectory(app.getFilesDir().toPath(), "download-batch-").toRealPath();
         db = DownloadDbHelper.getInstance(app);
+        if (lab) assumeTrue("Physical test needs a fresh synthetic download profile", db.countDownloads() == 0);
+        directory = Files.createTempDirectory(app.getFilesDir().toPath(), "download-batch-").toRealPath();
         engine = DownloadEngine.getInstance(app);
         engine.setDefaultDownloadDirectory(directory.toString());
         engine.setCategorySubfoldersEnabled(false);

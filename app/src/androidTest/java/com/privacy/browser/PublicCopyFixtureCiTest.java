@@ -2,10 +2,12 @@ package com.privacy.browser;
 
 import android.os.Environment;
 
+import com.privacy.browser.downloads.DownloadDeviceLab;
 import com.privacy.downloader.db.DownloadDbHelper;
 import com.privacy.downloader.engine.DownloadEngine;
 import com.privacy.downloader.util.PublishedFileIdentity;
 
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -21,6 +23,17 @@ import static org.junit.Assume.assumeNoException;
 public final class PublicCopyFixtureCiTest extends BrowserRecoveryCiSupport {
     private static final String FOLDER = "arena-mid-copy-fixture";
     private static final byte[] NEIGHBOR = "Unrelated synthetic file. Do not overwrite.\n".getBytes(StandardCharsets.US_ASCII);
+
+    @Override @Before public void requireDisposableProfile() throws Exception {
+        if (!DownloadDeviceLab.requested()) {
+            super.requireDisposableProfile();
+            return;
+        }
+        DownloadDeviceLab.requireProfile(ins, getClass(), "preparePublicDownloadsFixture",
+                shell("getprop ro.kernel.qemu"), shell("getprop ro.boot.qemu"));
+        assertEquals("Physical test needs a fresh synthetic download profile", 0,
+                DownloadDbHelper.getInstance(app).countDownloads());
+    }
 
     @Test public void preparePublicDownloadsFixture() throws Exception {
         Path folder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).toPath().resolve(FOLDER);

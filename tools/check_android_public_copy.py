@@ -37,8 +37,8 @@ class PublicObserver(Emulator):
         return self.shell(*words).stdout
 
 
-def check(android, work, report):
-    stage = android.shell(*args(SETUP), timeout=55, check=False)
+def check(android, work, report, *, instrument=args):
+    stage = android.shell(*instrument(SETUP), timeout=55, check=False)
     prepared = result_for((stage.stdout + stage.stderr).decode(errors="replace"), SETUP)
     report["ordinary_app_preflight"] = prepared["status"]
     if prepared["status"] == "blocked":

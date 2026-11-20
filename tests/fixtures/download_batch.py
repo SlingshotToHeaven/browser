@@ -36,6 +36,12 @@ STATIC_MEDIA = {
 }
 
 
+QUERY_HLS_PATH = "/query-only/clip.m3u8"
+QUERY_HLS = QUERY_HLS_PATH + "?part=master"
+QUERY_MEDIA = QUERY_HLS_PATH + "?part=media%2Flist"
+QUERY_SEGMENT = QUERY_HLS_PATH + "?part=media%2Fsegment"
+
+
 def media_assets(ffmpeg):
     assets = release_mux.build_assets(ffmpeg)
     transport = assets["/av.ts"][1]
@@ -45,7 +51,10 @@ def media_assets(ffmpeg):
     encrypted = playlist("/encrypted.ts").replace(b"#EXTINF", (f'#EXT-X-KEY:METHOD=AES-128,URI="/fixture.key",IV=0x{iv.hex()}\n#EXTINF').encode())
     assets.update({"/encrypted.m3u8": (HLS, encrypted), "/encrypted.ts": ("video/mp2t", cipher),
                    "/fixture.key": ("application/octet-stream", key),
-                   "/short.m3u8": (HLS, playlist("/short.ts")), "/short.ts": ("video/mp2t", transport)})
+                   "/short.m3u8": (HLS, playlist("/short.ts")), "/short.ts": ("video/mp2t", transport),
+                   QUERY_HLS: (HLS, release_mux.master("?part=media%2Flist").encode()),
+                   QUERY_MEDIA: (HLS, playlist("?part=media%2Fsegment")),
+                   QUERY_SEGMENT: ("video/mp2t", transport)})
     return assets
 
 
@@ -128,6 +137,8 @@ class Fixture(scoped_downloads.Fixture):
             self.csv_response(path)
         elif primary and self.comic(path):
             pass
+        elif primary and path == QUERY_HLS_PATH and self.path in state.assets:
+            self.asset(self.path)
         elif primary and path in state.assets:
             self.asset(path)
         else:

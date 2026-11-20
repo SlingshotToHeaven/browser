@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Build an isolated offline recipient for the one-run Android test. Do not distribute this APK.
 set -euo pipefail
-[[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]
+if [[ ${1:-} == --disposable ]]; then
+  shift
+else
+  [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]
+fi
 : "${JAVA_HOME:?}"
 sdk=$1
 out=$2
@@ -12,7 +16,8 @@ mkdir "$out"
 mkdir "$out/classes"
 "$JAVA_HOME/bin/javac" --release 11 -cp "$jar" -d "$out/classes" "$here/FixtureReceiver.java"
 # D8 is given every nested class, and the receiver has no external dependencies.
-mapfile -d '' classes < <(find "$out/classes" -name '*.class' -print0)
+classes=()
+while IFS= read -r -d '' file; do classes+=("$file"); done < <(find "$out/classes" -name '*.class' -print0)
 "$bin/d8" --min-api 34 --lib "$jar" --output "$out" "${classes[@]}"
 "$bin/aapt2" link -I "$jar" --manifest "$here/AndroidManifest.xml" -o "$out/unsigned.apk"
 python3 -B - "$out" <<'PY'
