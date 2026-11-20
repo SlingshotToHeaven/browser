@@ -9,7 +9,6 @@ from pathlib import Path
 import re
 import shlex
 import sys
-import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.check_android_download_publication import (
@@ -142,9 +141,13 @@ def check_not_offered(android, relaunch):
         return refused()
 
     until(still_here, "failed-only Share refusal toast", seconds=5)
-    android.view("downloads_text_selected_count", "1 selected")
     relaunch["selection_share_refused"] = True
-    android.tap("downloads_btn_close_selection")
+    # Leave selection via the system Back event, then open Downloads explicitly
+    # for the next step; the text-toast window can interfere with UI snapshots.
+    android.shell("input", "keyevent", "KEYCODE_BACK")
+    android.start(DOWNLOADS)
+    android.view("btn_overflow_menu")
+    status(android, "FAILED")
 
 
 def phase(report, step):
@@ -232,6 +235,8 @@ def case(android, work, server, directory, report, cut):
             and server.requests == INITIAL_REQUESTS, "Relaunch modified a fixture file or re-fetched bytes")
     report["relaunch"] = {"ui_and_db": "FAILED", "reason": "occupied destination", "files_preserved": True}
     check_not_offered(android, report["relaunch"])
+    require(android.pid() == pid and snapshot(android, work) == (recovered, saved),
+            "File actions changed the recovery process or SQLite state")
     require(android.file(dest) == output and android.file(stage) == checkpoint and android.file(neighbor) == marker_file
             and server.requests == INITIAL_REQUESTS, "File actions changed the interrupted download")
 
@@ -245,7 +250,13 @@ def case(android, work, server, directory, report, cut):
     require(android.file(parked) == output and android.file(stage) == checkpoint, "Could not park the occupied file intact")
     android.tap("card_btn_pause_resume")
     android.tap("button1", "Retry")
-    status(android, "COMPLETED")
+    try:
+        status(android, "COMPLETED")
+    except CheckFailed:
+        with suppress(Exception):
+            observed, _ = snapshot(android, work)
+            report["observed_after_retry"] = {"status": observed["status"], "reason": (observed["error_message"] or "")[:140]}
+        raise
     finished, _ = snapshot(android, work)
     final = android.file(dest)
     require(finished["id"] == before["id"] and finished["dest_path"] == dest and finished["destination_key"] == before["destination_key"]
