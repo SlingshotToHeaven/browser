@@ -85,10 +85,13 @@ def bound_destination(android, directory, row, pattern, shared):
 
 
 def require_no_file_actions(root):
-    labels = [n.get("text", "").casefold() for n in root.iter("node") if n.get("package") == PACKAGE
-              and n.get("resource-id", "").endswith(":id/action_item_text")]
-    require("select" in labels and "file details & diagnostics" in labels, "Wrong Downloads context menu")
+    select = find_view(root, "action_item_text", "Select")
+    require(find_view(root, "ctx_header_title", NAME) is not None and select is not None,
+            "Wrong Downloads context menu")
+    labels = [" ".join(n.get("text", "").casefold().split()) for n in root.iter("node") if n.get("package") == PACKAGE
+              and n.get("resource-id", "").rpartition("/")[2] == "action_item_text"]
     require("open file" not in labels and "share file" not in labels, "Uncommitted file was offered for Open or Share")
+    return select
 
 
 def check_not_offered(android):
@@ -97,12 +100,16 @@ def check_not_offered(android):
     android.view("diag_text_status_badge", "FAILED")
     android.tap("diag_btn_close")
     android.tap_view(android.view("card_text_filename", NAME), long=True)
-    android.view("ctx_header_title", NAME)
-    android.view("action_item_text", "Select")
-    require_no_file_actions(until(android.hierarchy, "Downloads context menu"))
-    # The generic selection toolbar still has Share; an attempt with only this
-    # failed item must not launch the sharesheet or another app.
-    android.tap("action_item_text", "Select")
+
+    def select_if_safe():
+        root = android.hierarchy()
+        if root is None or find_view(root, "ctx_header_title", NAME) is None:
+            return None
+        return require_no_file_actions(root)
+
+    # Match the exact fixture menu and select it from the same UI snapshot.
+    # The generic toolbar Share must not launch for this single failed item.
+    android.tap_view(until(select_if_safe, "fixture Downloads context menu"))
     android.view("downloads_text_selected_count", "1 selected")
     android.tap("downloads_btn_share_selected")
     deadline = time.monotonic() + 2.5
@@ -195,11 +202,11 @@ def case(android, work, server, directory, report, cut):
                  "verified_range_url", "etag", "full_download_only")
     require(all(recovered[key] == before[key] for key in unchanged) and saved == segments,
             "Recovery changed the reservation or its verified checkpoint")
-    check_not_offered(android)
     require(android.file(dest) == output and android.file(stage) == checkpoint and android.file(neighbor) == marker_file
             and server.requests == INITIAL_REQUESTS, "Relaunch modified a fixture file or re-fetched bytes")
-    report["relaunch"] = {"ui_and_db": "FAILED", "reason": "occupied destination", "files_preserved": True,
-                          "open_diagnostics_only": True, "no_open_share_menu": True, "selection_share_no_dispatch": True}
+    report["relaunch"] = {"ui_and_db": "FAILED", "reason": "occupied destination", "files_preserved": True}
+    check_not_offered(android)
+    report["relaunch"].update(open_diagnostics_only=True, no_open_share_menu=True, selection_share_no_dispatch=True)
 
     phase(report, "move the short output aside and use Retry, not Start over")
     parked = str(Path(dest).with_name(PARKED))

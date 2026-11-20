@@ -68,11 +68,11 @@ class AndroidMidCopyEvidenceTest(unittest.TestCase):
 
     def test_failed_card_menu_must_be_present_and_lack_completed_actions(self):
         root = ET.fromstring('''<hierarchy>
-          <node package="com.browser" resource-id="com.browser:id/action_item_text" text="Select" />
-          <node package="com.browser" resource-id="com.browser:id/action_item_text" text="File Details &amp; Diagnostics" />
+          <node package="com.browser" enabled="true" resource-id="com.browser:id/ctx_header_title" text="interrupted.bin" />
+          <node package="com.browser" enabled="true" resource-id="com.browser:id/action_item_text" text="Select" />
           <node package="other" resource-id="other:id/action_item_text" text="Share File" />
         </hierarchy>''')
-        require_no_file_actions(root)
+        self.assertIs(require_no_file_actions(root), root[1])
         root[2].set('package', 'com.browser')
         root[2].set('enabled', 'false')
         with self.assertRaises(CheckFailed):
