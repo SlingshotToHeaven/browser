@@ -1,5 +1,7 @@
 # One address-bar trace-readiness retry (report 10)
 
+The [report-10 addendum](android-test-followup.md#report-10-split-buffer-retry-dispatch-link-unresolved) used the one approved capture. This protocol is historical; do not repeat it. The next handoff is [offline](omnibox-trace-attribution.md).
+
 **Do not connect to the device or run any ADB command until the owner explicitly approves this one capture** on the selected lab phone and confirms the retained `com.browser` install is disposable. The testing ZIP and this procedure are not approval. If authorization or any prerequisite is missing, report **Blocked**; no phone work is required to inspect the retained traces.
 
 [Report 9](android-test-followup.md#report-9-ring-buffer-overwrite-confirmed) reconciled the original capture inputs and found substantial service-buffer overwrite on both traces. It did not establish that a particular input event was overwritten or that the platform blocked app tracing. To test readiness after addressing the measured loss, the [retry config](../tests/fixtures/omnibox_trace_retry.pbtxt) shortens the window to **8 seconds**, drops `gfx`, keeps ATrace `input` / `view` for `com.browser`, and routes the three sources to separate **DISCARD** buffers. This protects initial process attribution and earlier packets from later writes; if a buffer fills it can still discard data. FrameTimeline is still requested independently. This is not a controlled comparison of the old and new configs or a guarantee of loss-free collection.

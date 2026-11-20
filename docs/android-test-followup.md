@@ -2,6 +2,25 @@
 
 Use the source supplied for each retest and record its identity. Follow the [isolated testing rules](antigravity-device-test.md#1-keep-the-installed-app-and-the-mac-safe): test only the disposable `com.browser` / `com.browser.test` pair, with synthetic data and an explicitly selected device. Keep the old browser and its data untouched. This is a retest, not a release or a GitHub operation.
 
+## Report 10: split-buffer retry, dispatch link unresolved
+
+The lab used `08a19c28b62406050391e1e32bee217bfbcb2de0` (ZIP SHA-256 `b4eac544f07fa7fa4561323910371d2a6f0c058295bf76190fead1edab591166`) and kept the offline report separate from the device addendum. The offline preflight initially withheld device work. It classified all **37** recorded setup notices per report-8 trace as `ftrace_event_unknown`, with none classified as print or ATrace setup failures. This does not establish the exact event sources or that the old capture contained the required app signals.
+
+The device addendum reports **one explicitly authorized capture** on the same Galaxy S21 FE/API 36/ARM64/4 KiB/WebView `137.0.7151.115` and verifies the retained debug APK `cd8c9b95c6eee6c1e4f9844bf988c925ac3b68c28961894c21372605043acb6c` and public lab signer. The tested archive and retry config (`aeb9ad928517126ab60e5f27ecedaafcb03ddb73260e9ff881c0933f81472ed6`) were verified independently here; the device, trace contents and APK rehash are lab-reported.
+
+| Scoped check | Reported result | Limit |
+| --- | --- | --- |
+| Transport and UI | Capture exited zero. One `KEYCODE_DEL` changed `perf18tracehitx` to `perf18tracehit`; the exact synthetic HISTORY row and current fallback were visible. Neither search was submitted. | One correctness observation, not a latency or same-frame measurement. |
+| Config and checked loss counters | Embedded 8 s tagged config matched (32 / 4 / 8 MiB DISCARD buffers). Per-buffer overwrites/discards, reported CPU overruns/drops, service discard/flush and setup counters were zero. | No loss reported by the checked counters, not proof that every relevant event or causal link was recorded. Multiple config factors changed since report 8. |
+| Attributed work | One named app process; **2** main dispatches, **1** main edit, **1** worker lookup and none off worker, **1** main `localRows`, **0** clipboard reads. **956** app actual SurfaceFrame slices. | These source and work counts passed their scoped checks. |
+| Strict dispatch/frame association | **0** `dispatched_edits`, **0** `post_edit_surface_display_pairs`. The edit started **3.018 ms** after the end of one reported dispatch. | Not nested; chronology does not show an app looper post or identify the causal dispatch. The strict frame join depends on the missing dispatched edit, so its zero does not independently establish absence of app/SF pairs. |
+
+The retained report-10 retry `hit.pftrace` was **3,946,596 bytes**, SHA-256 `46a757b3cea07731d95a2c8592d850085be6246373d1859ffe28238c5281806b` (lab-reported; raw trace stays on Mac). The lab reported closing only its new tab, deleting only the new synthetic visit, removing its reverse, and stopping the fixture. No reinstall, resets or second capture were reported. **The one-capture authorization is spent. Strict trace readiness and PERF-07 remain open.**
+
+## Next device run
+
+**None requested.** Use the [Mac-only retained-trace attribution check](omnibox-trace-attribution.md) for report 11. Verify the exact report-10 trace, return the two dispatches' relative ordering and any recorded flow to the edit, and check frame-token pairs independently of the strict nesting predicate. Keep original results and strict SQL unchanged. No ADB, recapture, rebuild, install, profile changes, paired timings or repeats of previous checks. If the link or trace is missing, return that blocker; do not infer causality from proximity.
+
 ## Report 9: ring buffer overwrite confirmed
 
 The lab analyzed the two unchanged report-8 traces offline using `0660b84187c5804882291a952c9ad4db0de93a2d` (ZIP SHA-256 `ab1efbd6d6acb2d9715dec0b23139659cf3ecef71df7bd19809824049b830aeb`) and local Trace Processor `v59.1-1e9c61e98`. There was **no device access, rebuild or install**. No raw traces or APKs were supplied here.
@@ -11,14 +30,10 @@ The lab analyzed the two unchanged report-8 traces offline using `0660b84187c580
 | Input reconciliation | Both trace sizes and hashes matched the report-8 record. Each embedded config and the retained submitted config matched the pinned 20 s, one 16 MiB ring, `input` / `view` / `gfx` and `com.browser`; all sources targeted buffer 0. | The reported 64 MiB / `sched` description was a prose error, not evidence of a different executed config. |
 | Service-buffer loss | Buffer 0: **30,142,464 B** overwritten (1,045 chunks) on hit; **30,633,984 B** (1,060 chunks) on miss. Both wrapped twice. Service-level `traced_chunks_discarded` was 0 / 1, distinct from the per-buffer count. | The captures are incomplete: about **28.75 / 29.21 MiB** overwritten, respectively. Zero strict `data_loss`-severity counts do not contradict these [informational stats](https://github.com/google/perfetto/blob/v59.1/src/trace_processor/storage/stats.h). Bytes and wraps do not establish a lost time interval or which specific events were lost. |
 | Remaining signals | 386,824 / 387,923 raw ftrace print rows and 1,697 / 1,713 actual FrameTimeline rows (hit / miss). All target dispatch/app slice counts were zero even without the process filter, and neither process inventory had names/command lines. Strict app/frame joins remained empty. | Missing parsed slices, not just a failed process join. Raw prints and the `com.browser` layer label don't establish app dispatch, attribution, or presentation. |
-| Setup | `ftrace_setup_errors` was **37** in each trace; specific notice categories were not supplied. Stderr had the no-PTY warning, not a fatal error. | Unknown whether any notice affected a required producer. No Android 16 permission restriction, particular missing property, or app regression established. |
+| Setup | `ftrace_setup_errors` was **37** in each trace; report 10 classified those notices as unknown ftrace events. Stderr had the no-PTY warning, not a fatal error. | Unknown whether any notice affected a required producer. No Android 16 permission restriction, particular missing property, or app regression established. |
 | Build inputs and artifacts | The retained helper reported 29 restored hashes. All pins rechecked (step17 **2**, step18 **15**, step19 **12**); the two existing APKs matched the report-8 hashes and sizes. | Reconciles the manifest split and retained APK identities. Not an independent SDK build, installation or paired device result. |
 
 Independently verified here: the pinned ZIP, original config hash and fields, and 29 pins in freshly prepared source trees. The measured loss, setup stats, and artifact rehashes above are from the lab. **Trace readiness was not demonstrated**; the first required signal gap is an attributed input/edit, with no parsed dispatch or omnibox slices even before attribution. PERF-07 remains open.
-
-## Next device run
-
-**Pending explicit owner approval:** [one 8-second trace-readiness retry](omnibox-trace-retry.md) on the same authorized phone and retained verified disposable `com.browser` APK. Use only the pinned split-buffer config and one synthetic hit. No phone access without that approval; if blocked, report the exact missing prerequisite. The optional setup-category query can run offline on retained traces. No privilege, settings or APK changes, repeated captures, baseline rebuilds, seeding, paired timings, or repeats of reports 4–9. Return only `out/android-test-report-10.md`; keep raw artifacts local.
 
 ## Report 8: hit/miss and baseline preflight, trace attribution unresolved
 

@@ -44,7 +44,11 @@ class TracePilotSqlTest(unittest.TestCase):
             CREATE TABLE process (upid INTEGER, pid INTEGER, name TEXT, cmdline TEXT);
             CREATE TABLE thread (utid INTEGER, upid INTEGER, tid INTEGER, name TEXT);
             CREATE TABLE thread_track (id INTEGER, utid INTEGER);
-            CREATE TABLE slice (id INTEGER PRIMARY KEY, ts INTEGER, dur INTEGER, name TEXT, track_id INTEGER);
+            CREATE TABLE process_track (id INTEGER, upid INTEGER, type TEXT);
+            CREATE TABLE slice (id INTEGER PRIMARY KEY, ts INTEGER, dur INTEGER, name TEXT, track_id INTEGER,
+                parent_id INTEGER, arg_set_id INTEGER);
+            CREATE TABLE flow (slice_out INTEGER, slice_in INTEGER);
+            CREATE TABLE args (arg_set_id INTEGER, key TEXT, int_value INTEGER);
             CREATE TABLE ftrace_event (name TEXT);
             CREATE TABLE actual_frame_timeline_slice (
                 id INTEGER PRIMARY KEY, upid INTEGER, ts INTEGER, dur INTEGER,
@@ -61,9 +65,11 @@ class TracePilotSqlTest(unittest.TestCase):
         fixtures = Path(__file__).parent / "fixtures"
         self.query = (fixtures / "omnibox_trace_pilot.sql").read_text()
         self.health_query = (fixtures / "omnibox_trace_health.sql").read_text()
+        self.attribution_query = (fixtures / "omnibox_trace_attribution.sql").read_text()
 
-    def diagnostics(self):
-        return {(row["section"], row["name"], row["idx"]): row["value"] for row in self.db.execute(self.health_query)}
+    def diagnostics(self, query=None):
+        return {(row["section"], row["name"], row["idx"]): row["value"]
+                for row in self.db.execute(query or self.health_query)}
 
     def summary(self):
         row, = self.db.execute(self.query).fetchall()
@@ -184,6 +190,82 @@ class TracePilotSqlTest(unittest.TestCase):
         self.db.execute("UPDATE metadata SET str_value = ? WHERE name = 'unique_session_name'",
                         ("browser-omnibox-readiness-retry",))
         self.assertEqual(1, self.diagnostics()[("config", "retry_session_matches", None)])
+
+    def test_separated_dispatch_is_diagnostic_only_even_with_frames_and_async_window(self):
+        self.db.executescript("""
+            INSERT INTO process_track VALUES (10, 1, 'atrace_async_slice'), (11, 3, 'atrace_async_slice'),
+                (12, 1, 'other_track_type');
+            INSERT INTO args VALUES (21, 'cookie', -2147483647), (22, 'cookie', 16), (23, 'another_arg', 10);
+            INSERT INTO slice (ts, dur, name, track_id, arg_set_id) VALUES
+                (10000000, 820539, 'deliverInputEvent src=0x101 eventTimeNano=123 id=0x80000001', 1, NULL),
+                (13838577, 877692, 'Browser.omnibox.edit', 1, NULL),
+                (15000000, 300000, 'deliverInputEvent src=0x101 eventTimeNano=124 id=0xa', 1, NULL),
+                (120000000, 500000, 'Browser.omnibox.lookup', 2, NULL),
+                (130000000, 500000, 'Browser.omnibox.localRows', 1, NULL),
+                (9900000, 5000000, 'deliverInputEvent', 10, 21),
+                (9900000, 6000000, 'deliverInputEvent', 10, 22),
+                (1000000, 1000, 'deliverInputEvent', 10, 21),
+                (9900000, 5000000, 'deliverInputEvent', 11, 21),
+                (9900000, 5000000, 'deliverInputEvent', 12, 21),
+                (14900000, 8000000, 'deliverInputEvent', 10, 23);
+            INSERT INTO actual_frame_timeline_slice (upid, ts, dur, surface_frame_token, display_frame_token) VALUES
+                (1, 5000000, 1000, 1, 11), (2, 5000000, 2000, NULL, 11),
+                (1, 15000000, 3000000, 2, 12), (2, 16000000, 4000000, NULL, 12),
+                (2, 16000000, 4000000, NULL, 12),
+                (1, 15000000, 6000000, 3, 13), (2, 16000000, 2000000, NULL, 13),
+                (3, 16000000, 8000000, NULL, 13),
+                (1, 131000000, 2000000, 4, 14), (2, 131000000, 3000000, 0, 14),
+                (3, 131000000, 2000000, 5, 15), (2, 132000000, 5000000, NULL, 15);
+        """)
+        strict = self.summary()
+        self.assertEqual(1, strict["worker_lookups"])
+        self.assertEqual(0, strict["dispatched_edits"])
+        self.assertEqual(0, strict["post_edit_surface_display_pairs"])
+        found = self.diagnostics(self.attribution_query)
+        self.assertEqual(1, found[("shape", "single_edit_anchor", None)])
+        self.assertEqual(4, found[("shape", "async_windows", None)])
+        self.assertEqual(3, found[("shape", "async_windows_with_cookie", None)])
+        self.assertEqual(-3_018_038, found[("dispatch", "end_offset_ns", 1)])
+        self.assertEqual(1_161_423, found[("dispatch", "start_offset_ns", 2)])
+        self.assertEqual(1, found[("dispatch", "event_id_matched_windows", 1)])
+        self.assertEqual(0, found[("dispatch", "event_id_matched_windows", 2)])
+        self.assertEqual(1, found[("dispatch", "matched_windows_covering_edit", 1)])
+        self.assertEqual(0, found[("flow", "input_to_edit_or_ancestor_edges", None)])
+        self.assertEqual(3, found[("frame", "surfaces_after_main_edit", None)])
+        self.assertEqual(2, found[("frame", "pairs_after_main_edit", None)])
+        self.assertEqual(1, found[("frame", "pairs_after_later_local_rows", None)])
+        self.assertNotIn("0x80000001", repr(found))
+
+    def test_attribution_reports_only_directed_flows_from_selected_input(self):
+        self.db.executescript("""
+            INSERT INTO process_track VALUES (10, 1, 'atrace_async_slice');
+            INSERT INTO args VALUES (20, 'cookie', 16), (21, 'cookie', 17);
+            INSERT INTO slice (id, ts, dur, name, track_id, parent_id, arg_set_id) VALUES
+                (1, 100, 20, 'deliverInputEvent src=0x101 eventTimeNano=0 id=0x10', 1, NULL, NULL),
+                (2, 140, 20, 'callback', 1, NULL, NULL),
+                (3, 141, 8, 'Browser.omnibox.edit', 1, 2, NULL),
+                (4, 100, 10, 'deliverInputEvent', 3, NULL, NULL),
+                (5, 99, 52, 'deliverInputEvent', 10, NULL, 20),
+                (6, 99, 52, 'deliverInputEvent', 10, NULL, 21);
+            INSERT INTO flow VALUES (1, 2), (5, 3), (4, 3), (3, 1), (6, 2);
+        """)
+        found = self.diagnostics(self.attribution_query)
+        self.assertEqual(5, found[("flow", "total_edges_in_trace", None)])
+        self.assertEqual(1, found[("flow", "input_to_exact_edit_edges", None)])
+        self.assertEqual(2, found[("flow", "input_to_edit_or_ancestor_edges", None)])
+        self.assertEqual(1, found[("flow_roles", "async_window_to_edit", None)])
+        self.assertEqual(1, found[("flow_roles", "dispatch_to_ancestor", None)])
+        self.assertEqual(0, self.summary()["dispatched_edits"])
+
+    def test_attribution_does_not_select_an_edit_when_multiple_are_present(self):
+        self.db.executescript("""
+            INSERT INTO slice (ts, dur, name, track_id) VALUES (100, 20, 'deliverInputEvent', 1),
+                (105, 5, 'Browser.omnibox.edit', 1), (200, 5, 'Browser.omnibox.edit', 1);
+        """)
+        found = self.diagnostics(self.attribution_query)
+        self.assertEqual(2, found[("shape", "main_edit_rows", None)])
+        self.assertEqual(0, found[("shape", "single_edit_anchor", None)])
+        self.assertFalse(any(section == "dispatch" for section, _, _ in found))
 
 
 class TraceSetupSqlTest(unittest.TestCase):

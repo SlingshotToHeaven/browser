@@ -1,6 +1,6 @@
 # Offline omnibox trace follow-up (report 9)
 
-This procedure was completed in [report 9](android-test-followup.md#report-9-ring-buffer-overwrite-confirmed). Do not repeat it by default; the [next handoff](android-test-followup.md#next-device-run) is gated on explicit capture approval.
+This procedure was completed in [report 9](android-test-followup.md#report-9-ring-buffer-overwrite-confirmed). Do not repeat it by default; the [current offline handoff](android-test-followup.md#next-device-run) uses the subsequent retry trace.
 
 [Report 8](android-test-followup.md#report-8-hitmiss-and-baseline-preflight-trace-attribution-unresolved) reported a visible synthetic hit and miss, two parseable traces, and two matched debug builds that were not installed. It did **not** establish capture readiness. This follow-up is **Mac-only**: inspect the existing artifacts in place. Do not connect to the phone, run ADB, collect another trace, rebuild or install APKs, or change device, profile or tracing settings. If an artifact or the approved local Trace Processor is unavailable, say exactly what is missing.
 
