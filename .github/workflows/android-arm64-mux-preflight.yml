@@ -1,0 +1,53 @@
+name: ARM64 mux handoff SDK preflight
+
+on:
+  push:
+    branches: [arena/bb0ffed3-browser]
+    paths:
+      - .github/workflows/android-arm64-mux-preflight.yml
+      - app/src/androidTest/java/com/privacy/browser/downloads/Arm64MuxRetest.java
+      - tools/run_arm64_mux_retest.py
+      - tests/test_arm64_mux_retest.py
+
+permissions:
+  contents: read
+
+jobs:
+  build-only:
+    name: Compile the debug and hardware test APKs (no device)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build and inspect the exact handoff source
+        shell: bash
+        run: |
+          work=$(mktemp -d "$RUNNER_TEMP/arm64-mux.XXXXXX")
+          git archive "$GITHUB_SHA" | tar -xf - -C "$work"
+          cd "$work"
+          python3 -B -m unittest discover -s tests -p 'test_arm64_mux_retest.py' -v
+          sha256sum -c docs/native-arm64.sha256 docs/release-assets-build-inputs.sha256
+          sdkmanager --sdk_root="$ANDROID_HOME" 'platforms;android-34' 'build-tools;34.0.0'
+          ./gradlew --no-daemon --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest
+          PYTHONPATH=tools python3 -B - "$ANDROID_HOME/build-tools/34.0.0/aapt2" <<'PY'
+          import os
+          from pathlib import Path
+          import sys
+          from check_android_download_batch import digest
+          from run_arm64_mux_retest import apk_badging
+
+          hashes = {}
+          for package, name in (("com.browser", "debug/app-debug.apk"),
+                                ("com.browser.test", "androidTest/debug/app-debug-androidTest.apk")):
+              path = Path("app/build/outputs/apk") / name
+              apk_badging(sys.argv[1], path, package)
+              hashes[package] = digest(path)
+          print(f"::notice title=ARM64 mux handoff build::Source {os.environ['GITHUB_SHA']}; "
+                f"debug {hashes['com.browser']}; instrumentation {hashes['com.browser.test']}; no device tests or APK upload.")
+          PY
