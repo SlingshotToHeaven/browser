@@ -97,7 +97,7 @@ if [[ -n "$("$adb" devices | awk 'NR > 1 && NF {print $1}')" ]]; then
   echo 'Unexpected ADB target on this runner; refusing to install.' >&2
   exit 1
 fi
-printf 'no\n' | avdmanager create avd --name browser-poc --package "$image" --device pixel_2
+printf 'no\n' | "$avdmanager" create avd --name browser-poc --package "$image" --device pixel_2
 "$emulator" @browser-poc -port 5554 -accel on -no-window -gpu swiftshader_indirect \
   -no-snapshot -wipe-data -no-boot-anim -no-audio -no-metrics -camera-back none -camera-front none \
   -cores 2 -memory 2048 -partition-size 2048 > "$root/emulator.log" 2>&1 &
