@@ -2,8 +2,8 @@ package com.privacy.browser;
 
 import android.app.Dialog;
 import android.os.Bundle;
-import android.view.View;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.webkit.WebView;
 import android.widget.FrameLayout;
 
 import androidx.webkit.WebViewFeature;
@@ -74,8 +74,9 @@ public class ComicDownloadBatchTest extends DownloadBrowserBatchSupport {
     @Test public void verificationRetriesOnlyBlockedPage() throws Exception {
         chapter("verify");
         startArchive();
-        View verifier = verificationView();
-        tapBounds(waitNode(null, "Set fixture cookie"), false);
+        WebView verifier = verificationView();
+        waitVerifierPage(verifier);
+        tapDom(verifier, "document.querySelector('#verify')", false);
         waitFor("cookie set by actual challenge WebView click", () -> ui(() -> {
             String cookie = android.webkit.CookieManager.getInstance().getCookie(BASE + "/gated-page");
             return cookie != null && cookie.contains("comic_fixture_verified=1");
@@ -86,9 +87,10 @@ public class ComicDownloadBatchTest extends DownloadBrowserBatchSupport {
         assertEquals(1, requests(RED).length());
         assertEquals(1, requests(BLUE).length());
         JSONArray calls = requests("/gated-page");
-        assertEquals(3, calls.length()); // Worker 403, WebView 403, worker 200.
+        assertEquals(3, calls.length()); // Worker refused, WebView challenge, worker retry.
         assertEquals(403, calls.getJSONObject(0).getInt("code"));
-        assertEquals(403, calls.getJSONObject(1).getInt("code"));
+        assertEquals(200, calls.getJSONObject(1).getInt("code"));
+        assertFalse(calls.getJSONObject(1).getBoolean("verified_cookie"));
         assertEquals(200, calls.getJSONObject(2).getInt("code"));
         assertTrue(calls.getJSONObject(2).getBoolean("verified_cookie"));
         verifyArchive(archive("Batch comic.cbz"), RED, BLUE, BLUE);
@@ -98,8 +100,8 @@ public class ComicDownloadBatchTest extends DownloadBrowserBatchSupport {
     @Test public void backDismissesVerifierAndDisposesItsView() throws Exception {
         chapter("verify");
         startArchive();
-        View verifier = verificationView();
-        waitNode(null, "Set fixture cookie");
+        WebView verifier = verificationView();
+        waitVerifierPage(verifier);
         shell("input keyevent KEYCODE_BACK");
         waitFor("verification WebView detached after Back", () -> ui(() -> verifier.getParent() == null));
         waitFor("visible verification cancellation", () -> status().contains("verification was canceled"));
@@ -180,7 +182,12 @@ public class ComicDownloadBatchTest extends DownloadBrowserBatchSupport {
         noArchive();
     }
 
-    private View verificationView() throws Exception {
+    private void waitVerifierPage(WebView verifier) throws Exception {
+        waitFor("synthetic challenge in the verifier WebView", 9000,
+                () -> Boolean.TRUE.equals(js(verifier, "document.readyState==='complete' && !!document.querySelector('#verify')")));
+    }
+
+    private WebView verificationView() throws Exception {
         controlNode("btn_captcha_done");
         return ui(() -> {
             ComicDownloadDialog comic = activityField("comicDownloadDialog", ComicDownloadDialog.class);
@@ -192,7 +199,7 @@ public class ComicDownloadBatchTest extends DownloadBrowserBatchSupport {
             Dialog challenge = (Dialog) field.get(attempt);
             FrameLayout container = challenge.findViewById(R.id.captcha_webview_container);
             assertEquals(1, container.getChildCount());
-            return container.getChildAt(0);
+            return (WebView) container.getChildAt(0);
         });
     }
 

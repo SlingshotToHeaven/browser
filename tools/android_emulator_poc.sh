@@ -104,12 +104,27 @@ elif [[ "$mode" == download-upgrade ]]; then
 fi
 "$sdkmanager" --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0'
 build_debug() { (cd "$1" && shift && ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :app:assembleDebug "$@"); }
+# The hosted image need not have FFmpeg. Use a pinned, checksum-verified host
+# executable solely for generated test inputs and JVM playback, never in either APK.
+batch_ffmpeg() {
+  if command -v ffmpeg; then return; fi
+  local archive="$root/ffmpeg-host.tgz" dir="$root/ffmpeg-host"
+  mkdir "$dir" || return 1
+  curl -fLsS --max-time 30 --retry 1 \
+    'https://registry.npmjs.org/@ffmpeg-installer/linux-x64/-/linux-x64-4.1.0.tgz' -o "$archive" || return 1
+  printf '%s  %s\n' '6390568462d4fd6a508ce02b3488170f7cf99b1c5d57c738d42f94d799ec139c85f2d55c74219eb79ccfb39672dd36ba6d4ee1686a48cebcaeb6a086400fd6f0' "$archive" \
+    | sha512sum -c --status || return 1
+  tar -xzf "$archive" -C "$dir" --strip-components=1 package/ffmpeg || return 1
+  [[ -x "$dir/ffmpeg" ]] || return 1
+  printf '%s\n' "$dir/ffmpeg"
+}
 host_status=0
 if [[ "$mode" == download-batch ]]; then
   build_debug "$root/source" :app:assembleDebugAndroidTest
   test_apk="$root/source/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
   [[ -s "$test_apk" ]]
-  export FFMPEG_TEST_BIN="$(command -v ffmpeg || true)"
+  FFMPEG_TEST_BIN=$(batch_ffmpeg) || { FFMPEG_TEST_BIN=''; echo 'Host FFmpeg unavailable; record affected cases as blocked.'; }
+  export FFMPEG_TEST_BIN
   (
     cd "$root/source"
     ./gradlew --no-daemon --max-workers=2 "${build_args[@]}" :downloader:testDebugUnitTest \

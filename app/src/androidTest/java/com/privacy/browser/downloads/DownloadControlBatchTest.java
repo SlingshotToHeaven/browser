@@ -142,7 +142,10 @@ public class DownloadControlBatchTest extends DownloadBatchSupport {
         assertTrue(serviceNotification());
         assertTrue(app.stopService(new Intent(app, DownloadService.class)));
         waitFor("service notification removed", () -> !serviceNotification());
-        downloads(); // foreground Activity resumes; the production reconciliation restarts the service
+        // A second startActivitySync can wait on an existing task while the worker's
+        // progress keeps posting UI updates. Use the real activity manager relaunch.
+        assertTrue(shell("am start -W --activity-clear-top -n com.browser/" + activity.getClass().getName())
+                .contains("Status: ok"));
         waitFor("foreground service recreated", this::serviceNotification);
         assertEquals(token, db.getDownload(id).getAttemptToken());
         control("release", name);

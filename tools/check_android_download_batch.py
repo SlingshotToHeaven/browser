@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -172,7 +173,7 @@ def reset_profile(android, state):
 
 def rows(android, work):
     with db_copy(snapshot_bytes(android), work) as (db, _):
-        db.row_factory = __import__("sqlite3").Row
+        db.row_factory = sqlite3.Row
         result = {row["file_name"]: dict(row) for row in db.execute("SELECT * FROM downloads")}
         require(set(result) == {ACTIVE, PAUSED}, "Expected exactly the two real fixture downloads")
         for name, row in result.items():
@@ -338,7 +339,7 @@ def main():
     report["device"]["service-force-stop"] = {"status": "not-run"}
     assets, media_error = None, None
     try:
-        ffmpeg = shutil.which("ffmpeg")
+        ffmpeg = os.environ.get("FFMPEG_TEST_BIN") or shutil.which("ffmpeg")
         require(ffmpeg is not None, "Host FFmpeg not installed to generate the synthetic media")
         assets = fixture.media_assets(ffmpeg)
     except (CheckFailed, OSError, ValueError, subprocess.SubprocessError) as error:

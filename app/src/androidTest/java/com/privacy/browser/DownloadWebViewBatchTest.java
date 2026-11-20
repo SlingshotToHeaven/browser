@@ -163,12 +163,13 @@ public class DownloadWebViewBatchTest extends DownloadBrowserBatchSupport {
         open("/frames");
         long count = db.countDownloads();
         waitFor("foreign frame link rendered", () -> Boolean.TRUE.equals(js("!!window.fixtureFrame")));
-        tapDom("document.querySelector('iframe')", false, true);
-        waitFor("actual click reached the foreign fixture frame", () -> requests("/frame-tap").length() == 1);
+        tapDom("document.querySelector('iframe')", false);
+        waitFor("trusted click reached the foreign fixture frame", 7000, () -> Boolean.TRUE.equals(js("!!window.fixtureFrameTapped")));
         SystemClock.sleep(700);
         assertNull(node("prompt_btn_download", null));
         assertEquals(count, db.countDownloads());
         assertEquals(0, directory.toFile().list().length);
+        evidence("trusted foreign-frame click observed by the fixture; no prompt, row, or output");
     }
 
     public static void assertCall(JSONObject call, int port, boolean scoped, int status, boolean body) throws Exception {

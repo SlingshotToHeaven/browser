@@ -101,17 +101,20 @@ class Fixture(scoped_downloads.Fixture):
                          ("Set-Cookie", scoped_downloads.COOKIE + "; Path=/session/; SameSite=Lax")])
         elif primary and path == "/frames":
             origin = f"http://127.0.0.1:{self.server.other_port}"
-            self.html(path, f'''<iframe src="{origin}/foreign-frame" style="width:100%;height:200px;border:0"></iframe>
+            self.html(path, f'''<iframe src="{origin}/foreign-frame" style="width:100%;height:220px;border:0"></iframe>
                       <script>addEventListener('message', e => {{
-                        if(e.origin === '{origin}' && e.source === document.querySelector('iframe').contentWindow)
-                          window.fixtureFrame=e.data;
+                        if(e.origin !== '{origin}' || e.source !== document.querySelector('iframe').contentWindow) return;
+                        if(e.data === 'ready') window.fixtureFrame = true;
+                        if(e.data === 'real-click') window.fixtureFrameTapped = true;
                       }})</script>''')
         elif not primary and path == "/foreign-frame":
-            self.html(path, '''<a id="blob" download="foreign.bin">Foreign fixture blob</a><script>
+            owner = f"http://127.0.0.1:{self.server.primary_port}"
+            self.html(path, f'''<style>body{{margin:0}} a{{height:100vh;display:grid;place-items:center}}</style>
+                      <a id="blob" download="foreign.bin">Foreign fixture blob</a><script>
                       const link = document.querySelector('#blob');
-                      link.href=URL.createObjectURL(new Blob(['foreign fixture'],{type:'application/octet-stream'}));
-                      link.addEventListener('click',()=>navigator.sendBeacon('/frame-tap'));
-                      const r=link.getBoundingClientRect();parent.postMessage([r.x+r.width/2,r.y+r.height/2],'*');
+                      link.href=URL.createObjectURL(new Blob(['foreign fixture'],{{type:'application/octet-stream'}}));
+                      link.addEventListener('click',e=>{{if(e.isTrusted) parent.postMessage('real-click','{owner}')}});
+                      parent.postMessage('ready','{owner}');
                       </script>''')
         elif primary and path == "/session/external.bin":
             self.csv_response(path)
@@ -121,13 +124,6 @@ class Fixture(scoped_downloads.Fixture):
             self.asset(path)
         else:
             super().handle_request()
-
-    def do_POST(self):
-        path = urlsplit(self.path).path
-        if path == "/frame-tap" and self.server.server_port == self.server.other_port:
-            self.respond(path, 204, b"", [])
-        else:
-            self.respond("unmatched", 404, b"", [])
 
     def html(self, path, body, status=200):
         page = '<!doctype html><meta charset=utf-8><meta name="viewport" content="width=device-width, initial-scale=1">' + body
@@ -159,7 +155,13 @@ class Fixture(scoped_downloads.Fixture):
             if comic_archives.VERIFIED in self.headers.get("Cookie", "").split("; "):
                 self.respond(path, 200, comic_archives.IMAGES[comic_archives.BLUE], [("Content-Type", "image/png")])
             else:
-                self.html(path, f'''<button id="verify" onclick="document.cookie='{comic_archives.VERIFIED}; Path=/gated-page; SameSite=Lax';this.disabled=true">Set fixture cookie</button>''', 403)
+                # The worker sees 403. A main-document browser navigation receives the
+                # synthetic challenge as a renderable 200 page, not a provider error UI.
+                navigation = (self.headers.get("Sec-Fetch-Mode") == "navigate"
+                              or self.headers.get("Accept", "").startswith("text/html"))
+                self.html(path, f'''<button id="verify" style="font-size:18px;padding:16px"
+                          onclick="document.cookie='{comic_archives.VERIFIED}; Path=/gated-page; SameSite=Lax';this.disabled=true">Set fixture cookie</button>''',
+                          200 if navigation else 403)
         else:
             return False
         return True

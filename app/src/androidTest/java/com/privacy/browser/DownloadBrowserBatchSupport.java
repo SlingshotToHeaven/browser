@@ -8,6 +8,7 @@ import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.webkit.WebView;
 
 import com.privacy.browser.downloads.DownloadBatchSupport;
 
@@ -52,9 +53,11 @@ public abstract class DownloadBrowserBatchSupport extends DownloadBatchSupport {
         return type.cast(f.get(activity));
     }
 
-    protected Object js(String script) throws Exception {
+    protected Object js(String script) throws Exception { return js(ui(() -> selected().getWebView()), script); }
+
+    protected Object js(WebView view, String script) throws Exception {
         CompletableFuture<String> result = new CompletableFuture<>();
-        ui(() -> { selected().getWebView().evaluateJavascript(script, result::complete); return null; });
+        ui(() -> { view.evaluateJavascript(script, result::complete); return null; });
         return new JSONTokener(result.get(5, TimeUnit.SECONDS)).nextValue();
     }
 
@@ -84,15 +87,17 @@ public abstract class DownloadBrowserBatchSupport extends DownloadBatchSupport {
         touch(bounds.centerX(), bounds.centerY(), hold);
     }
 
-    protected void tapDom(String expression, boolean hold) throws Exception { tapDom(expression, hold, false); }
+    protected void tapDom(String expression, boolean hold) throws Exception {
+        tapDom(ui(() -> selected().getWebView()), expression, hold);
+    }
 
-    protected void tapDom(String expression, boolean hold, boolean frame) throws Exception {
-        String center = frame ? "[r.left+window.fixtureFrame[0],r.top+window.fixtureFrame[1],devicePixelRatio]"
-                : "[r.left+r.width/2,r.top+r.height/2,devicePixelRatio]";
-        JSONArray rectangle = (JSONArray) js("(()=>{let a=" + expression + ";a.scrollIntoView({block:'center'});let r=a.getBoundingClientRect();return " + center + ";})()");
-        int[] at = ui(() -> { int[] offset = new int[2]; selected().getWebView().getLocationOnScreen(offset); return offset; });
-        touch(at[0] + (float) (rectangle.getDouble(0) * rectangle.getDouble(2)),
-                at[1] + (float) (rectangle.getDouble(1) * rectangle.getDouble(2)), hold);
+    protected void tapDom(WebView view, String expression, boolean hold) throws Exception {
+        JSONArray point = (JSONArray) js(view, "(()=>{let a=" + expression
+                + ";a.scrollIntoView({block:'center'});let r=a.getBoundingClientRect(),v=visualViewport;"
+                + "return [r.left+r.width/2-v.offsetLeft,r.top+r.height/2-v.offsetTop,devicePixelRatio*v.scale]})()");
+        int[] at = ui(() -> { int[] offset = new int[2]; view.getLocationOnScreen(offset); return offset; });
+        touch(at[0] + (float) (point.getDouble(0) * point.getDouble(2)),
+                at[1] + (float) (point.getDouble(1) * point.getDouble(2)), hold);
     }
 
     private void touch(float x, float y, boolean hold) {

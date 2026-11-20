@@ -37,6 +37,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.*;
+import static org.junit.Assume.assumeTrue;
 
 /** Internal helper for the single disposable CI profile, not a test-profile reset API. */
 public abstract class DownloadBatchSupport {
@@ -53,9 +54,10 @@ public abstract class DownloadBatchSupport {
     protected Path directory;
 
     @Before public void setupBatch() throws Exception {
-        assertEquals("The batch must use a disposable CI emulator", "ci-avd",
-                InstrumentationRegistry.getArguments().getString("download_batch"));
-        assertEquals("1", shell("getprop ro.kernel.qemu").trim());
+        assumeTrue("The batch must use a disposable CI emulator", "ci-avd".equals(
+                InstrumentationRegistry.getArguments().getString("download_batch")));
+        assumeTrue("Not an emulator", "1".equals(shell("getprop ro.kernel.qemu").trim())
+                || "1".equals(shell("getprop ro.boot.qemu").trim()));
         assertEquals("com.browser", app.getPackageName());
         directory = Files.createTempDirectory(app.getFilesDir().toPath(), "download-batch-").toRealPath();
         db = DownloadDbHelper.getInstance(app);
@@ -100,18 +102,21 @@ public abstract class DownloadBatchSupport {
 
     protected String range(String name) throws Exception { return enqueue(item("/range/" + name, name)); }
 
-    protected DownloadItem byName(String name) {
-        for (DownloadItem item : db.getDownloadsIn(DownloadStatus.values())) {
-            if (name.equals(item.getFileName()) && item.getDestinationPath().startsWith(directory + "/")) return item;
+    private DownloadItem byName(String name) {
+        for (DownloadItem key : db.getDownloadsIn(DownloadStatus.values())) {
+            // The queue projection intentionally has neither filename nor path.
+            DownloadItem item = db.getDownload(key.getId());
+            if (item != null && name.equals(item.getFileName())) return item;
         }
         return null;
     }
 
     protected String bind(String name) throws Exception {
-        waitFor("synthetic job " + name, () -> byName(name) != null);
-        String id = byName(name).getId();
-        owned.add(id);
-        return id;
+        waitFor("synthetic job " + name, 9000, () -> byName(name) != null);
+        DownloadItem row = byName(name);
+        assertTrue("Prompt chose a different output folder", Files.isSameFile(directory, Path.of(row.getDestinationPath()).getParent()));
+        owned.add(row.getId());
+        return row.getId();
     }
 
     protected DownloadItem state(String id, DownloadStatus status) throws Exception {

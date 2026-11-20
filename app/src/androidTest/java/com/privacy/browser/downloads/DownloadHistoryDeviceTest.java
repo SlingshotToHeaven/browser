@@ -7,7 +7,9 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.CancellationSignal;
 import android.os.SystemClock;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.EditText;
+import android.widget.TextView;
 
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -119,12 +121,46 @@ public class DownloadHistoryDeviceTest {
             search.setText(prefix + "RÉ%_"); // An older request must not win this replacement.
         });
         awaitCount(list, 48);
+        instrumentation.getUiAutomation();
+        await(() -> onMain(() -> list.getChildAt(0) != null), "First card was never laid out");
+        instrumentation.runOnMainSync(() -> assertTrue(list.getChildAt(0).performLongClick()));
+        await(() -> {
+            AccessibilityNodeInfo root = instrumentation.getUiAutomation().getRootInActiveWindow();
+            if (root == null) return false;
+            for (AccessibilityNodeInfo select : root.findAccessibilityNodeInfosByText("Select")) {
+                if (!"Select".contentEquals(select.getText() == null ? "" : select.getText())) continue;
+                AccessibilityNodeInfo parent = select.getParent();
+                if (parent != null && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+            }
+            return false;
+        }, "Could not enter selection mode");
+        TextView selected = activity.findViewById(R.id.downloads_text_selected_count);
+        await(() -> onMain(() -> "1 selected".contentEquals(selected.getText())), "First item was not selected");
+        instrumentation.runOnMainSync(() -> assertTrue(activity.findViewById(R.id.downloads_btn_select_all).performClick()));
+        await(() -> onMain(() -> "57 selected".contentEquals(selected.getText())), "Select All omitted unloaded rows");
+        awaitCount(list, 48); // The selected IDs extend beyond the loaded cards.
+        instrumentation.runOnMainSync(() -> activity.findViewById(R.id.downloads_btn_close_selection).performClick());
         instrumentation.runOnMainSync(() -> list.scrollToPosition(47));
         awaitCount(list, 57);
         DownloadEngine.getInstance(context).delete(prefix + "1", false);
         awaitCount(list, 56);
         instrumentation.runOnMainSync(() -> search.setText(prefix + "absent"));
         awaitCount(list, 0);
+    }
+
+    private boolean onMain(java.util.function.BooleanSupplier predicate) {
+        java.util.concurrent.atomic.AtomicBoolean value = new java.util.concurrent.atomic.AtomicBoolean();
+        instrumentation.runOnMainSync(() -> value.set(predicate.getAsBoolean()));
+        return value.get();
+    }
+
+    private void await(java.util.function.BooleanSupplier predicate, String error) {
+        long deadline = SystemClock.uptimeMillis() + 5000;
+        do {
+            if (predicate.getAsBoolean()) return;
+            SystemClock.sleep(40);
+        } while (SystemClock.uptimeMillis() < deadline);
+        fail(error);
     }
 
     private void awaitCount(RecyclerView list, int expected) {
