@@ -123,7 +123,9 @@ emulator_pid=$!
 android() { "$adb" -s "$serial" "$@"; }
 cleanup() {
   local status=$?
-  if (( status != 0 )); then tail -50 "$root/emulator.log" >&2 || :; fi
+  if (( status != 0 )) && [[ "${booted:-false}" != true ]]; then
+    grep -Ev 'androidboot\.(qemu\.adb\.pubkey|serialno)=' "$root/emulator.log" | tail -30 >&2 || :
+  fi
   timeout 8 "$adb" -s "$serial" emu kill >/dev/null 2>&1 || kill "$emulator_pid" 2>/dev/null || :
   "$adb" kill-server >/dev/null 2>&1 || :
 }

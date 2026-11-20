@@ -49,7 +49,8 @@ def until(read, description, seconds=25):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         result = read()
-        if result:
+        # ElementTree leaf nodes (including buttons) are falsey, but are valid results.
+        if result is not None and result is not False:
             return result
         time.sleep(0.25)
     raise CheckFailed(f"Timed out: {description}")
@@ -148,7 +149,10 @@ class Emulator:
         require("Status: ok" in result.splitlines(), f"Could not open {activity}")
 
     def view(self, name, text=None):
+        seen = "no valid window hierarchy"
+
         def find():
+            nonlocal seen
             dump = self.shell("uiautomator", "dump", "--compressed", UI_DUMP, check=False)
             if dump.returncode or b"dumped to:" not in dump.stdout:
                 return None
@@ -156,8 +160,16 @@ class Emulator:
                 root = ET.fromstring(self.shell("cat", UI_DUMP).stdout)
             except ET.ParseError:
                 return None
+            nodes = list(root.iter("node"))
+            app_nodes = [node for node in nodes if node.get("package") == PACKAGE]
+            visible_ids = sorted({node.get("resource-id", "").rpartition("/")[2] for node in app_nodes} - {""})
+            seen = f"{len(app_nodes)}/{len(nodes)} browser nodes, ids: {','.join(visible_ids)[:200]}"
             return find_view(root, name, text)
-        return until(find, f"browser view {name}" + (f" with text {text}" if text else ""))
+
+        try:
+            return until(find, f"browser view {name}")
+        except CheckFailed as failure:
+            raise CheckFailed(f"{failure}; {seen}") from failure
 
     def tap(self, name, text=None):
         return self.tap_view(self.view(name, text))
