@@ -1,6 +1,6 @@
 # Downloads: focused follow-up on the retained spare phone
 
-**Historical procedure.** The current DL-01–DL-06 continuation uses the [wireless handoff](android-download-wireless-resume.md). Do not run this procedure, replace instrumentation, or reset the profile for that handoff.
+**Historical procedure.** The current DL-01–DL-06 continuation uses the [wireless blob handoff](android-download-wireless-blob-recheck.md). Do not run this procedure, replace instrumentation, or reset the profile for that handoff.
 
 This handoff covers **two independently selected blob cases** on the retained `4a90876` browser. It replaces only the instrumented tests. The three physical publication-cut tests from `b456f26` remain available unchanged, but are **not part of this retest**. Do not rerun the full batch, upgrade, or native mux automation. Use the commit-pinned GitHub source ZIP identified in the handoff.
 

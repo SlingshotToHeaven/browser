@@ -1,5 +1,7 @@
 # DL-01–DL-06 Test Run — wireless continuation
 
+**Returned and reconciled.** Do not repeat this paste/HLS round. The [next wireless blob handoff](android-download-wireless-blob-recheck.md) reuses only the guard in Section 1.
+
 Resume from the matched check-only receipt on the **already-connected Galaxy S21 FE**, over **wireless ADB only**. Run the unresolved UI intake checks, not the batch. Use the original installed browser and its synthetic Downloads profile. No builds, APK replacements, profile resets, connection changes, or action by the owner. Stop if the existing connection, verified lab app, or remote UI is unavailable.
 
 | Checkpoint | This round |
