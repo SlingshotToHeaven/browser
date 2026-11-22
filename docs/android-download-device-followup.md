@@ -1,6 +1,6 @@
 # Downloads: focused follow-up on the retained spare phone
 
-**Historical phone procedure.** Phone testing is stopped for the current DL-01–DL-06 continuation. Use the [emulator-only handoff](android-download-emulator-resume.md); do not execute this runbook on the retained phone.
+**Historical procedure.** The current DL-01–DL-06 continuation uses the [wireless handoff](android-download-wireless-resume.md). Do not run this procedure, replace instrumentation, or reset the profile for that handoff.
 
 This handoff covers **two independently selected blob cases** on the retained `4a90876` browser. It replaces only the instrumented tests. The three physical publication-cut tests from `b456f26` remain available unchanged, but are **not part of this retest**. Do not rerun the full batch, upgrade, or native mux automation. Use the commit-pinned GitHub source ZIP identified in the handoff.
 
@@ -29,12 +29,12 @@ root="$lab/browser-$source_commit"
 )
 ```
 
-Do not proceed unless `build-ok` exists. Use only the same authorized spare USB phone, owner user 0, unlocked, portrait, English UI, with the default local ADB server (no `ADB_SERVER_SOCKET` or `ANDROID_ADB_SERVER_ADDRESS` overrides). No root, permission escalation, storage grants, Wi-Fi/battery simulation, or changes to the default browser. Do not access the old app IDs or personal files. Look at `adb devices -l` locally and explicitly choose the spare serial; do not include it in a report.
+Do not proceed unless `build-ok` exists. This historical procedure requires the same authorized spare phone, owner user 0, unlocked, portrait, English UI, with the default local ADB server (no `ADB_SERVER_SOCKET` or `ANDROID_ADB_SERVER_ADDRESS` overrides). No root, permission escalation, storage grants, Wi-Fi/battery simulation, or changes to the default browser. Do not access the old app IDs or personal files. Look at `adb devices -l` locally and explicitly choose the spare serial; do not include it in a report.
 
 ```bash
 adb="$sdk/platform-tools/adb"
 "$adb" devices -l
-printf 'Authorized spare USB serial: '; IFS= read -r serial
+printf 'Authorized spare phone serial: '; IFS= read -r serial
 follow=(python3 -B "$root/tools/run_download_device_followup.py"
   --disposable --serial "$serial" --sdk "$sdk" --prior-lab-json "$prior"
   --test-apk "$root/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
