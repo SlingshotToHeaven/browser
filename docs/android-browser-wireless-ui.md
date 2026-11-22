@@ -1,5 +1,7 @@
 # Browser, privacy and rules — wireless UI first pass
 
+**Returned and reconciled; do not repeat.** The [held-navigation and Cancel handoff](android-browser-wireless-recovery.md) covers separate checks.
+
 **Run only the scoped UI checks below:** WV-01 navigation, WV-02 ordinary-page/frame bridge exposure, and PR-01 private-entry refusal. The blocked Downloads cases were [moved to the end](../test_moved_to_be_done_at_last.markdown); leave their results, files and settings alone. This is not a full Browser gate pass or release test.
 
 ## One setup on the retained handset
