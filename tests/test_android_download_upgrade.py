@@ -1,14 +1,17 @@
 """Host checks of the device harness. They do not substitute for installed Android evidence."""
 from email.message import Message
 from hashlib import sha256
+from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
 
 from test_download_queue_sql import create
+from tools import check_android_download_upgrade as upgrade
 from tools.check_android_download_upgrade import (
     CheckFailed, JOBS, LEGACY, db_copy, find_card, fixture, fixture_id, installed_apk_path,
     picker_nodes, picker_option, read_profile, seed_rows, validate_receipt, wire_reply,
@@ -23,6 +26,41 @@ class AndroidDownloadUpgradeHarnessTest(unittest.TestCase):
                       path + "\npackage:/data/app/other/split.apk"):
             with self.assertRaises(CheckFailed):
                 installed_apk_path("package:" + wrong, "com.browser")
+
+    def test_blank_agp_test_version_code_keeps_package_signer_and_hash_checks(self):
+        signer = "b" * 64
+        certs = f"Signer #1 certificate SHA-256 digest: {signer}\n"
+        with TemporaryDirectory() as directory:
+            sdk = Path(directory); apk = sdk / "debug-test.apk"; apk.write_bytes(b"fixture apk")
+            for package, version, expected in (("com.browser.test", "", 0), ("com.browser.test", "7", 7),
+                                               ("com.browser", "1", 1)):
+                badging = f"package: name='{package}' versionCode='{version}' versionName=''\n"
+                with patch.object(upgrade.subprocess, "check_output", side_effect=[badging, certs]):
+                    self.assertEqual(upgrade.apk_info(sdk, apk, package), {"version_code": expected,
+                                     "apk_sha256": sha256(apk.read_bytes()).hexdigest(), "signer": signer})
+            for label, wanted in (("com.browser", "com.browser"), ("com.other.test", "com.browser.test"),
+                                  ("com.browser.fixture.receiver", "com.browser.fixture.receiver")):
+                with patch.object(upgrade.subprocess, "check_output", return_value=f"package: name='{label}' versionCode=''"), self.assertRaises(CheckFailed):
+                    upgrade.apk_info(sdk, apk, wanted)
+            with patch.object(upgrade.subprocess, "check_output", side_effect=["package: name='com.browser.test' versionCode=''", ""]), self.assertRaisesRegex(CheckFailed, "verified APK signer"):
+                upgrade.apk_info(sdk, apk, "com.browser.test")
+
+    def test_system_chooser_launcher_still_needs_the_labeled_picker_and_delivery(self):
+        android, recipient = Mock(), Mock()
+        for action, showing in (("SEND", "com.android.intentresolver/.ChooserActivityLauncher"),
+                                ("VIEW", "android/com.android.internal.app.ChooserActivityLauncher"),
+                                ("SEND_MULTIPLE", "com.google.android.intentresolver/.ChooserActivity")):
+            arrives = upgrade.RECIPIENT + "/.Receive"
+            with patch.object(upgrade, "foreground", side_effect=[showing, arrives]), \
+                 patch.object(upgrade, "select_picker") as select, patch.object(upgrade, "validate_receipt") as receipt:
+                upgrade.deliver(android, recipient, action, ["history"])
+                select.assert_called_once_with(android, showing, view=action == "VIEW")
+                receipt.assert_called_once_with(recipient.receipt.return_value, recipient.uid, ["history"], action)
+        for showing in ("com.other/.ChooserActivityLauncher", "android/.FakeChooserActivityLauncher", "android/.ResolverActivity"):
+            with patch.object(upgrade, "foreground", return_value=showing), patch.object(upgrade, "select_picker") as select:
+                with self.assertRaisesRegex(CheckFailed, "No Android sharesheet"):
+                    upgrade.deliver(android, recipient, "SEND", ["history"])
+                select.assert_not_called()
 
     def test_http_fixture_only_serves_the_exact_checkpoint_suffix(self):
         active = JOBS["active"]

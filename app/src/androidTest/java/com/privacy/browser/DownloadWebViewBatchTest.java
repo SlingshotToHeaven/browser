@@ -1,7 +1,10 @@
 package com.privacy.browser;
 
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.view.InputDevice;
+import android.view.MotionEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.webkit.WebView;
 
@@ -30,6 +33,7 @@ import static org.junit.Assume.assumeTrue;
 /** Synthetic pages in the real browser; runs only in the batch's disposable AVD. */
 public class DownloadWebViewBatchTest extends DownloadBrowserBatchSupport {
     private static final String BLOB = "/blob_download.html";
+    private static final String FOREIGN_FRAME = "http://127.0.0.1:8025/foreign-frame";
     private static final String BLOB_SHA = "3906393794f65f3ce67995cc639367320caa7f1c8554e6f7f6603948e1fb3bbf";
     private static final int BLOB_BYTES = 262147;
     private static final int CSV_BYTES = 118796;
@@ -171,10 +175,53 @@ public class DownloadWebViewBatchTest extends DownloadBrowserBatchSupport {
 
     @Test public void crossOriginFrameCannotUseTheMainPageBlobIntake() throws Exception {
         supportedBlob();
-        open("/frames");
+        // The same attachment must actually offer a download as a top-level
+        // document. Cancel before any admission; otherwise absence in a frame
+        // could just mean that the fixture or input driver is broken.
+        openUrl(FOREIGN_FRAME);
         long count = db.countDownloads();
-        waitFor("foreign frame button loaded", () -> Boolean.TRUE.equals(js("!!window.fixtureFrame")));
-        var view = ui(() -> selected().getWebView());
+        waitFor("top-level attachment ready", () -> Boolean.TRUE.equals(js("!!window.fixtureAttachment")));
+        tapRenderedAttachment("#offer");
+        awaitTrustedAttachment("top", 7000);
+        assertEquals("foreign.bin", controlNode("prompt_edit_filename").getText().toString());
+        assertTrue(controlNode("prompt_btn_cancel").performAction(AccessibilityNodeInfo.ACTION_CLICK));
+        waitFor("top-level fixture offer dismissed", () -> node("prompt_btn_download", null) == null);
+        assertEquals(count, db.countDownloads());
+        evidence("same attachment: top-level pointer and click reached the fixture and the offer was cancelled");
+
+        navigate("/frames");
+        waitFor("foreign fixture frame attachment ready", () -> Boolean.TRUE.equals(js("!!window.fixtureFrame")));
+        boolean operatorTap = DownloadDeviceLab.requested() && "true".equals(
+                InstrumentationRegistry.getArguments().getString("download_lab_operator_tap"));
+        if (!operatorTap) tapRenderedAttachment("#foreign-blob");
+        awaitTrustedAttachment("child", operatorTap ? 50000 : 7000);
+
+        long end = SystemClock.uptimeMillis() + 1200;
+        do {
+            assertNull("Trusted foreign frame click opened a download prompt", node("prompt_btn_download", null));
+            assertEquals("Trusted foreign frame click changed the queue", count, db.countDownloads());
+            assertFalse("Foreign frame acquired a transfer lease", ui(() -> selected().hasPageTransfer()));
+            assertEquals(0, directory.toFile().list().length);
+            SystemClock.sleep(60);
+        } while (SystemClock.uptimeMillis() < end);
+        assertTrue(ui(() -> ready("/frames")));
+        evidence("foreign server witnessed trusted child pointer and click; no prompt, row, lease or output");
+    }
+
+    private void awaitTrustedAttachment(String originScope, int wait) throws Exception {
+        String base = "/frame-input/" + originScope;
+        waitFor("trusted touchscreen pointer reached the " + originScope + " attachment", wait,
+                () -> requests(base + "/pointer").length() == 1);
+        waitFor("trusted click reached the " + originScope + " attachment", 5000,
+                () -> requests(base + "/click").length() == 1);
+    }
+
+    /** Map a proven CSS hit into the actual WebView, independent of screen density. */
+    private void tapRenderedAttachment(String selector) throws Exception {
+        WebView view = ui(() -> selected().getWebView());
+        String element = "document.querySelector(" + JSONObject.quote(selector) + ")";
+        assertEquals(true, js(view, "(() => {const e=" + element
+                + ";if(!e) return false;e.scrollIntoView({block:'center',inline:'center'});return true})()"));
         CountDownLatch rendered = new CountDownLatch(1);
         ui(() -> {
             view.postVisualStateCallback(1, new WebView.VisualStateCallback() {
@@ -182,25 +229,46 @@ public class DownloadWebViewBatchTest extends DownloadBrowserBatchSupport {
             });
             return null;
         });
-        assertTrue("Foreign frame not ready to draw", rendered.await(6, TimeUnit.SECONDS));
-        boolean operatorTap = DownloadDeviceLab.requested() && "true".equals(
-                InstrumentationRegistry.getArguments().getString("download_lab_operator_tap"));
-        if (!operatorTap) {
-            AccessibilityNodeInfo button = node(null, "Request frame blob");
-            if (button != null) tapBounds(button, false);
-            else tapDom("document.querySelector('iframe')", false);
+        assertTrue("Attachment did not render", rendered.await(6, TimeUnit.SECONDS));
+        // Work in the clipped visual viewport, not a stale accessibility
+        // rectangle or absolute CSS pixels. The child anchor covers its frame.
+        JSONArray hit = (JSONArray) js(view, "(() => {const e=" + element + ",v=window.visualViewport;"
+                + "if(!e||!v) return [false];const r=e.getBoundingClientRect();"
+                + "const l=Math.max(r.left,v.offsetLeft),t=Math.max(r.top,v.offsetTop),"
+                + "b=Math.min(r.bottom,v.offsetTop+v.height),w=Math.min(r.right,v.offsetLeft+v.width);"
+                + "if(w<=l||b<=t) return [false];const x=(l+w)/2,y=(t+b)/2,n=document.elementFromPoint(x,y);"
+                + "return [n!==null&&(e===n||e.contains(n)),(x-v.offsetLeft)/v.width,(y-v.offsetTop)/v.height]})()");
+        assertTrue("Attachment is clipped or covered at the CSS hit point", hit.getBoolean(0));
+        int[] screen = ui(() -> {
+            assertSame(view, selected().getWebView());
+            assertTrue("WebView not visible or focused", view.isShown() && view.hasWindowFocus());
+            assertEquals(0, view.getPaddingLeft() + view.getPaddingRight() + view.getPaddingTop() + view.getPaddingBottom());
+            int x = (int) Math.floor(hit.getDouble(1) * view.getWidth());
+            int y = (int) Math.floor(hit.getDouble(2) * view.getHeight());
+            Rect visible = new Rect();
+            assertTrue("Mapped hit point outside the visible WebView", x >= 0 && x < view.getWidth()
+                    && y >= 0 && y < view.getHeight() && view.getLocalVisibleRect(visible)
+                    && visible.contains(x + view.getScrollX(), y + view.getScrollY()));
+            int[] location = new int[2];
+            view.getLocationOnScreen(location);
+            return new int[]{location[0] + x, location[1] + y};
+        });
+        MotionEvent.PointerProperties finger = new MotionEvent.PointerProperties();
+        finger.id = 0;
+        finger.toolType = MotionEvent.TOOL_TYPE_FINGER;
+        MotionEvent.PointerCoords coords = new MotionEvent.PointerCoords();
+        coords.x = screen[0];
+        coords.y = screen[1];
+        coords.size = 1;
+        long since = SystemClock.uptimeMillis();
+        for (int action : new int[]{MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+            coords.pressure = action == MotionEvent.ACTION_DOWN ? 1 : 0;
+            MotionEvent event = MotionEvent.obtain(since, SystemClock.uptimeMillis(), action, 1,
+                    new MotionEvent.PointerProperties[]{finger}, new MotionEvent.PointerCoords[]{coords},
+                    0, 0, 1, 1, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0);
+            try { ins.sendPointerSync(event); } finally { event.recycle(); }
+            if (action == MotionEvent.ACTION_DOWN) SystemClock.sleep(65);
         }
-        // On the spare phone use the operator's actual touch, not the suspect
-        // Android display-coordinate conversion. Both modes require the same
-        // iframe's trusted pointer AND click before testing the refusal.
-        waitFor("trusted pointer reached the foreign fixture frame", operatorTap ? 50000 : 4000,
-                () -> Boolean.TRUE.equals(js("!!window.fixtureFramePointer")));
-        waitFor("trusted click attempted a foreign frame download", 5000, () -> Boolean.TRUE.equals(js("!!window.fixtureFrameTapped")));
-        SystemClock.sleep(700);
-        assertNull(node("prompt_btn_download", null));
-        assertEquals(count, db.countDownloads());
-        assertEquals(0, directory.toFile().list().length);
-        evidence("trusted foreign-frame click observed by the fixture; no prompt, row, or output");
     }
 
     @Test public void crossingOriginDuringBlobReadDrainsBeforeNewOffer() throws Exception {
@@ -209,7 +277,7 @@ public class DownloadWebViewBatchTest extends DownloadBrowserBatchSupport {
         firstBlobChunk();
         TabModel source = ui(this::selected);
         TabNavigation.Page before = ui(() -> source.navigation.page());
-        String foreign = "http://127.0.0.1:8025/foreign-frame";
+        String foreign = FOREIGN_FRAME;
         ui(() -> { source.getWebView().loadUrl(foreign); return null; });
         waitFor("foreign origin committed in original tab", () -> ui(() -> selected() == source
                 && source.navigation.page() != before && source.navigation.ready() && source.navigation.finished()

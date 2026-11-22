@@ -36,8 +36,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Build once, run host download tests, and exercise the Android batch
+      - name: Build and run the requested Downloads coverage
         shell: bash
+        env:
+          ANDROID_DOWNLOAD_SCOPE: ${{ contains(github.event.head_commit.message, '[download-frame-recheck]') && 'frame-recheck' || 'all' }}
         run: |
           log="$RUNNER_TEMP/browser-emulator-step.log"
           if bash tools/android_emulator_poc.sh download-batch 2>&1 | tee "$log"; then

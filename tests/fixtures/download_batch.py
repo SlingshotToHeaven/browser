@@ -1,4 +1,5 @@
 """Loopback fixtures for the disposable Android download batch; never log header values."""
+from base64 import b64decode
 from contextlib import ExitStack, contextmanager
 from hashlib import sha256
 from http.server import ThreadingHTTPServer
@@ -14,6 +15,10 @@ import release_mux
 import scoped_downloads
 
 PRIMARY, FOREIGN = 8024, 8025
+# A favicon 404 can disturb WebView after the child page has already loaded.
+FRAME_ICON = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+FRAME_ICON_LINK = f'<link rel="icon" href="data:image/gif;base64,{FRAME_ICON}">'
+FRAME_INPUT = frozenset(f"/frame-input/{scope}/{event}" for scope in ("top", "child") for event in ("pointer", "click"))
 LENGTH, PREFIX = 294_917, 65_536
 BODY = b"d" * LENGTH
 DIGEST = sha256(BODY).hexdigest()
@@ -110,28 +115,39 @@ class Fixture(scoped_downloads.Fixture):
             self.range_job(path, job[1])
             return
         primary = self.server.server_port == self.server.primary_port
-        if primary and path == "/start":
+        if path == "/favicon.ico":
+            self.reply(200, b64decode(FRAME_ICON), "image/gif")
+        elif not primary and path in FRAME_INPUT and self.path == path:
+            self.respond(path, 204, b"", [])
+        elif primary and path == "/start":
             page = scoped_downloads.PAGE.replace(b"<title>", b'<meta name="viewport" content="width=device-width, initial-scale=1"><title>')
             self.respond(path, 200, page, [("Content-Type", "text/html; charset=utf-8"),
                          ("Set-Cookie", scoped_downloads.COOKIE + "; Path=/session/; SameSite=Lax")])
         elif primary and path == "/frames":
             origin = f"http://127.0.0.1:{self.server.other_port}"
-            self.html(path, f'''<iframe src="{origin}/foreign-frame" style="width:100%;height:220px;border:0"></iframe>
+            self.html(path, FRAME_ICON_LINK + f'''<style>body{{margin:0}}
+                      #foreign-blob{{display:block;width:100%;height:220px;border:0}}</style>
                       <script>addEventListener('message', e => {{
-                        if(e.origin !== '{origin}' || e.source !== document.querySelector('iframe').contentWindow) return;
-                        if(e.data === 'ready') window.fixtureFrame = true;
-                        if(e.data === 'pointer') window.fixtureFramePointer = true;
-                        if(e.data === 'real-click') window.fixtureFrameTapped = true;
-                      }})</script>''')
+                        const frame = document.querySelector('#foreign-blob');
+                        if(e.origin === '{origin}' && frame && e.source === frame.contentWindow && e.data === 'attachment-ready') {{
+                          window.fixtureFrame = true;
+                        }}
+                      }})</script>
+                      <iframe id="foreign-blob" title="Foreign fixture attachment" src="{origin}/foreign-frame"></iframe>''')
         elif not primary and path == "/foreign-frame":
             owner = f"http://127.0.0.1:{self.server.primary_port}"
-            self.html(path, f'''<style>body{{margin:0}} button{{width:100vw;height:100vh;font-size:18px}}</style>
-                      <button id="offer">Request frame blob</button><a id="blob" hidden download="foreign.bin"></a><script>
-                      const link = document.querySelector('#blob'), button = document.querySelector('#offer');
-                      link.href=URL.createObjectURL(new Blob(['foreign fixture'],{{type:'application/octet-stream'}}));
-                      button.addEventListener('pointerdown',e=>{{if(e.isTrusted) parent.postMessage('pointer','{owner}')}});
-                      button.addEventListener('click',e=>{{if(e.isTrusted){{ link.click(); parent.postMessage('real-click','{owner}'); }} }});
-                      parent.postMessage('ready','{owner}');
+            self.html(path, FRAME_ICON_LINK + f'''<style>html,body{{height:100%;margin:0}}
+                      #offer{{display:grid;place-items:center;width:100%;height:100%;font-size:18px;
+                              background:#fde047;color:#17212e;touch-action:manipulation}}</style>
+                      <a id="offer" download="foreign.bin">Request frame blob</a><script>
+                      const link = document.querySelector('#offer');
+                      const mode = window.top === window ? 'top' : 'child';
+                      function witness(event) {{ fetch('/frame-input/' + mode + '/' + event, {{keepalive:true}}).catch(() => {{}}); }}
+                      link.href = URL.createObjectURL(new Blob(['foreign fixture'], {{type:'application/octet-stream'}}));
+                      link.addEventListener('pointerdown', e => {{ if(e.isTrusted && e.pointerType === 'touch') witness('pointer'); }});
+                      link.addEventListener('click', e => {{ if(e.isTrusted) witness('click'); }});
+                      window.fixtureAttachment = true;
+                      if(mode === 'child') parent.postMessage('attachment-ready', '{owner}');
                       </script>''')
         elif primary and path == "/session/external.bin":
             self.csv_response(path)

@@ -31,6 +31,9 @@ STAGE = JAVA + "downloads.DownloadControlBatchTest#stageForHostForceStop"
 PAUSED, ACTIVE = "relaunch-paused.bin", "relaunch-active.bin"
 PRIVATE = r"/data/(?:user/0|data)/com\.browser/files/download-batch-[0-9]+"
 CASE_TIME = 73
+FRAME_DENSITIES = (320, 560)
+FRAME_SIZE = "1080x2340"
+FRAME_RECHECK = ("blob-source-switch", *(f"blob-foreign-frame-{dpi}dpi" for dpi in FRAME_DENSITIES))
 GENERATED_MEDIA_CASES = {"stream-separate", "stream-ts", "stream-fmp4", "stream-aes128", "stream-query-only", "stream-missing-audio", "stream-short"}
 
 # Each method starts in a cleared *disposable* target profile, even after a failed case.
@@ -269,7 +272,7 @@ def force_stop(android, state, work, *, serial=SERIAL, instrument=instrumentatio
             "resumed_from": fixture.PREFIX, "bytes": fixture.LENGTH, "sha256": fixture.DIGEST}
 
 
-def device_matrix(android, work, state, report, media_error):
+def device_matrix(android, work, state, report, media_error, *, frame_recheck=False):
     def run_case(name, action):
         started = time.monotonic()
         try:
@@ -296,18 +299,48 @@ def device_matrix(android, work, state, report, media_error):
             out.write("\n")
         print(f"{name}: {result['status']} ({result['seconds']}s) {result.get('detail', '')}", flush=True)
 
+    def run_named(name, selector):
+        def run_method():
+            result = android.shell(*instrumentation_args(selector), timeout=CASE_TIME, check=False)
+            parsed = parse_instrumentation((result.stdout + result.stderr).decode(errors="replace"), selector)
+            require(not result.returncode or parsed["status"] != "passed", "ADB exited unsuccessfully despite a test pass")
+            return parsed
+        run_case(name, run_method)
+
+    if frame_recheck:
+        android.verify_target()
+        size, density = android.text("wm", "size"), android.text("wm", "density")
+        require(re.fullmatch(r"Physical size: \d+x\d+", size) and re.fullmatch(r"Physical density: \d+", density),
+                "Frame recheck needs the unmodified disposable emulator display")
+        web_tests = CASES["DownloadWebViewBatchTest"]
+        prefix = JAVA + "DownloadWebViewBatchTest#"
+        run_named("blob-source-switch", prefix + web_tests["blob-source-switch"])
+        report["frame_display"] = {"size": FRAME_SIZE, "verified_densities": []}
+        try:
+            android.shell("wm", "size", FRAME_SIZE)
+            require(f"Override size: {FRAME_SIZE}" in android.text("wm", "size").splitlines() or size == f"Physical size: {FRAME_SIZE}",
+                    "Could not set the disposable frame test viewport")
+            for dpi in FRAME_DENSITIES:
+                android.shell("wm", "density", str(dpi))
+                require(f"Override density: {dpi}" in android.text("wm", "density").splitlines() or density == f"Physical density: {dpi}",
+                        "Could not set disposable frame test density")
+                report["frame_display"]["verified_densities"].append(dpi)
+                run_named(f"blob-foreign-frame-{dpi}dpi", prefix + web_tests["blob-foreign-frame"])
+        finally:
+            try:
+                android.shell("wm", "density", "reset")
+            finally:
+                android.shell("wm", "size", "reset")
+        report["frame_display"]["restored"] = android.text("wm", "size") == size and android.text("wm", "density") == density
+        require(report["frame_display"]["restored"], "Emulator display overrides did not clear")
+        return
+
     for cls, methods in CASES.items():
         for name, method in methods.items():
             if name in GENERATED_MEDIA_CASES and media_error:
                 report["device"][name] = {"status": "blocked", "detail": media_error}
                 continue
-            selector = JAVA + cls + "#" + method
-
-            def run_method():
-                result = android.shell(*instrumentation_args(selector), timeout=CASE_TIME, check=False)
-                return parse_instrumentation((result.stdout + result.stderr).decode(errors="replace"), selector)
-
-            run_case(name, run_method)
+            run_named(name, JAVA + cls + "#" + method)
     run_case("service-force-stop", lambda: force_stop(android, state, work))
 
 
@@ -328,6 +361,7 @@ def main():
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--apk", required=True, type=Path)
     parser.add_argument("--test-apk", required=True, type=Path)
+    parser.add_argument("--frame-recheck", action="store_true", help="only the frame at two AVD densities and the independent blob source switch")
     args = parser.parse_args()
     require(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"
             and os.environ.get("GITHUB_REF_NAME") == "arena/bb0ffed3-browser", "Only run on the disposable branch CI emulator")
@@ -335,39 +369,45 @@ def main():
     require(re.fullmatch(r"[0-9a-f]{40}", commit), "Expected a pinned source commit")
     android = Emulator(args.adb)
     android.verify_target()
+    inventory = FRAME_RECHECK if args.frame_recheck else (
+        *(name for group in CASES.values() for name in group), "service-force-stop")
     report = {"schema": 1, "source_commit": commit, "api": 34,
               "abi": android.text("getprop", "ro.product.cpu.abi"), "page_bytes": android.text("getconf", "PAGE_SIZE"),
               "app_sha256": installed(android, args.apk, PACKAGE), "test_sha256": installed(android, args.test_apk, TEST_PACKAGE),
-              "device": {name: {"status": "not-run"} for group in CASES.values() for name in group}}
-    report["device"]["service-force-stop"] = {"status": "not-run"}
+              "device": {name: {"status": "not-run"} for name in inventory}}
     assets, media_error = None, None
-    try:
-        ffmpeg = os.environ.get("FFMPEG_TEST_BIN") or shutil.which("ffmpeg")
-        require(ffmpeg is not None, "Host FFmpeg not installed to generate the synthetic media")
-        assets = fixture.media_assets(ffmpeg)
-    except (CheckFailed, OSError, ValueError, subprocess.SubprocessError) as error:
-        media_error = compact(error)
+    if not args.frame_recheck:
+        try:
+            ffmpeg = os.environ.get("FFMPEG_TEST_BIN") or shutil.which("ffmpeg")
+            require(ffmpeg is not None, "Host FFmpeg not installed to generate the synthetic media")
+            assets = fixture.media_assets(ffmpeg)
+        except (CheckFailed, OSError, ValueError, subprocess.SubprocessError) as error:
+            media_error = compact(error)
     try:
         from contextlib import ExitStack
         from http.server import ThreadingHTTPServer
         from threading import Thread
         with ExitStack() as stack:
             state, _ = stack.enter_context(fixture.servers(assets))
-            media = stack.enter_context(ThreadingHTTPServer(("127.0.0.1", media_discovery.PORT), media_discovery.Fixture))
-            Thread(target=media.serve_forever, daemon=True).start()
-            stack.callback(media.shutdown)
+            ports = [fixture.PRIMARY, fixture.FOREIGN]
+            if not args.frame_recheck:
+                media = stack.enter_context(ThreadingHTTPServer(("127.0.0.1", media_discovery.PORT), media_discovery.Fixture))
+                Thread(target=media.serve_forever, daemon=True).start()
+                stack.callback(media.shutdown)
+                ports.append(media_discovery.PORT)
             android.shell("wm", "dismiss-keyguard")
-            for port in (fixture.PRIMARY, fixture.FOREIGN, media_discovery.PORT):
-                android.command("reverse", f"tcp:{port}", f"tcp:{port}")
+            for port in ports:
+                android.command("reverse", "--no-rebind", f"tcp:{port}", f"tcp:{port}")
                 stack.callback(android.command, "reverse", "--remove", f"tcp:{port}", check=False)
-            device_matrix(android, args.work, state, report, media_error)
+            device_matrix(android, args.work, state, report, media_error, frame_recheck=args.frame_recheck)
     except (CheckFailed, OSError, subprocess.SubprocessError) as error:
         report["setup_or_cleanup_error"] = compact(error)
     finally:
         emit_proof(report, args.work)
     statuses = [r["status"] for r in report["device"].values()]
     print("Device totals: " + ", ".join(f"{state}={statuses.count(state)}" for state in ("passed", "failed", "blocked", "not-run")))
-    return int(bool(media_error) or "failed" in statuses or "not-run" in statuses or "setup_or_cleanup_error" in report)
+    return int(bool(media_error) or "failed" in statuses or "not-run" in statuses
+               or (args.frame_recheck and "blocked" in statuses) or "setup_or_cleanup_error" in report)
 
 
 if __name__ == "__main__":

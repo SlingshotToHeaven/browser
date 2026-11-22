@@ -28,6 +28,7 @@ RECIPIENT_LABEL = "Fixture Receiver"
 PROBE = RECIPIENT + ".PROBE"
 AUTHORITY = PACKAGE + ".completed-downloads"
 SYSTEM_RESOLVERS = {"android", "com.android.intentresolver", "com.google.android.intentresolver"}
+CHOOSER_ACTIVITIES = {"ChooserActivity", "ChooserActivityLauncher"}
 MARKER = "files/download-upgrade.marker"
 MARKER_BYTES = b"Disposable v7 download-upgrade profile.\n"
 SHA = r"[a-f0-9]{64}"
@@ -354,13 +355,16 @@ def action(android, role, label):
 def apk_info(sdk, apk, expected):
     tools = sdk / "build-tools/34.0.0"
     badging = subprocess.check_output([tools / "aapt2", "dump", "badging", apk], text=True, timeout=30)
-    match = re.search(r"^package: name='([^']+)' versionCode='(\d+)'", badging, re.M)
+    match = re.search(r"^package: name='([^']+)' versionCode='(\d*)'", badging, re.M)
     require(match and match[1] == expected, f"Unexpected package in {apk.name}")
+    # AGP can omit the instrumentation manifest version. Keep numeric versions
+    # mandatory for the app/upgrade pair and the independently signed recipient.
+    require(match[2] or expected == PACKAGE + ".test", f"Missing versionCode for {expected}")
     certs = subprocess.check_output([tools / "apksigner", "verify", "--print-certs", apk], text=True, timeout=30)
     digests = re.findall(rf"^Signer #\d+ certificate SHA-256 digest: ({SHA})$", certs, re.M)
     require(len(digests) == 1, f"Expected one verified APK signer for {expected}")
     with apk.open("rb") as stream:
-        return {"version_code": int(match[2]), "apk_sha256": file_digest(stream, "sha256").hexdigest(), "signer": digests[0]}
+        return {"version_code": int(match[2] or "0"), "apk_sha256": file_digest(stream, "sha256").hexdigest(), "signer": digests[0]}
 
 
 def installed_apk_path(response, package):
@@ -526,10 +530,11 @@ def deliver(android, recipient, intent_action, selected):
 
     showing = until(dispatched, "Android resolver or recipient after Downloads action")
     package, activity = showing.split("/", 1)
+    activity = activity.rsplit(".", 1)[-1]
     if intent_action != "VIEW":
-        require(package in SYSTEM_RESOLVERS and activity.endswith("ChooserActivity"), f"No Android sharesheet: {showing}")
+        require(package in SYSTEM_RESOLVERS and activity in CHOOSER_ACTIVITIES, f"No Android sharesheet: {showing}")
     if package in SYSTEM_RESOLVERS:
-        require(activity.endswith(("ResolverActivity", "ChooserActivity")), f"Unexpected resolver activity: {showing}")
+        require(activity in CHOOSER_ACTIVITIES | {"ResolverActivity"}, f"Unexpected resolver activity: {showing}")
         select_picker(android, showing, view=intent_action == "VIEW")
     else:
         require(package == RECIPIENT, f"Open reached an unexpected app: {showing}")

@@ -7,6 +7,10 @@ if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hoste
   exit 1
 fi
 mode=${1:-launch}
+download_args=()
+if [[ "$mode" == download-batch && "${ANDROID_DOWNLOAD_SCOPE:-all}" == frame-recheck ]]; then
+  download_args+=(--frame-recheck)
+fi
 if [[ $# -gt 1 || "$mode" != launch && "$mode" != download-publication && "$mode" != download-upgrade && "$mode" != download-mid-copy && "$mode" != download-batch && "$mode" != browser-recovery && "$mode" != functional-followup && "$mode" != public-copy ]]; then
   echo 'Expected launch, download-publication, download-upgrade, download-mid-copy, download-batch, browser-recovery, functional-followup, or public-copy.' >&2
   exit 2
@@ -126,7 +130,7 @@ if [[ "$mode" == download-batch || "$mode" == browser-recovery || "$mode" == fun
 else
   build_debug "$root/source"
 fi
-if [[ "$mode" == download-batch ]]; then
+if [[ "$mode" == download-batch && ${#download_args[@]} == 0 ]]; then
   FFMPEG_TEST_BIN=$(batch_ffmpeg) || { FFMPEG_TEST_BIN=''; echo 'Host FFmpeg unavailable; record affected cases as blocked.'; }
   export FFMPEG_TEST_BIN
   (
@@ -205,7 +209,7 @@ if [[ "$mode" == download-batch ]]; then
   android install -t --user 0 "$test_apk"
   device_status=0
   python3 -B "$root/source/tools/check_android_download_batch.py" \
-    --adb "$adb" --work "$root" --apk "$apk" --test-apk "$test_apk" || device_status=$?
+    --adb "$adb" --work "$root" --apk "$apk" --test-apk "$test_apk" "${download_args[@]}" || device_status=$?
   (( device_status == 0 && host_status == 0 ))
   exit 0
 fi

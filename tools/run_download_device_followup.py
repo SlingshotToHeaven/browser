@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retry only the five unresolved device observations from the pinned Downloads lab run."""
+"""Retry named fixture observations on the pinned retained Downloads lab."""
 import argparse
 from hashlib import sha256
 import json
@@ -98,22 +98,23 @@ class RetainedPhone(lab.Phone):
 
 def run_cases(args, phone, report, save):
     results = report["cases"]
-    cuts = lab.publication_cases(args, phone)
-    for name in CUT_CASES:
-        if lab.record_case(results, save, name, cuts[name]) == "inconclusive":
-            return  # Keep the last fixture intact; do not clear a potentially held app.
+    if args.case is None:
+        cuts = lab.publication_cases(args, phone)
+        for name in CUT_CASES:
+            if lab.record_case(results, save, name, cuts[name]) == "inconclusive":
+                return  # Keep the last fixture intact; do not clear a potentially held app.
 
-    with lab.batch.fixture.servers() as (state, _), phone.reverse_ports(lab.batch.fixture.PRIMARY, lab.batch.fixture.FOREIGN):
-        for name, selector in BLOB_CASES.items():
+    fixture = lab.batch.fixture
+    selected = (args.case,) if args.case else BLOB_CASES
+    with fixture.servers() as (state, _), phone.reverse_ports(fixture.PRIMARY, fixture.FOREIGN):
+        for name in selected:
             def attempt(result):
                 phone.reset_candidate()
                 state.reset()
-                operator_tap = name == "blob-foreign-frame"
-                if operator_tap:
-                    print("On the phone, wait for Request frame blob, then tap that button once. Do not use an ADB tap.", flush=True)
-                result.update(lab.named(phone, selector, operator_tap=operator_tap))
+                result.update(lab.named(phone, BLOB_CASES[name]))
+                routes = {"/frames", "/foreign-frame", "/blob_download.html"} | fixture.FRAME_INPUT
                 result["requests"] = [{k: r[k] for k in ("path", "method", "code")}
-                                      for r in state.requests() if r["path"] in {"/frames", "/foreign-frame", "/blob_download.html"}][:12]
+                                      for r in state.requests() if r["path"] in routes][:12]
             if lab.record_case(results, save, name, attempt) != "passed":
                 return
 
@@ -124,6 +125,7 @@ def main():
     mode = cli.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check-only", action="store_true", help="inspect identities without device writes")
     mode.add_argument("--reset-confirmed-lab", action="store_true", help="owner authorizes resets of the verified synthetic lab only")
+    cli.add_argument("--case", choices=BLOB_CASES, help="run only this blob case; never re-run the publication cuts")
     cli.add_argument("--serial", required=True)
     for name in ("sdk", "prior-lab-json", "test-apk", "work"):
         cli.add_argument("--" + name, type=lambda p: Path(p).expanduser().resolve(), required=True)
@@ -135,9 +137,10 @@ def main():
             and re.fullmatch(r"[0-9a-f]{64}", args.zip_sha256)):
         cli.error("Confirm the spare device and provide the exact follow-up source identity")
     args.work.mkdir()
+    cases = (args.case,) if args.case else CASES
     report = {"source_commit": args.source_commit, "source_tree": args.source_tree, "zip_sha256": args.zip_sha256,
               "app_source_commit": PRIOR_SOURCE, "prior_report_sha256": PRIOR_SHA256,
-              "mode": "check-only" if args.check_only else "focused", "cases": {name: {"status": "not-run"} for name in CASES}}
+              "mode": "check-only" if args.check_only else "focused", "cases": {name: {"status": "not-run"} for name in cases}}
     path = args.work / "download-device-followup.json"
 
     def save():
@@ -153,7 +156,7 @@ def main():
         require(test_info["signer"] == prior["apks"]["candidate"]["signer"]
                 and test_info["apk_sha256"] != prior["apks"]["test"]["apk_sha256"],
                 "Need newly built follow-up instrumentation with the previous debug signer")
-        if not args.check_only:
+        if not args.check_only and args.case is None:
             require(os.environ.get("JAVA_HOME"), "Set JAVA_HOME to the lab JDK 17")
             jdi = args.work / "jdi"
             jdi.mkdir()

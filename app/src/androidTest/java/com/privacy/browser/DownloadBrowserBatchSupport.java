@@ -23,14 +23,16 @@ import static org.junit.Assert.*;
 
 /** Coordinates Android UI and the real committed WebView on a synthetic fixture. */
 public abstract class DownloadBrowserBatchSupport extends DownloadBatchSupport {
-    protected void open(String path) throws Exception {
+    protected void open(String path) throws Exception { openUrl(BASE + path); }
+
+    protected void openUrl(String url) throws Exception {
         UiAutomation automation = ins.getUiAutomation();
         AccessibilityServiceInfo service = automation.getServiceInfo();
         service.flags |= AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
         automation.setServiceInfo(service);
         activity = ins.startActivitySync(new Intent(app, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra(MainActivity.EXTRA_LOAD_URL, BASE + path).putExtra(MainActivity.EXTRA_OPEN_IN_NEW_TAB, true));
-        waitFor("focused committed fixture page " + path, () -> ui(() -> ready(path) && activity.hasWindowFocus()));
+                .putExtra(MainActivity.EXTRA_LOAD_URL, url).putExtra(MainActivity.EXTRA_OPEN_IN_NEW_TAB, true));
+        waitFor("focused committed fixture page " + url, () -> ui(() -> readyUrl(url) && activity.hasWindowFocus()));
     }
 
     protected void navigate(String path) throws Exception {
@@ -39,9 +41,11 @@ public abstract class DownloadBrowserBatchSupport extends DownloadBatchSupport {
         waitFor("new committed fixture page " + path, () -> ui(() -> ready(path) && selected().navigation.page() != previous));
     }
 
-    protected boolean ready(String path) throws Exception {
+    protected boolean ready(String path) throws Exception { return readyUrl(BASE + path); }
+
+    private boolean readyUrl(String url) throws Exception {
         TabModel tab = selected();
-        return tab != null && tab.navigation.ready() && tab.navigation.finished() && (BASE + path).equals(tab.getUrl());
+        return tab != null && tab.navigation.ready() && tab.navigation.finished() && url.equals(tab.getUrl());
     }
 
     protected TabsManager tabs() throws Exception { return activityField("tabsManager", TabsManager.class); }

@@ -4,10 +4,11 @@ from hashlib import sha256
 from http.client import HTTPConnection, IncompleteRead
 import json
 from pathlib import Path
+from subprocess import CompletedProcess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "tools"), str(ROOT / "tests" / "fixtures")]
@@ -55,6 +56,37 @@ class BatchEvidenceTest(unittest.TestCase):
                 test_methods.remove(batch.STAGE.split("#")[1])
             self.assertEqual(test_methods, set(entries.values()), cls)
 
+    def test_frame_recheck_is_three_selectors_and_restores_display_even_on_a_test_failure(self):
+        original = {"size": "1080x1920", "density": "420"}
+        overrides, invocations = {}, []
+        def shell(*args, **_):
+            if args[0] == "wm":
+                kind, value = args[1:]
+                if value == "reset":
+                    overrides.pop(kind, None)
+                else:
+                    overrides[kind] = value
+                return
+            assert args[:2] == ("am", "instrument"), args
+            invocations.append((args[args.index("class") + 1], dict(overrides)))
+            return CompletedProcess(args, 0, b"result", b"")
+        def text(wm, kind):
+            assert wm == "wm"
+            return f"Physical {kind}: {original[kind]}" + (f"\nOverride {kind}: {overrides[kind]}" if kind in overrides else "")
+        with TemporaryDirectory() as tmp, patch.object(batch, "reset_profile") as reset, \
+             patch.object(batch, "parse_instrumentation", side_effect=[{"status": x} for x in ("passed", "failed", "passed")]):
+            work=Path(tmp); (work / "proof").mkdir()
+            report={"device": {}}
+            batch.device_matrix(Mock(shell=Mock(side_effect=shell), text=Mock(side_effect=text)), work,
+                                Mock(requests=Mock(return_value=[])), report, None, frame_recheck=True)
+            self.assertEqual(list(report["device"]), list(batch.FRAME_RECHECK))
+            self.assertEqual(reset.call_count, 3)
+            self.assertEqual(report["frame_display"], {"size": "1080x2340", "verified_densities": [320, 560], "restored": True})
+            self.assertEqual(overrides, {})
+            self.assertEqual([name.rsplit("#",1)[1] for name,_ in invocations], [
+                "crossingOriginDuringBlobReadDrainsBeforeNewOffer", *(["crossOriginFrameCannotUseTheMainPageBlobIntake"] * 2)])
+            self.assertEqual([d.get("density") for _,d in invocations], [None, "320", "560"])
+
     def test_jvm_summary_counts_skips_separately(self):
         with TemporaryDirectory() as tmp, patch.dict("os.environ", {"GITHUB_SHA": "0" * 40, "FFMPEG_TEST_BIN": ""}):
             root = Path(tmp)
@@ -92,6 +124,25 @@ class BatchFixtureTest(unittest.TestCase):
             conn.request(method, route, headers=headers or {})
             with conn.getresponse() as response:
                 return response.status, dict(response.getheaders()), response.read()
+
+    def test_frame_serves_a_visible_attachment_and_witness_routes_on_the_child_origin(self):
+        code, _, page = self.call("/frames")
+        self.assertEqual(code, 200)
+        self.assertIn(f'id="foreign-blob" title="Foreign fixture attachment" src="http://127.0.0.1:{self.foreign}/foreign-frame"'.encode(), page)
+        self.assertIn(b'e.source === frame.contentWindow', page)
+        self.assertLess(page.index(b"addEventListener"), page.index(b"<iframe"))
+        code, _, child = self.call("/foreign-frame", self.foreign)
+        self.assertEqual(code, 200)
+        self.assertIn(b'<a id="offer" download="foreign.bin">', child)
+        self.assertIn(b"e.isTrusted && e.pointerType === 'touch'", child)
+        self.assertNotIn(b".click()", child)
+        for port in (self.primary, self.foreign):
+            self.assertEqual(self.call("/favicon.ico", port)[0], 200)
+        for path in fixture.FRAME_INPUT:
+            self.assertEqual(self.call(path)[0], 404)
+            self.assertEqual(self.call(path, self.foreign)[0], 204)
+            self.assertEqual(self.call(path + "?spoof=1", self.foreign)[0], 404)
+            self.assertEqual([(r["method"], r["code"]) for r in self.state.requests(path)], [("GET", 204)])
 
     def test_probe_exact_suffix_and_wrong_validator(self):
         path = "/range/run.bin"

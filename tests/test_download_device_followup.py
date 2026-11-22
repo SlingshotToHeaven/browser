@@ -1,9 +1,11 @@
 """Fail closed on the wrong retained lab, without contacting ADB."""
+from contextlib import nullcontext
 from hashlib import sha256
 from pathlib import Path
 from subprocess import CompletedProcess
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -116,6 +118,22 @@ class RetainedLabTest(unittest.TestCase):
     def test_bad_receipt_never_supplies_a_retained_build(self):
         with self.assertRaisesRegex(RuntimeError, "does not match the returned evidence"):
             followup.prior_report(self.path)
+
+
+class SelectedBlobTest(unittest.TestCase):
+    def test_each_blob_case_runs_independently_without_cut_or_operator_wait(self):
+        for name, selector in followup.BLOB_CASES.items():
+            with self.subTest(name=name), patch.object(lab, "publication_cases") as cuts, \
+                 patch.object(lab, "named", return_value={"status": "passed"}) as named:
+                state = Mock(requests=Mock(return_value=[]))
+                phone = Mock(reverse_ports=Mock(return_value=nullcontext()))
+                report = {"cases": {name: {"status": "not-run"}}}
+                with patch.object(lab.batch.fixture, "servers", return_value=nullcontext((state, None))):
+                    followup.run_cases(SimpleNamespace(case=name), phone, report, Mock())
+                cuts.assert_not_called()
+                phone.reset_candidate.assert_called_once_with()
+                named.assert_called_once_with(phone, selector)
+                self.assertEqual({k: v["status"] for k,v in report["cases"].items()}, {name: "passed"})
 
 
 class DebuggerCleanupTest(unittest.TestCase):
