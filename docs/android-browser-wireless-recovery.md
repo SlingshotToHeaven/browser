@@ -1,5 +1,7 @@
 # Browser, privacy and rules — held navigation and Cancel
 
+**Returned and reconciled; do not repeat.** The [old-page controls handoff](android-browser-wireless-retirement.md) covers separate checks.
+
 The first wireless UI return passed same-address history, redirect/reload, ordinary/child bridge absence and all four private-entry refusals. **Do not repeat those cases.** This follow-up is only WV-01 background commit and pending-load recovery, plus PR-01 cancellation (not clearing). Downloads stays out of this pass.
 
 ## One guarded session
