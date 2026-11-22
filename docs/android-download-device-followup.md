@@ -1,5 +1,7 @@
 # Downloads: focused follow-up on the retained spare phone
 
+**Historical phone procedure.** Phone testing is stopped for the current DL-01–DL-06 continuation. Use the [emulator-only handoff](android-download-emulator-resume.md); do not execute this runbook on the retained phone.
+
 This handoff covers **two independently selected blob cases** on the retained `4a90876` browser. It replaces only the instrumented tests. The three physical publication-cut tests from `b456f26` remain available unchanged, but are **not part of this retest**. Do not rerun the full batch, upgrade, or native mux automation. Use the commit-pinned GitHub source ZIP identified in the handoff.
 
 ## 1. Build only the new test APK and check the retained lab
