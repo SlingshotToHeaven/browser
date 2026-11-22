@@ -26,7 +26,7 @@ class DeviceBoundaryTest(unittest.TestCase):
         if args[:2] == ("pm", "path"):
             return "package:/data/app/~~ABC/com.browser-DEF/base.apk"
         if args[:3] == ("run-as", lab.PACKAGE, "sha256sum"):
-            return "a" * 64 if self.phone.invoke.call_count == 1 else "b" * 64
+            return ("a" if self.phone.invoke.call_count == 1 else "b") * 64 + "  " + args[-1]
         if args[:2] == ("pm", "clear"):
             return "Success"
         raise AssertionError(args)
@@ -56,7 +56,7 @@ class DeviceBoundaryTest(unittest.TestCase):
     def test_reset_refuses_an_apk_that_no_longer_matches(self):
         self.phone.installed_here[lab.PACKAGE] = self.candidate
         self.phone.text.side_effect = lambda *args: ("package:/data/app/~~ABC/com.browser-DEF/base.apk"
-                                                     if args[:2] == ("pm", "path") else "wrong hash")
+                                                     if args[:2] == ("pm", "path") else "c" * 64 + "  " + args[-1])
         with self.assertRaisesRegex(RuntimeError, "hash changed"):
             self.phone.reset_candidate()
         self.assertFalse(any(cmd.args[:2] == ("pm", "clear") for cmd in self.phone.text.call_args_list))

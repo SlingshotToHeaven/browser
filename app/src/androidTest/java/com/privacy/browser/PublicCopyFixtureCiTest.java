@@ -2,6 +2,8 @@ package com.privacy.browser;
 
 import android.os.Environment;
 
+import androidx.test.platform.app.InstrumentationRegistry;
+
 import com.privacy.browser.downloads.DownloadDeviceLab;
 import com.privacy.downloader.db.DownloadDbHelper;
 import com.privacy.downloader.engine.DownloadEngine;
@@ -36,8 +38,14 @@ public final class PublicCopyFixtureCiTest extends BrowserRecoveryCiSupport {
     }
 
     @Test public void preparePublicDownloadsFixture() throws Exception {
-        Path folder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).toPath().resolve(FOLDER);
-        assertEquals("/storage/emulated/0/Download/" + FOLDER, folder.toString());
+        String name = FOLDER;
+        if (DownloadDeviceLab.requested()) {
+            String token = InstrumentationRegistry.getArguments().getString("download_lab_token", "");
+            assertTrue(token.matches("[0-9a-f]{32}"));
+            name += "-" + token;
+        }
+        Path folder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).toPath().resolve(name);
+        assertEquals("/storage/emulated/0/Download/" + name, folder.toString());
         Path probe = folder.resolve("storage-probe.part"), neighbor = folder.resolve("unrelated.bin");
         assertFalse("Do not reuse an existing shared folder", Files.exists(folder, java.nio.file.LinkOption.NOFOLLOW_LINKS));
         try {

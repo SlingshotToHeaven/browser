@@ -145,6 +145,20 @@ class Emulator:
         require(result.returncode == 0 and pid.isdigit(), "Expected at most one browser process on the emulator")
         return pid
 
+    def publication_launcher(self, pid):
+        require(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted",
+                "Only attach to the disposable CI emulator")
+        self.verify_target()
+        require(pid == self.pid(), "The emulator publication process changed")
+        return (), None
+
+    def stop_publication_target(self, pid):
+        observed = self.pid()
+        require(observed in {None, pid}, "The publication process changed; refusing to stop it")
+        if observed is not None:
+            self.shell("am", "force-stop", PACKAGE)
+        until(lambda: self.pid() is None, "publication process stopped", seconds=10)
+
     def start(self, activity, *, reset_activity=False):
         # CLEAR_TOP with a standard Activity recreates its UI, not the app profile.
         flags = ("--activity-clear-top",) if reset_activity else ()
@@ -334,23 +348,35 @@ def ready_to_enqueue(android, directory, url, name=NAME):
 
 @contextmanager
 def debugger(android, work, pid, *cut_args):
-    port = android.command("forward", "tcp:0", f"jdwp:{pid}").stdout.decode().strip()
-    require(port.isdigit(), "Could not create local ADB debugger forward")
-    transcript = work / "debugger.log"
+    launch, env = android.publication_launcher(pid)
     java = str(Path(os.environ["JAVA_HOME"]) / "bin" / "java")
-    with transcript.open("wb") as log:
-        dbg = subprocess.Popen([java, "--add-modules", "jdk.jdi", "-cp", str(work / "jdi"),
-                                "PublicationPause", port, *map(str, cut_args)],
-                               stdin=subprocess.DEVNULL, stdout=log, stderr=log)
-        try:
+    port = android.command("forward", "--no-rebind", "tcp:0", f"jdwp:{pid}").stdout.decode().strip()
+    require(re.fullmatch(r"[1-9]\d{3,4}", port) and 1024 <= int(port) <= 65535, "Could not create local ADB debugger forward")
+    endpoint = f"tcp:{port}"
+    transcript = work / "debugger.log"
+    dbg = None
+    try:
+        with transcript.open("wb") as log:
+            dbg = subprocess.Popen([java, "--add-modules", "jdk.jdi", "-cp", str(work / "jdi"),
+                                    "PublicationPause", *launch, port, *map(str, cut_args)], env=env,
+                                   stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             yield dbg, transcript
-        finally:
-            if dbg.poll() is None:
-                # A failed assertion must not release a suspended publication in a still-live app.
-                android.shell("am", "force-stop", PACKAGE, check=False)
+    finally:
+        if dbg is not None and dbg.poll() is None:
+            # If we cannot positively stop our own target, do not detach and
+            # resume a possibly suspended publication. Stop the test batch.
+            android.stop_publication_target(pid)
+            try:
+                dbg.wait(timeout=5)
+            except subprocess.TimeoutExpired:
                 dbg.terminate()
                 dbg.wait(timeout=5)
-            android.command("forward", "--remove", f"tcp:{port}")
+        forwards = android.command("forward", "--list").stdout.decode().splitlines()
+        serial = getattr(android, "serial", SERIAL)
+        mounted = [line.split() for line in forwards if endpoint in line.split()[1:2]]
+        if mounted:
+            require(mounted == [[serial, endpoint, f"jdwp:{pid}"]], "Local debugger forward changed; refusing to remove it")
+            android.command("forward", "--remove", endpoint)
 
 
 def wait_marker(dbg, transcript, marker, seconds=30):
@@ -395,8 +421,7 @@ def run_case(android, work, server, report):
             require(server.requests == INITIAL_REQUESTS, "Unexpected requests before the cut")
             report["phase"] = "force-stop and verify uncommitted state before relaunch"
             require(dbg.poll() is None and android.pid() == old_pid, "Held process disappeared before the cut")
-            android.shell("am", "force-stop", PACKAGE)
-            until(lambda: android.pid() is None, "force-stopped browser process", seconds=10)
+            android.stop_publication_target(old_pid)
             wait_marker(dbg, transcript, "DISCONNECTED_AFTER_HOLD", seconds=10)
             require(dbg.wait(timeout=5) == 0, "Debugger did not confirm process disconnect")
         require(snapshot(android, work) == (before, segments), "SQLite state changed across the stop before relaunch")

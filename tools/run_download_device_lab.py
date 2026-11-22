@@ -44,6 +44,7 @@ class Phone(public.PublicObserver):
         self.serial, self.allowed, self.candidate = serial, allowed, candidate
         self.installed_here, self.reverses = {}, set()
         self.token = uuid4().hex
+        self.profile_token = None
         self.dump_path = f"/data/local/tmp/arena-download-{self.token}.xml"
 
     def invoke(self, args, data=None, check=True, timeout=15):
@@ -62,11 +63,46 @@ class Phone(public.PublicObserver):
         publication.require(self.command("get-state").stdout.strip() == b"device"
                             and self.text("am", "get-current-user") == "0", "The selected owner device is not ready")
 
+    def installed_hash(self, package):
+        path = upgrade.installed_apk_path(self.text("pm", "path", "--user", "0", package), package)
+        words = self.text("run-as", package, "sha256sum", path).split()
+        publication.require(len(words) == 2 and words[1] == path and re.fullmatch(r"[0-9a-f]{64}", words[0]),
+                            f"Could not identify installed {package}")
+        return words[0]
+
     def verify_installed(self, package, apk):
         publication.require(self.installed_here.get(package) == apk, f"{package} was not installed by this run")
-        path = upgrade.installed_apk_path(self.text("pm", "path", "--user", "0", package), package)
-        actual = self.text("run-as", package, "sha256sum", path).split()
-        publication.require(actual and actual[0] == self.allowed[apk][1], f"Installed {package} hash changed")
+        publication.require(self.installed_hash(package) == self.allowed[apk][1], f"Installed {package} hash changed")
+
+    def read_profile_token(self):
+        self.app("test", "-f", MARKER)
+        self.app("test", "!", "-L", MARKER)
+        token = self.app("cat", MARKER).decode("ascii")
+        publication.require(re.fullmatch(r"[0-9a-f]{32}", token), "Missing private Downloads fixture marker")
+        return token
+
+    def verify_candidate(self):
+        self.verify_target()
+        self.verify_installed(PACKAGE, self.candidate)
+        if self.profile_token is not None:
+            publication.require(self.read_profile_token() == self.profile_token, "Downloads fixture marker changed")
+        return self.allowed[self.candidate][1]
+
+    def publication_launcher(self, pid):
+        publication.require(not any(key in os.environ for key in ("ADB_SERVER_SOCKET", "ANDROID_ADB_SERVER_ADDRESS")),
+                            "Physical publication cuts require the default local ADB server")
+        mux.physical_identity(self)
+        digest = self.verify_candidate()
+        publication.require(self.profile_token == self.token and re.fullmatch(r"[1-9][0-9]{0,8}", pid or "") and pid == self.pid(),
+                            "Publication cut requires the current run's fresh profile and exact process")
+        return ("--arm64-download-lab", self.adb, self.serial, pid, digest), dict(os.environ, BROWSER_DOWNLOAD_LAB_TOKEN=self.token)
+
+    def stop_publication_target(self, pid):
+        self.verify_candidate()
+        super().stop_publication_target(pid)
+
+    def public_scope(self):
+        return copy.shared_fixture(self.token)
 
     def command(self, *args, data=None, check=True, timeout=15):
         if args[0] == "install":
@@ -85,9 +121,7 @@ class Phone(public.PublicObserver):
             flags = ("-r",) if replace else ("--no-replace",)
             result = self.invoke(("install", *flags, "-t", "--user", "0", str(apk)), timeout=timeout)
             publication.require(b"Success" in result.stdout.splitlines(), f"PackageManager did not install {package}")
-            path = upgrade.installed_apk_path(self.text("pm", "path", "--user", "0", package), package)
-            actual = self.text("run-as", package, "sha256sum", path).split()
-            publication.require(actual and actual[0] == expected, f"Installed {package} bytes did not match")
+            publication.require(self.installed_hash(package) == expected, f"Installed {package} bytes did not match")
             self.installed_here[package] = apk
             return result
         if args[0] == "reverse":
@@ -106,13 +140,13 @@ class Phone(public.PublicObserver):
         return self.invoke(args, data=data, check=check, timeout=timeout)
 
     def reset_candidate(self):
-        self.verify_target()
-        self.verify_installed(PACKAGE, self.candidate)
+        self.verify_candidate()
         publication.require(self.text("pm", "clear", "--user", "0", PACKAGE) == "Success" and self.pid() is None,
-                            "Could not clear this run's own synthetic profile")
-        self.shell("pm", "grant", "--user", "0", PACKAGE, "android.permission.POST_NOTIFICATIONS")
+                            "Could not clear the verified synthetic profile")
         self.app("mkdir", "-p", "files")
         self.write_new(MARKER, self.token.encode("ascii"))
+        self.profile_token = self.token
+        self.shell("pm", "grant", "--user", "0", PACKAGE, "android.permission.POST_NOTIFICATIONS")
 
     def hierarchy(self):
         raw = self.shell("uiautomator", "dump", "--compressed", self.dump_path, check=False)
@@ -123,9 +157,13 @@ class Phone(public.PublicObserver):
         except ET.ParseError:
             return None
 
-    def instrument(self, selector):
+    def instrument(self, selector, *, operator_tap=False):
+        extras = ()
+        if operator_tap:
+            publication.require(selector == SELECTED["blob-foreign-frame"], "Operator tap is only for the foreign frame test")
+            extras = ("-e", "download_lab_operator_tap", "true")
         return ("am", "instrument", "--user", "0", "-w", "-r", "-e", "download_batch", MODE,
-                "-e", "download_lab_token", self.token, "-e", "class", selector, batch.RUNNER)
+                "-e", "download_lab_token", self.token, "-e", "class", selector, *extras, batch.RUNNER)
 
     @contextmanager
     def reverse_ports(self, *ports):
@@ -141,8 +179,9 @@ class Phone(public.PublicObserver):
                 self.command("reverse", "--remove", end, check=False)
 
 
-def named(phone, selector):
-    result = phone.shell(*phone.instrument(selector), timeout=batch.CASE_TIME, check=False)
+def named(phone, selector, *, operator_tap=False):
+    result = phone.shell(*phone.instrument(selector, operator_tap=operator_tap),
+                         timeout=100 if operator_tap else batch.CASE_TIME, check=False)
     parsed = batch.parse_instrumentation((result.stdout + result.stderr).decode(errors="replace"), selector)
     if parsed["status"] == "not-run" or result.returncode and parsed["status"] == "passed":
         parsed.update(status="runner-error", detail="No trustworthy completed Android test")
@@ -172,33 +211,21 @@ def preflight(args):
     return phone, identities, device
 
 
-def run(args, phone, report, assets, save):
-    results = report["cases"]
+def record_case(results, save, name, action):
+    result = results[name]
+    started = time.monotonic()
+    try:
+        action(result)
+    except ERRORS as error:
+        result.update(status="inconclusive", detail=batch.compact(error))
+    finally:
+        result["seconds"] = round(time.monotonic() - started, 1)
+        print(f"{name}: {result['status']} ({result['seconds']}s)", flush=True)
+        save()
+    return result["status"]
 
-    def record(name, action):
-        result = results[name]
-        started = time.monotonic()
-        try:
-            action(result)
-        except ERRORS as error:
-            result.update(status="inconclusive", detail=batch.compact(error))
-        finally:
-            result["seconds"] = round(time.monotonic() - started, 1)
-            print(f"{name}: {result['status']} ({result['seconds']}s)", flush=True)
-            save()
-        return result["status"]
 
-    def installed_upgrade(result):
-        with upgrade.fixture() as server, phone.reverse_ports(server.server_port):
-            builds = report["apks"]
-            opts = SimpleNamespace(work=args.work, baseline=args.baseline, candidate=args.apk, recipient=args.recipient)
-            upgrade.run_case(phone, opts, server, result, builds["baseline"], builds["candidate"], builds["recipient"])
-            result.update(status="passed", http=server.events())
-
-    if record("installed-upgrade-and-chooser", installed_upgrade) != "passed":
-        return  # Preserve the exact profile for diagnosis; no resetting after an uncertain upgrade.
-    mux.install_once(phone, args.test_apk, TEST)
-
+def publication_cases(args, phone):
     def cut_work(name):
         work = args.work / name
         work.mkdir()
@@ -226,9 +253,33 @@ def run(args, phone, report, assets, save):
         public.check(phone, cut_work("public-copy"), result, instrument=phone.instrument)
         result["status"] = "passed" if result["result"] == "pass" else "blocked"
 
-    record("storage-precommit", precommit)
-    record("storage-private-copy-or-link", private_copy)
-    record("storage-public-copy", public_copy)
+    return {
+        "storage-precommit": precommit,
+        "storage-private-copy-or-link": private_copy,
+        "storage-public-copy": public_copy,
+    }
+
+
+def run(args, phone, report, assets, save):
+    results = report["cases"]
+
+    def record(name, action):
+        return record_case(results, save, name, action)
+
+    def installed_upgrade(result):
+        with upgrade.fixture() as server, phone.reverse_ports(server.server_port):
+            builds = report["apks"]
+            opts = SimpleNamespace(work=args.work, baseline=args.baseline, candidate=args.apk, recipient=args.recipient)
+            upgrade.run_case(phone, opts, server, result, builds["baseline"], builds["candidate"], builds["recipient"])
+            result.update(status="passed", http=server.events())
+
+    if record("installed-upgrade-and-chooser", installed_upgrade) != "passed":
+        return  # Preserve the exact profile for diagnosis; no resetting after an uncertain upgrade.
+    mux.install_once(phone, args.test_apk, TEST)
+
+    for name, action in publication_cases(args, phone).items():
+        if record(name, action) == "inconclusive":
+            return  # Preserve a failed cut; never reset a possibly suspended worker.
 
     with batch.fixture.servers(assets) as (state, _), phone.reverse_ports(batch.fixture.PRIMARY, batch.fixture.FOREIGN):
         def device_method(result, name, selector):

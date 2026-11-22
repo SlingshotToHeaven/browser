@@ -10,7 +10,12 @@ import com.sun.jdi.event.EventSet;
 import com.sun.jdi.event.VMDisconnectEvent;
 import com.sun.jdi.request.EventRequest;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /** Host-only debugger for the real copy loop and pre-commit publication boundary. */
 public final class PublicationPause {
@@ -23,8 +28,15 @@ public final class PublicationPause {
     private static final Boundary PRE_COMMIT = new Boundary(TASK, "persistPublication",
             "(Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;JLjava/lang/String;)V", 0, 1, "HELD_BEFORE_DB_WRITE");
 
+    private static final String PACKAGE = "com.browser";
+    private static final String TOKEN_ENV = "BROWSER_DOWNLOAD_LAB_TOKEN";
+
     public static void main(String[] args) throws Exception {
-        if (!"true".equals(System.getenv("GITHUB_ACTIONS"))
+        if (args.length > 0 && "--arm64-download-lab".equals(args[0])) {
+            if (args.length != 6 && args.length != 8) throw new IllegalArgumentException("Invalid physical publication target");
+            verifyPhysicalLab(args[1], args[2], args[3], args[4], args[5]);
+            args = Arrays.copyOfRange(args, 5, args.length);
+        } else if (!"true".equals(System.getenv("GITHUB_ACTIONS"))
                 || !"github-hosted".equals(System.getenv("RUNNER_ENVIRONMENT"))) {
             throw new IllegalStateException("Only attach to the disposable CI emulator");
         }
@@ -94,6 +106,65 @@ public final class PublicationPause {
         } catch (VMDisconnectedException disconnected) {
             if (!held) throw disconnected;
             System.out.println("DISCONNECTED_AFTER_HOLD");
+        }
+    }
+
+    private static void verifyPhysicalLab(String adb, String serial, String pid, String apkHash, String port) throws Exception {
+        if (System.getenv("ADB_SERVER_SOCKET") != null || System.getenv("ANDROID_ADB_SERVER_ADDRESS") != null) {
+            throw new IllegalStateException("Physical publication cuts require the default local ADB server");
+        }
+        String token = System.getenv(TOKEN_ENV);
+        if (token == null || !token.matches("[0-9a-f]{32}") || !serial.matches("[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}")
+                || serial.startsWith("emulator-") || !pid.matches("[1-9][0-9]{0,8}") || !apkHash.matches("[0-9a-f]{64}")
+                || !port.matches("[1-9][0-9]{3,4}") || Integer.parseInt(port) < 1024 || Integer.parseInt(port) > 65535) {
+            throw new IllegalStateException("Missing bounded physical-lab identity");
+        }
+        if (!"device".equals(adbText(adb, serial, "get-state"))
+                || !"0".equals(adbText(adb, serial, "shell", "am", "get-current-user"))
+                || !"arm64-v8a".equals(adbText(adb, serial, "shell", "getprop", "ro.product.cpu.abi"))
+                || Integer.parseInt(adbText(adb, serial, "shell", "getprop", "ro.build.version.sdk")) < 34
+                || !physical(adbText(adb, serial, "shell", "getprop", "ro.kernel.qemu"))
+                || !physical(adbText(adb, serial, "shell", "getprop", "ro.boot.qemu"))) {
+            throw new IllegalStateException("Physical publication cuts require the selected owner ARM64 lab device");
+        }
+        String path = adbText(adb, serial, "shell", "pm", "path", "--user", "0", PACKAGE);
+        if (!path.matches("package:/data/app/~~[A-Za-z0-9_-]+={0,2}/com[.]browser-[A-Za-z0-9_-]+={0,2}/base[.]apk")) {
+            throw new IllegalStateException("Not the single installed lab APK");
+        }
+        String apk = path.substring("package:".length());
+        String digest = adbText(adb, serial, "shell", "run-as", PACKAGE, "sha256sum", apk).split("\\s+", 2)[0];
+        String marker = adbText(adb, serial, "shell", "run-as", PACKAGE, "cat", "files/download-device-lab.token");
+        String uid = adbText(adb, serial, "shell", "run-as", PACKAGE, "id", "-u");
+        String process = adbText(adb, serial, "shell", "ps", "-p", pid, "-o", "PID,UID,NAME");
+        if (!apkHash.equals(digest) || !token.equals(marker) || !uid.matches("[1-9][0-9]{4,5}")
+                || !pid.equals(adbText(adb, serial, "shell", "pidof", PACKAGE))
+                || process.lines().filter(line -> line.strip().replaceAll("\\s+", " ").equals(pid + " " + uid + " " + PACKAGE)).count() != 1) {
+            throw new IllegalStateException("Installed APK, lab marker or debuggable process did not match");
+        }
+        String forward = serial + " tcp:" + port + " jdwp:" + pid;
+        if (adbText(adb, serial, "forward", "--list").lines().filter(forward::equals).count() != 1) {
+            throw new IllegalStateException("No matching local forward to the verified lab PID");
+        }
+    }
+
+    private static boolean physical(String qemu) {
+        return qemu.isEmpty() || "0".equals(qemu);
+    }
+
+    private static String adbText(String adb, String serial, String... args) throws Exception {
+        var cmd = new ArrayList<>(List.of(adb, "-s", serial));
+        cmd.addAll(List.of(args));
+        Process process = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+        try {
+            process.getOutputStream().close();
+            if (!process.waitFor(8, TimeUnit.SECONDS) || process.exitValue() != 0) {
+                throw new IOException("Could not verify the exact physical lab target");
+            }
+            byte[] output = process.getInputStream().readNBytes(16385);
+            if (output.length > 16384) throw new IOException("Unexpected lab identity output");
+            return new String(output, StandardCharsets.US_ASCII).strip();
+        } finally {
+            if (process.isAlive()) process.destroyForcibly();
         }
     }
 

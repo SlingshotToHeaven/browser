@@ -60,7 +60,7 @@ class Device:
         return self.shell(*words).stdout.decode().strip()
 
 
-def verify_device(android):
+def physical_identity(android):
     require(android.command("get-state").stdout.strip() == b"device", "ADB device is not ready")
     require(android.text("am", "get-current-user") == "0", "Use the disposable device's owner profile (user 0)")
     require(all(android.text("getprop", key) in {"", "0"} for key in ("ro.kernel.qemu", "ro.boot.qemu")), "Emulators are excluded")
@@ -69,12 +69,17 @@ def verify_device(android):
     require(abi == "arm64-v8a" and api >= 34, "Requires primary arm64-v8a ABI and Android 14 or newer")
     page = int(android.text("getconf", "PAGE_SIZE"))
     require(page > 0 and (page & (page - 1)) == 0, "Could not identify device page size")
+    return {"model": android.text("getprop", "ro.product.model"), "android": android.text("getprop", "ro.build.version.release"),
+            "api": api, "abi": abi, "page_bytes": page}
+
+
+def verify_device(android):
+    identity = physical_identity(android)
     # -u includes packages uninstalled for this user but still known to the device.
     known = set(android.text("pm", "list", "packages", "-u", "--user", "0", PACKAGE).splitlines())
     require(known.isdisjoint({f"package:{PACKAGE}", f"package:{TEST_PACKAGE}"}),
             "An existing com.browser app or test package was found. Do not reset it; use a clean lab device/profile.")
-    return {"model": android.text("getprop", "ro.product.model"), "android": android.text("getprop", "ro.build.version.release"),
-            "api": api, "abi": abi, "page_bytes": page}
+    return identity
 
 
 def apk_badging(aapt2, apk, package):

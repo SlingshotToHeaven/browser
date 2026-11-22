@@ -5,8 +5,10 @@ import android.os.SystemClock;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.webkit.WebView;
 
+import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.webkit.WebViewFeature;
 
+import com.privacy.browser.downloads.DownloadDeviceLab;
 import com.privacy.downloader.model.DownloadItem;
 import com.privacy.downloader.model.DownloadStatus;
 
@@ -181,16 +183,53 @@ public class DownloadWebViewBatchTest extends DownloadBrowserBatchSupport {
             return null;
         });
         assertTrue("Foreign frame not ready to draw", rendered.await(6, TimeUnit.SECONDS));
-        AccessibilityNodeInfo button = node(null, "Request frame blob");
-        if (button != null) tapBounds(button, false);
-        else tapDom("document.querySelector('iframe')", false);
-        waitFor("trusted pointer reached the foreign fixture frame", 4000, () -> Boolean.TRUE.equals(js("!!window.fixtureFramePointer")));
+        boolean operatorTap = DownloadDeviceLab.requested() && "true".equals(
+                InstrumentationRegistry.getArguments().getString("download_lab_operator_tap"));
+        if (!operatorTap) {
+            AccessibilityNodeInfo button = node(null, "Request frame blob");
+            if (button != null) tapBounds(button, false);
+            else tapDom("document.querySelector('iframe')", false);
+        }
+        // On the spare phone use the operator's actual touch, not the suspect
+        // Android display-coordinate conversion. Both modes require the same
+        // iframe's trusted pointer AND click before testing the refusal.
+        waitFor("trusted pointer reached the foreign fixture frame", operatorTap ? 50000 : 4000,
+                () -> Boolean.TRUE.equals(js("!!window.fixtureFramePointer")));
         waitFor("trusted click attempted a foreign frame download", 5000, () -> Boolean.TRUE.equals(js("!!window.fixtureFrameTapped")));
         SystemClock.sleep(700);
         assertNull(node("prompt_btn_download", null));
         assertEquals(count, db.countDownloads());
         assertEquals(0, directory.toFile().list().length);
         evidence("trusted foreign-frame click observed by the fixture; no prompt, row, or output");
+    }
+
+    @Test public void crossingOriginDuringBlobReadDrainsBeforeNewOffer() throws Exception {
+        blob("stall");
+        String old = acceptBlob("old-origin-blob.bin");
+        firstBlobChunk();
+        TabModel source = ui(this::selected);
+        TabNavigation.Page before = ui(() -> source.navigation.page());
+        String foreign = "http://127.0.0.1:8025/foreign-frame";
+        ui(() -> { source.getWebView().loadUrl(foreign); return null; });
+        waitFor("foreign origin committed in original tab", () -> ui(() -> selected() == source
+                && source.navigation.page() != before && source.navigation.ready() && source.navigation.finished()
+                && foreign.equals(source.getUrl())));
+        blobRejected(old, FAILED, "original page");
+        waitFor("old page transfer released", () -> !ui(source::hasPageTransfer));
+        assertEquals(1, requests("/foreign-frame").length());
+        assertNull(node("prompt_btn_download", null));
+        assertEquals(0, directory.toFile().list().length);
+
+        navigate(BLOB);
+        assertSame(source, ui(this::selected));
+        js("document.querySelector('#mode').value='normal'");
+        String fresh = acceptBlob("new-origin-blob.bin");
+        assertNotEquals(old, fresh);
+        completed(fresh, BLOB_BYTES, BLOB_SHA);
+        blobRejected(old, FAILED, "original page");
+        assertEquals(1, counter("status"));
+        assertArrayEquals(new String[]{"new-origin-blob.bin"}, directory.toFile().list());
+        evidence("same tab changed origin during a real stalled blob; old job has no offer or stage; fresh exact bytes");
     }
 
     public static void assertCall(JSONObject call, int port, boolean scoped, int status, boolean body) throws Exception {

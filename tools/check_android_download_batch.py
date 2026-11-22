@@ -59,6 +59,7 @@ CASES = {
         "blob-idle-timeout": "realIdleTimeoutCleansUpStalledBlob",
         "blob-collision": "occupiedBlobReservationIsNotOverwrittenOrFetched",
         "blob-foreign-frame": "crossOriginFrameCannotUseTheMainPageBlobIntake",
+        "blob-source-switch": "crossingOriginDuringBlobReadDrainsBeforeNewOffer",
     },
     "downloads.DownloadMediaBatchTest": {
         "stream-separate": "separateTracks",

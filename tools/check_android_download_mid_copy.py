@@ -18,14 +18,22 @@ from tools.check_android_download_publication import (
 )
 
 PUBLISHER = Path("downloader/src/main/java/com/privacy/downloader/engine/FilePublication.java")
-SHARED_PATH = "/storage/emulated/0/Download/arena-mid-copy-fixture"
-SHARED_DIR = r"(?:/storage/emulated/0|/storage/self/primary|/sdcard)/Download/arena-mid-copy-fixture"
+SHARED_NAME = "arena-mid-copy-fixture"
+SHARED_PATH = f"/storage/emulated/0/Download/{SHARED_NAME}"
+SHARED_DIR = rf"(?:/storage/emulated/0|/storage/self/primary|/sdcard)/Download/{SHARED_NAME}"
 PREFERENCES = "shared_prefs/downloader_settings.xml"
 NEIGHBOR = "unrelated.bin"
 NEIGHBOR_BYTES = b"Unrelated synthetic file. Do not overwrite.\n"
 PARKED = "abandoned-copy.bin"
 MID_COPY = "HELD_DURING_COPY"
 PRE_COMMIT = "HELD_BEFORE_DB_WRITE"
+
+
+def shared_fixture(token=None):
+    if token is None:
+        return SHARED_PATH, SHARED_DIR
+    require(re.fullmatch(r"[0-9a-f]{32}", token), "Invalid public fixture run token")
+    return f"{SHARED_PATH}-{token}", f"{SHARED_DIR}-{token}"
 
 
 def copy_cut(source):
@@ -183,7 +191,11 @@ def phase(report, step):
 
 def case(android, work, server, directory, report, cut):
     shared = report["storage"] == "shared-downloads"
-    pattern = SHARED_DIR if shared else PRIVATE_DIR
+    pattern = PRIVATE_DIR
+    if shared:
+        token = Path(directory).name.removeprefix(SHARED_NAME + "-") if directory != SHARED_PATH else None
+        expected, pattern = shared_fixture(token)
+        require(directory == expected, "Not the canonical public fixture directory")
     neighbor = f"{directory}/{NEIGHBOR}"
     marker_file = android.file(neighbor)
     require(size(marker_file) == len(NEIGHBOR_BYTES) and marker_file[1] == sha256(NEIGHBOR_BYTES).hexdigest(),
@@ -236,8 +248,7 @@ def case(android, work, server, directory, report, cut):
 
         phase(report, "force-stop without resuming the held copy")
         require(dbg.poll() is None and android.pid() == old_pid, "Held process disappeared before force-stop")
-        android.shell("am", "force-stop", PACKAGE)
-        until(lambda: android.pid() is None, "browser process force-stopped", seconds=10)
+        android.stop_publication_target(old_pid)
         wait_marker(dbg, transcript, "DISCONNECTED_AFTER_HOLD", seconds=10)
         require(dbg.wait(timeout=5) == 0, "Debugger did not confirm disconnect while held")
     require(snapshot(android, work) == (before, segments), "Stopped SQLite row changed before relaunch")

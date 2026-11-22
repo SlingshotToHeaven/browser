@@ -18,16 +18,20 @@ from check_android_download_mid_copy import (
 SETUP = "com.privacy.browser.PublicCopyFixtureCiTest#preparePublicDownloadsFixture"
 STAT = r"\d+:\d+:\d+:\d+"
 FILE = rf"(?:{NAME.replace('.', '[.]')}|{NEIGHBOR.replace('.', '[.]')}|{PARKED.replace('.', '[.]')}|download-\d+[.]part)"
-PUBLIC_PATH = re.compile(SHARED_DIR + rf"(?:/{FILE})?")
 
 
 class PublicObserver(Emulator):
     """Observe only the owned public files as the ordinary shell; DB still via run-as."""
+    def public_scope(self):
+        return SHARED_PATH, SHARED_DIR
+
     def app(self, *words, data=None):
         if not any(word.startswith("/") and "/arena-mid-copy-fixture" in word for word in words):
             return super().app(*words, data=data)
         absolute = [word for word in words if word.startswith("/")]
-        require(data is None and all(PUBLIC_PATH.fullmatch(word) for word in absolute), "Outside the public test folder")
+        _, pattern = self.public_scope()
+        require(data is None and all(re.fullmatch(pattern + rf"(?:/{FILE})?", word) for word in absolute),
+                "Outside the public test folder")
         if words[0] == "mv":
             require(len(words) == 4 and words[1] == "-n" and Path(words[2]).name == NAME
                     and Path(words[3]).name == PARKED and Path(words[2]).parent == Path(words[3]).parent,
@@ -49,7 +53,8 @@ def check(android, work, report, *, instrument=args):
     require(len(stats) == 1 and re.fullmatch(STAT, stats[0].rsplit("stat=", 1)[1]), "No ordinary-UID file identity")
     expected = stats[0].rsplit("stat=", 1)[1]
     stop(android)
-    neighbor = SHARED_PATH + "/" + NEIGHBOR
+    directory, _ = android.public_scope()
+    neighbor = directory + "/" + NEIGHBOR
     readable = android.shell("test", "-r", neighbor, check=False)
     if readable.returncode == 1 and not readable.stdout and not readable.stderr:
         report.update(result="blocked", detail="Shell cannot independently observe the ordinary app-created public fixture")
@@ -64,7 +69,7 @@ def check(android, work, report, *, instrument=args):
     require(snapshot(android, work, allow_empty=True) is None, "Expected no existing jobs on the disposable profile")
     cut = copy_cut((Path(__file__).resolve().parents[1] / PUBLISHER).read_text())
     report["cut"] = {"source_line": cut[0], "chunk_writes": cut[1], "chunk_capacity": cut[2]}
-    finished = run_case(android, work, SHARED_PATH, report, cut)
+    finished = run_case(android, work, directory, report, cut)
     require(finished is None and report["result"] == "blocked" or finished and report["at_cut"]["path"] == "mid-copy",
             "No independently verified mid-copy cut in public Downloads")
 
