@@ -4,10 +4,11 @@ Read this and the [ultimate testing checklist](ultimate_testing_checklist_and_so
 
 ## Stay on the test run
 
-- Start at the last verified checkpoint in the active run. For the **DL-01–DL-06 Test Run**, keep the prior phone, host and emulator results at their recorded scopes. Run the next unresolved eligible check, not the full suite again and not another topic.
-- The destination is to finish the active run as quickly as the evidence permits. Group independent remaining checks when they can share one setup; give each a result even if another fails. If the required setup is unavailable or a bounded attempt fails, record the exact block or failure and continue with independent eligible work. Do not turn a block into another setup or confirmation loop.
-- **For this run, use the already-connected lab phone over wireless ADB only.** Use its existing connection, target it explicitly, and drive the eligible test UI remotely. Do not switch environments, reconnect the device, or ask the owner to touch the phone. Keep the installed APKs and retained profile; no installs or resets. Report any missing prerequisite instead of improvising a workaround.
-- At each return, verify the named evidence, update only the affected checklist rows, and record exactly one next checkpoint. Keep `PASS`, `FAIL`, `BLOCKED`, `NOT RUN` and `STOPPED BY SCOPE` separate. Do not advance to the next topic or imply acceptance/release while required evidence is unresolved.
+- Start at the last verified checkpoint in the active run. Keep prior phone and host results at their recorded scopes. Run the next unresolved eligible check, not the full suite again or an unrelated topic.
+- Group independent checks that can share one setup and record a separate result for each. If a bounded attempt fails or a prerequisite is missing, record exactly what happened and continue with eligible work. Do not turn a block into another setup or confirmation loop.
+- **Use the already-connected lab phone over wireless ADB only.** Use its existing connection, target it explicitly, and drive the eligible test UI remotely. Do not switch environments, reconnect the device, or ask the owner to touch the phone. Keep the installed APKs and retained profile; no installs or resets. Report missing prerequisites instead of improvising a workaround.
+- At each return, verify the named evidence, update the affected checklist rows, and record exactly one next checkpoint. Keep `PASS`, `FAIL`, `BLOCKED`, `NOT RUN` and `STOPPED BY SCOPE` separate.
+- **Queue order is not acceptance.** Normally finish the active topic before moving on. If the owner explicitly moves specific blocked checks to the end, record them in [tests to do at last](test_moved_to_be_done_at_last.markdown) with their prerequisites, then proceed with the next topic's eligible checks. Keep the moved gates open; do not imply acceptance, release, or permission to change the lab.
 
 ## Every test handoff: ZIP + prompt
 
