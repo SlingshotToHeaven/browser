@@ -40,6 +40,7 @@ class RetainedLabTest(unittest.TestCase):
     def test_exact_retained_receipt_binds_with_no_writes(self):
         device = self.phone.bind_retained()
         self.assertEqual(device, self.phone.prior["device"])
+        self.assertEqual(self.apks["test"]["apk_sha256"], self.phone.bound_test_sha256)
         self.assertEqual("e" * 32, self.phone.profile_token)
         self.phone.invoke.assert_not_called()
 

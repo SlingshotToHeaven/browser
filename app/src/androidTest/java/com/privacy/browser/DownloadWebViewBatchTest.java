@@ -181,13 +181,18 @@ public class DownloadWebViewBatchTest extends DownloadBrowserBatchSupport {
         openUrl(FOREIGN_FRAME);
         long count = db.countDownloads();
         waitFor("top-level attachment ready", () -> Boolean.TRUE.equals(js("!!window.fixtureAttachment")));
+        String blobUrl = (String) js("document.querySelector('#offer').href");
+        assertTrue("Missing fixture blob URL", blobUrl.startsWith("blob:http://127.0.0.1:8025/"));
         tapRenderedAttachment("#offer");
         awaitTrustedAttachment("top", 7000);
-        assertEquals("foreign.bin", controlNode("prompt_edit_filename").getText().toString());
+        // WebView need not pass the anchor's suggested filename to DownloadListener.
+        assertEquals("Offer must name the exact attachment URL", blobUrl,
+                controlNode("prompt_text_url").getText().toString());
+        controlNode("prompt_btn_download");
         assertTrue(controlNode("prompt_btn_cancel").performAction(AccessibilityNodeInfo.ACTION_CLICK));
         waitFor("top-level fixture offer dismissed", () -> node("prompt_btn_download", null) == null);
         assertEquals(count, db.countDownloads());
-        evidence("same attachment: top-level pointer and click reached the fixture and the offer was cancelled");
+        evidence("top-level trusted pointer and click opened the exact attachment URL; cancelled without adding a row");
 
         navigate("/frames");
         waitFor("foreign fixture frame attachment ready", () -> Boolean.TRUE.equals(js("!!window.fixtureFrame")));

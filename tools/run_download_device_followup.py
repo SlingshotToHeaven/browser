@@ -46,7 +46,8 @@ class RetainedPhone(lab.Phone):
         for role, package in (("candidate", lab.PACKAGE), ("recipient", lab.RECIPIENT)):
             require(self.installed_hash(package) == self.prior["apks"][role]["apk_sha256"],
                     f"Installed {package} does not match the prior lab receipt")
-        require(self.installed_hash(lab.TEST) in self.allowed_test_hashes(), "Existing instrumentation is not from this lab")
+        self.bound_test_sha256 = self.installed_hash(lab.TEST)
+        require(self.bound_test_sha256 in self.allowed_test_hashes(), "Existing instrumentation is not from this lab")
         self.forwards_before = self.debugger_forwards()
         pid = self.pid()
         if pid is not None:
@@ -84,10 +85,12 @@ class RetainedPhone(lab.Phone):
         return installed != self.test_info["apk_sha256"]
 
     def verify_instrumentation(self):
-        require(self.installed_hash(lab.TEST) == self.test_info["apk_sha256"], "Wrong installed follow-up instrumentation")
+        installed = self.installed_hash(lab.TEST)
+        require(installed == self.test_info["apk_sha256"], "Wrong installed follow-up instrumentation")
         actual = self.text("pm", "list", "instrumentation", lab.PACKAGE).splitlines()
         require(f"instrumentation:{lab.batch.RUNNER} (target={lab.PACKAGE})" in actual,
                 "Instrumentation does not target the retained browser")
+        return installed
 
     def instrument(self, selector, *, operator_tap=False):
         self.verify_candidate()
@@ -163,14 +166,16 @@ def main():
             subprocess.run([Path(os.environ["JAVA_HOME"]) / "bin/javac", "--add-modules", "jdk.jdi", "-d", jdi,
                             lab.ROOT / "tests/fixtures/download_publication/PublicationPause.java"], check=True, timeout=45)
         phone = RetainedPhone(str(args.sdk / "platform-tools/adb"), args.serial, prior, args.test_apk, test_info)
-        report.update(device=phone.bind_retained(), app=prior["apks"]["candidate"], followup_test=test_info, preflight="passed")
+        device = phone.bind_retained()
+        report.update(device=device, app=prior["apks"]["candidate"], followup_test=test_info,
+                      installed_test_sha256_before=phone.bound_test_sha256, preflight="passed")
         save()
         if not args.check_only:
             started = True
             report["replaced_lab_instrumentation"] = phone.replace_lab_instrumentation()
             run_cases(args, phone, report, save)
             phone.verify_candidate()
-            phone.verify_instrumentation()
+            report["installed_test_sha256_after"] = phone.verify_instrumentation()
             require(phone.installed_hash(lab.RECIPIENT) == prior["apks"]["recipient"]["apk_sha256"], "Fixture recipient changed")
             require({p: phone.known(p) for p in LEGACY} == report["device"]["old_package_presence"], "Old app presence changed")
             report["app_and_legacy_identity_preserved"] = True

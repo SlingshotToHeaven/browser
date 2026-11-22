@@ -7,6 +7,7 @@ on:
       - .github/workflows/android-arm64-mux-preflight.yml
       - app/src/androidTest/java/com/privacy/browser/downloads/Arm64MuxRetest.java
       - app/src/androidTest/java/com/privacy/browser/downloads/DownloadDeviceLab.java
+      - app/src/androidTest/java/com/privacy/browser/DownloadWebViewBatchTest.java
       - tools/run_arm64_mux_retest.py
       - tools/run_download_device_followup.py
       - tools/check_android_download_upgrade.py
@@ -59,19 +60,25 @@ jobs:
           stage=Gradle
           ./gradlew --no-daemon --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest
           stage=APK-badging
-          PYTHONPATH=tools python3 -B - "$ANDROID_HOME/build-tools/34.0.0/aapt2" <<'PY'
+          PYTHONPATH=tools python3 -B - "$ANDROID_HOME" <<'PY'
           import os
           from pathlib import Path
           import sys
-          from check_android_download_batch import digest
+          from check_android_download_upgrade import apk_info
           from run_arm64_mux_retest import apk_badging
 
-          hashes = {}
+          sdk = Path(sys.argv[1])
+          aapt2 = sdk / "build-tools/34.0.0/aapt2"
+          identities = {}
           for package, name in (("com.browser", "debug/app-debug.apk"),
                                 ("com.browser.test", "androidTest/debug/app-debug-androidTest.apk")):
               path = Path("app/build/outputs/apk") / name
-              apk_badging(sys.argv[1], path, package)
-              hashes[package] = digest(path)
+              apk_badging(aapt2, path, package)
+              identities[package] = apk_info(sdk, path, package)
+          app, test = identities["com.browser"], identities["com.browser.test"]
+          if app["signer"] != test["signer"]:
+              raise SystemExit("Debug app and test APKs must have the same verified signer")
           print(f"::notice title=ARM64 mux handoff build::Source {os.environ['GITHUB_SHA']}; "
-                f"debug {hashes['com.browser']}; instrumentation {hashes['com.browser.test']}; no device tests or APK upload.")
+                f"debug {app['apk_sha256']}; instrumentation {test['apk_sha256']}; "
+                f"verified same signer; parsed test versionCode {test['version_code']}; no device tests or APK upload.")
           PY

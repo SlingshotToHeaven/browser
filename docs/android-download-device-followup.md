@@ -40,7 +40,7 @@ follow=(python3 -B "$root/tools/run_download_device_followup.py"
 "${follow[@]}" --check-only --work "$lab/identity-check"
 ```
 
-The check is read-only on the device. Require PASS: same phone/provider, exact v8/test/recipient bytes from the prior report (or the exact same new test APK on a subsequent check), and the private lab marker. The v8 APK must remain SHA-256 `60be1238af1b9725930d2d9ccbe562453c0a6ddd7b002710b9fa911a091dd391`. A newly built `app-debug.apk` is **not** the installed app and must not be installed. If identities don't match, stop without deleting or changing any packages or profiles.
+The check is read-only on the device. Require `preflight: passed`: same phone/provider, exact v8/recipient bytes from the prior report, and the private lab marker. On the first check of the restored profile, `installed_test_sha256_before` must be the original `5fd0954b86c93cab5d7b08432519282790bc6e6060e869fca547d42af9c9b7ad`. The v8 APK must remain SHA-256 `60be1238af1b9725930d2d9ccbe562453c0a6ddd7b002710b9fa911a091dd391`. A newly built `app-debug.apk` is **not** the installed app and must not be installed. If identities don't match, stop without deleting or changing any packages or profiles.
 
 ## 2. Record any manual evidence before the reset
 
@@ -68,7 +68,7 @@ Run these commands **separately**, for the authorized case, with distinct result
 - `blob-source-switch` has no frame result or operator tap prerequisite. It must record a stalled first chunk, same-tab foreign origin, an old attempt that fails without publishing or leaving staging, and a fresh exact save.
 - `blob-foreign-frame` uses native touchscreen DOWN/UP mapped from a visible, hit-tested WebView target. Stay hands-off. It first opens and cancels the exact fixture attachment in a top-level tab as a positive control. In the foreign iframe, the foreign server must record both the trusted touchscreen pointer and actual anchor click. Then require no prompt, row, page transfer or output. Missing input is not a denial pass; there is no chat-to-tap countdown.
 
-Record each case independently. If the runner cannot prove the device identity, stops with cleanup unconfirmed, or the owner wants the failing profile preserved, stop and report before another reset. No forced repeat. The retained APK is still the original candidate; the physical debugger guard has not been loosened.
+Use the **same built test APK** for both runs. After an authorized replacement, `installed_test_sha256_after` must match `followup_test.apk_sha256`, and `app_and_legacy_identity_preserved` must be true. The next invocation may find that exact test APK already installed; do not restore or rebuild packages between cases. Record each case independently. If the runner cannot prove the device identity, stops with cleanup unconfirmed, or the owner wants the failing profile preserved, stop and report before another reset. No forced repeat. The retained browser is still the original candidate; the physical debugger guard has not been loosened.
 
 ## 4. Return evidence only
 
