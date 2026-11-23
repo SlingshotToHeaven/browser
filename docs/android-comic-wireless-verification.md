@@ -1,5 +1,7 @@
 # Assistant, images, comics and local data — COMIC-01 wireless verification
 
+**Returned and reconciled; do not repeat.** See [the two scoped handset passes](topic-3-agent-test-results.md#returned-comic-verification--6deb4f6). No archive or final-copy qualification.
+
 One retained wireless checkpoint with two separate synthetic cases: **retry only the challenged page**, stopping at a deliberate page-three failure, and **retire a visible verifier on real same-tab document replacement**. Neither chapter can produce a complete CBZ. This does not repeat the hosted successful archive, timeout, or Back checks and does not test the real viewer, shared destination, final copy, or renderer loss.
 
 ## Setup and scope
