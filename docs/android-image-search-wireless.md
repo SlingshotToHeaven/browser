@@ -1,5 +1,7 @@
 # Assistant, images, comics and local data — IMG-01 wireless review and Cancel
 
+**Returned and reconciled; do not repeat.** The native review/Cancel and both witnessed page-picker refusals passed at the scope in the [returned evidence](topic-3-agent-test-results.md#returned-image-review--acf5a6f).
+
 This checkpoint covers only **IMG-01 native URL review and Cancel**, plus **in-page `data:` and `blob:` pickup refusal** in that same image-picker flow. Search by Image is already reachable from the Browser menu without turning on Agent or a download setting. There is no share, live-provider request, image upload, file chooser, stale-confirmation click, or full IMG-01 acceptance in this run.
 
 ## Keep the retained lab unchanged
